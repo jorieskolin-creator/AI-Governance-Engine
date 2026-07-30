@@ -1,5 +1,16 @@
 # Architecture
 
+## Decision-ready reporting
+
+The canonical readiness package is the only source of truth. The deterministic engine builds `transitionBoundary`, enriched hard gates, and the `assuranceSummary` view model before any cognitive synthesis. The browser renders two views over that same package:
+
+- **Assessment Workspace** for intake, detailed controls, evidence, execution diagnostics, and remediation work.
+- **Assurance Summary** for owners, executives, and formal reviewers.
+
+The summary renderer does not calculate readiness. Printable PDF output uses the same browser view and A4 print CSS. The downloadable HTML is self-contained, has embedded CSS, contains no executable scripts or external assets, and escapes all untrusted values. JSON remains the canonical audit record.
+
+For `ReadinessPackageV2` 2.1.0, synthesis emits traceable `NarrativeItem` records. Item-level fact-checking either supports, corrects, or quarantines each item. If synthesis or fact-checking fails, the Engine renders a deterministic-only summary and raises `COGNITIVE_ASSESSMENT_INCOMPLETE` rather than suppressing the report.
+
 The AI Governance Engine is a standalone evidence-processing service. It reuses the useful shape of the FinOps Engine—parallel domain assessment, evidence verification, hard gates, controlled synthesis, traceability, and targeted action selection—without importing any FinOps domain model.
 
 ```mermaid

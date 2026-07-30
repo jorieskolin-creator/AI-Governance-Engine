@@ -12,7 +12,8 @@ This is a clean governance implementation inspired by the FinOps Engine's proces
 - Separates evidence coverage, control assurance, residual risk, and hard-gate status.
 - Preserves silence as `UNKNOWN`; it never treats missing evidence as proof of safety or compliance.
 - Selects approved governance actions only from verified findings.
-- Produces a JSON readiness package and an interactive dashboard.
+- Produces one canonical JSON readiness package with two connected views: the detailed Assessment Workspace and the decision-ready Assurance Summary.
+- Exports the Assurance Summary as a printable A4 report and a script-free, self-contained HTML file that works offline.
 - Records required human authorities without issuing formal approval.
 
 ## Evidence-gated cognitive pipeline (v2)
@@ -48,6 +49,10 @@ npm start
 
 Open `http://localhost:4174`. Use **Load credible sample** to inspect the complete output or fill the dossier and upload a code folder.
 
+The post-assessment result opens in **Assurance Summary** when `ASSURANCE_SUMMARY_ENABLED=true`. Switch to **Assessment Workspace** without rerunning the assessment. The summary provides the immutable decision and lifecycle boundary, hard gates, A–F status, strengths, blockers, actions, human authority, limitations, and a minimized evidence digest.
+
+Use **Print / Save PDF**, **Download HTML**, or the unchanged canonical **Download JSON** control. HTML and PDF are derived views only: they never calculate an outcome. The standalone HTML contains no scripts, external assets, or executable source-provided markup.
+
 ## API
 
 `POST /api/assess`
@@ -67,7 +72,19 @@ Open `http://localhost:4174`. Use **Load credible sample** to inspect the comple
     "data": { "personalData": false, "specialCategoryData": false, "productionData": false },
     "exposure": { "externalUsers": false, "productionAccess": false, "consequentialDecisions": false },
     "agent": { "usesAgents": true, "canTakeActions": false, "irreversibleActions": false, "humanOverride": true },
-    "classification": { "prohibitedPractice": false, "highRiskCandidate": false }
+    "classification": { "prohibitedPractice": false, "highRiskCandidate": false },
+    "operatingBoundary": {
+      "allowedUses": ["Internal employee question answering"],
+      "excludedUses": ["Consequential employment decisions"],
+      "environment": "CONTROLLED_PILOT",
+      "userScope": "Named pilot employees",
+      "dataScope": "Synthetic or approved internal content",
+      "integrationScope": "Read-only approved connectors",
+      "permissionScope": "No privileged or irreversible actions",
+      "autonomyScope": "Human-reviewed answers only",
+      "monitoringOwner": "Solution owner",
+      "expiresAt": "2027-01-31"
+    }
   },
   "sources": [
     { "path": "src/assistant.js", "content": "...", "kind": "CODE" },
@@ -76,7 +93,9 @@ Open `http://localhost:4174`. Use **Load credible sample** to inspect the comple
 }
 ```
 
-`GET /api/sample` returns a complete sample request. `GET /api/knowledge` returns the active, versioned knowledge manifest.
+`GET /api/sample` returns a complete sample request. `GET /api/knowledge` returns the active, versioned knowledge manifest. `GET /api/config` exposes non-secret experience flags.
+
+`ReadinessPackageV2` is additive at schema version `2.1.0`. Both v1 and v2 packages include `transitionBoundary` and `assuranceSummary`; v1 evidence is explicitly labelled as automated indicators because cognitive verification was not run.
 
 ### v2 preflight example
 

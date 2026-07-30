@@ -5,6 +5,7 @@ export const FACT_CLASSES = Object.freeze(["DECLARED", "OBSERVED", "INFERRED"]);
 export const CLAIM_TYPES = Object.freeze(["FACT", "CONTROL_SUPPORT", "GAP", "RISK", "ANTIPATTERN", "CONTRADICTION", "UNKNOWN", "EVIDENCE_REQUEST"]);
 export const VERIFICATION_STATES = Object.freeze(["SUPPORTED", "PARTIAL", "UNSUPPORTED", "CONFLICTING", "NOT_VERIFIABLE"]);
 export const TRANSMISSION_STATES = Object.freeze(["LOCAL_ONLY", "PENDING_APPROVAL", "APPROVED", "TRANSMITTED", "PURGED"]);
+export const NARRATIVE_SECTIONS = Object.freeze(["EXECUTIVE_DECISION", "DOMAIN_NARRATIVE", "CONFIRMED_STRENGTH", "BLOCKING_FINDING", "CONDITION", "HUMAN_QUESTION", "LIMITATION"]);
 
 export const ACCEPTED_FORMATS = Object.freeze({
   "text/plain": "TEXT",
@@ -165,44 +166,18 @@ export const VERIFICATION_SCHEMA = {
 export const SYNTHESIS_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["executiveSummary", "domainNarratives", "conditions", "humanQuestions"],
+  required: ["items"],
   properties: {
-    executiveSummary: { type: "string" },
-    domainNarratives: {
+    items: {
       type: "array",
       items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["domain", "narrative", "findingIds"],
+        type: "object", additionalProperties: false,
+        required: ["id", "section", "text", "findingIds", "gateIds", "controlIds", "evidenceIds"],
         properties: {
-          domain: { type: "string", enum: Object.keys(DOMAINS) },
-          narrative: { type: "string" },
-          findingIds: { type: "array", items: { type: "string" } }
-        }
-      }
-    },
-    conditions: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["statement", "findingIds"],
-        properties: {
-          statement: { type: "string" },
-          findingIds: { type: "array", items: { type: "string" } }
-        }
-      }
-    },
-    humanQuestions: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["authority", "question", "findingIds"],
-        properties: {
-          authority: { type: "string" },
-          question: { type: "string" },
-          findingIds: { type: "array", items: { type: "string" } }
+          id: { type: "string" }, section: { type: "string", enum: NARRATIVE_SECTIONS }, text: { type: "string" },
+          domain: { type: "string", enum: Object.keys(DOMAINS) }, authority: { type: "string" },
+          findingIds: { type: "array", items: { type: "string" } }, gateIds: { type: "array", items: { type: "string" } },
+          controlIds: { type: "array", items: { type: "string" } }, evidenceIds: { type: "array", items: { type: "string" } }
         }
       }
     }
@@ -210,7 +185,10 @@ export const SYNTHESIS_SCHEMA = {
 };
 
 export const FACT_CHECK_SCHEMA = {
-  type: "object", additionalProperties: false, required: ["supported", "unsupportedStatements", "correctedExecutiveSummary"], properties: {
-    supported: { type: "boolean" }, unsupportedStatements: { type: "array", items: { type: "string" } }, correctedExecutiveSummary: { type: "string" }
+  type: "object", additionalProperties: false, required: ["supported", "itemResults"], properties: {
+    supported: { type: "boolean" },
+    itemResults: { type: "array", items: { type: "object", additionalProperties: false, required: ["itemId", "status", "rationale", "correctedText"], properties: {
+      itemId: { type: "string" }, status: { type: "string", enum: ["SUPPORTED", "PARTIAL", "UNSUPPORTED"] }, rationale: { type: "string" }, correctedText: { type: "string" }
+    } } }
   }
 };

@@ -69,6 +69,13 @@ export const HUMAN_AUTHORITIES = Object.freeze([
 
 export const SEVERITIES = Object.freeze(["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 
+export const BOUNDARY_ENVIRONMENTS = Object.freeze([
+  "UNKNOWN",
+  "ISOLATED_SANDBOX",
+  "CONTROLLED_PILOT",
+  "PRODUCTION"
+]);
+
 export const STATE_WEIGHT = Object.freeze({
   UNKNOWN: 0,
   DECLARED: 0.15,
@@ -94,6 +101,16 @@ function booleanValue(value, field) {
   return value;
 }
 
+function optionalString(value, field) {
+  invariant(value === undefined || value === null || typeof value === "string", `${field} must be a string`);
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function optionalStringArray(value, field) {
+  invariant(value === undefined || (Array.isArray(value) && value.every((item) => typeof item === "string")), `${field} must be an array of strings`);
+  return [...new Set((value ?? []).map((item) => item.trim()).filter(Boolean))];
+}
+
 export function validateDossier(input) {
   invariant(input && typeof input === "object", "dossier is required");
   for (const field of ["name", "intendedPurpose", "expectedValue", "accountableOwner"]) {
@@ -114,7 +131,28 @@ export function validateDossier(input) {
     invariant(input[group] && typeof input[group] === "object", `dossier.${group} is required`);
     for (const field of fields) booleanValue(input[group][field], `dossier.${group}.${field}`);
   }
-  return structuredClone(input);
+  const rawBoundary = input.operatingBoundary ?? {};
+  invariant(rawBoundary && typeof rawBoundary === "object", "dossier.operatingBoundary must be an object");
+  const environment = rawBoundary.environment ?? "UNKNOWN";
+  enumValue(environment, BOUNDARY_ENVIRONMENTS, "dossier.operatingBoundary.environment");
+  const expiresAt = optionalString(rawBoundary.expiresAt, "dossier.operatingBoundary.expiresAt");
+  if (expiresAt) invariant(!Number.isNaN(Date.parse(expiresAt)), "dossier.operatingBoundary.expiresAt must be an ISO date or date-time");
+
+  return {
+    ...structuredClone(input),
+    operatingBoundary: {
+      allowedUses: optionalStringArray(rawBoundary.allowedUses, "dossier.operatingBoundary.allowedUses"),
+      excludedUses: optionalStringArray(rawBoundary.excludedUses, "dossier.operatingBoundary.excludedUses"),
+      environment,
+      userScope: optionalString(rawBoundary.userScope, "dossier.operatingBoundary.userScope"),
+      dataScope: optionalString(rawBoundary.dataScope, "dossier.operatingBoundary.dataScope"),
+      integrationScope: optionalString(rawBoundary.integrationScope, "dossier.operatingBoundary.integrationScope"),
+      permissionScope: optionalString(rawBoundary.permissionScope, "dossier.operatingBoundary.permissionScope"),
+      autonomyScope: optionalString(rawBoundary.autonomyScope, "dossier.operatingBoundary.autonomyScope"),
+      monitoringOwner: optionalString(rawBoundary.monitoringOwner, "dossier.operatingBoundary.monitoringOwner"),
+      expiresAt: expiresAt || null
+    }
+  };
 }
 
 export function validateSources(sources) {

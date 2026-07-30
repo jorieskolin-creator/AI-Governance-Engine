@@ -101,10 +101,10 @@ function normalizeSolutionModel(dossier, generated, sourceUnits) {
     id: stableId("solution-model", { dossier, facts, contradictions }),
     status: "LOCKED_FOR_ASSESSMENT",
     declared: {
-      intendedPurpose: dossier.intendedPurpose, expectedValue: dossier.expectedValue, users: dossier.users,
+      name: dossier.name, intendedPurpose: dossier.intendedPurpose, expectedValue: dossier.expectedValue, users: dossier.users,
       jurisdictions: dossier.jurisdictions, roles: dossier.roles, accountableOwner: dossier.accountableOwner,
       currentStage: dossier.currentStage, targetStage: dossier.targetStage, data: dossier.data, exposure: dossier.exposure,
-      agent: dossier.agent, classification: dossier.classification
+      agent: dossier.agent, classification: dossier.classification, operatingBoundary: dossier.operatingBoundary
     },
     facts, contradictions,
     unknowns: [...new Set([...generated.unknowns, ...invalidCitations.map((item) => `Invalid source citation removed from: ${item}`)])],
@@ -205,10 +205,86 @@ function localScannerArtifacts(run, now) {
 }
 
 function deterministicNarrative(provisional, lockedFindings) {
+  const items = [];
+  const add = (value) => items.push({ id: stableId("narrative", value), supportStatus: "DETERMINISTIC", ...value });
+  add({
+    section: "EXECUTIVE_DECISION", text: `${provisional.recommendation.outcome}. ${provisional.recommendation.rationale}`,
+    findingIds: [], gateIds: provisional.hardGates.map((item) => item.id), controlIds: [], evidenceIds: provisional.hardGates.flatMap((item) => item.evidenceIds)
+  });
+  for (const domain of Object.keys(DOMAINS)) {
+    const findingIds = lockedFindings.filter((item) => item.domains.includes(domain)).map((item) => item.id);
+    add({
+      section: "DOMAIN_NARRATIVE", domain,
+      text: "No fact-checked model narrative is available; consult the locked findings and deterministic control results.",
+      findingIds, gateIds: [], controlIds: [], evidenceIds: []
+    });
+  }
+  for (const item of provisional.humanDecisionRequirements) {
+    add({
+      section: "HUMAN_QUESTION", authority: item.authority, text: item.reasons.join(" "),
+      findingIds: [], gateIds: provisional.hardGates.filter((gate) => gate.requiredHumanAuthorities.includes(item.authority)).map((gate) => gate.id), controlIds: [], evidenceIds: []
+    });
+  }
+  return { items };
+}
+
+function sanitizeSynthesis(value, provisional, lockedFindings) {
+  const allowed = {
+    findings: new Set(lockedFindings.map((item) => item.id)),
+    gates: new Set(provisional.hardGates.map((item) => item.id)),
+    controls: new Set(provisional.domains.flatMap((domain) => domain.controls.map((item) => item.controlId))),
+    evidence: new Set(provisional.evidence.map((item) => item.id))
+  };
+  const rejected = [];
+  const items = [];
+  for (const candidate of value?.items ?? []) {
+    const normalized = {
+      section: candidate.section,
+      text: String(candidate.text ?? "").trim(),
+      domain: candidate.domain,
+      authority: candidate.authority,
+      findingIds: [...new Set((candidate.findingIds ?? []).filter((id) => allowed.findings.has(id)))],
+      gateIds: [...new Set((candidate.gateIds ?? []).filter((id) => allowed.gates.has(id)))],
+      controlIds: [...new Set((candidate.controlIds ?? []).filter((id) => allowed.controls.has(id)))],
+      evidenceIds: [...new Set((candidate.evidenceIds ?? []).filter((id) => allowed.evidence.has(id)))]
+    };
+    const hasBasis = normalized.findingIds.length || normalized.gateIds.length || normalized.controlIds.length || normalized.evidenceIds.length;
+    const sectionValid = candidate.section !== "DOMAIN_NARRATIVE" || Object.hasOwn(DOMAINS, candidate.domain);
+    const authorityValid = candidate.section !== "HUMAN_QUESTION" || typeof candidate.authority === "string" && candidate.authority;
+    if (!normalized.text || !hasBasis || !sectionValid || !authorityValid) {
+      rejected.push(candidate.id ?? "unknown-item");
+      continue;
+    }
+    const id = stableId("narrative", normalized);
+    items.push({ id, supportStatus: "PENDING_FACT_CHECK", ...normalized });
+  }
+  if (!items.some((item) => item.section === "EXECUTIVE_DECISION")) {
+    items.unshift(deterministicNarrative(provisional, lockedFindings).items[0]);
+  }
+  return { items, quarantine: rejected.length ? { status: "QUARANTINED", rejectedItemIds: rejected } : undefined };
+}
+
+function applyFactCheck(synthesis, checked) {
+  const results = new Map((checked.itemResults ?? []).map((item) => [item.itemId, item]));
+  const quarantined = [];
+  const items = [];
+  for (const item of synthesis.items) {
+    if (item.supportStatus === "DETERMINISTIC") { items.push(item); continue; }
+    const result = results.get(item.id);
+    if (!result || result.status === "UNSUPPORTED") {
+      quarantined.push({ itemId: item.id, text: item.text, reason: result?.rationale ?? "No fact-check result was returned." });
+      if (result?.correctedText?.trim()) items.push({ ...item, text: result.correctedText.trim(), supportStatus: "FACT_CHECK_CORRECTED" });
+      continue;
+    }
+    const text = result.status === "PARTIAL" && result.correctedText?.trim() ? result.correctedText.trim() : item.text;
+    items.push({ ...item, text, supportStatus: result.status === "PARTIAL" ? "FACT_CHECK_PARTIAL" : "FACT_CHECKED" });
+  }
   return {
-    executiveSummary: `${provisional.recommendation.outcome}. ${provisional.recommendation.rationale}`,
-    domainNarratives: Object.keys(DOMAINS).map((domain) => ({ domain, narrative: "No model-generated narrative is available; consult the locked findings and deterministic control results.", findingIds: lockedFindings.filter((item) => item.domains.includes(domain)).map((item) => item.id) })),
-    conditions: [], humanQuestions: provisional.humanDecisionRequirements.map((item) => ({ authority: item.authority, question: item.reasons.join(" "), findingIds: [] }))
+    ...synthesis,
+    items,
+    quarantine: quarantined.length || synthesis.quarantine ? {
+      status: "QUARANTINED", items: quarantined, rejectedItemIds: synthesis.quarantine?.rejectedItemIds ?? []
+    } : undefined
   };
 }
 
@@ -355,7 +431,7 @@ export async function executeCognitiveRun(run, options = {}) {
   }, { knowledge });
 
   let synthesis = deterministicNarrative(provisional, lockedFindings);
-  let factCheck = { supported: false, unsupportedStatements: ["Model synthesis was not completed."], correctedExecutiveSummary: synthesis.executiveSummary };
+  let factCheck = { supported: false, itemResults: [], limitation: "Model synthesis was not completed." };
   let synthesisProvider = null;
   try {
     stage(run, "CONTROLLED_SYNTHESIS", "RUNNING");
@@ -363,7 +439,7 @@ export async function executeCognitiveRun(run, options = {}) {
     synthesisProvider = profile.provider;
     recordTransmission(run, "CONTROLLED_SYNTHESIS", profile, [], false);
     const generated = await client.generate({ profile, prompt: synthesisPrompt({ solutionModel, lockedFindings, deterministic: provisional, actions: provisional.actions }), schemaName: "readiness_synthesis", schema: SYNTHESIS_SCHEMA, packetHash: provisional.packageHash, promptVersion: PROMPT_VERSIONS.synthesis });
-    synthesis = generated.value;
+    synthesis = sanitizeSynthesis(generated.value, provisional, lockedFindings);
     stage(run, "CONTROLLED_SYNTHESIS", "COMPLETED");
   } catch (error) {
     failedStages.push("CONTROLLED_SYNTHESIS");
@@ -381,11 +457,11 @@ export async function executeCognitiveRun(run, options = {}) {
     recordTransmission(run, "FINAL_FACT_CHECK", profile, [], false);
     const checked = await client.generate({ profile, prompt: factCheckPrompt(synthesis, lockedFindings, provisional), schemaName: "narrative_fact_check", schema: FACT_CHECK_SCHEMA, packetHash: sha256({ synthesis, lockedFindings: lockedFindings.map((item) => item.id) }), promptVersion: PROMPT_VERSIONS.factCheck });
     factCheck = checked.value;
-    if (!factCheck.supported) synthesis = { ...synthesis, executiveSummary: factCheck.correctedExecutiveSummary, domainNarratives: [], quarantine: { status: "QUARANTINED", unsupportedStatements: factCheck.unsupportedStatements } };
+    synthesis = applyFactCheck(synthesis, factCheck);
     stage(run, "FINAL_FACT_CHECK", "COMPLETED", { supported: factCheck.supported });
   } catch (error) {
     failedStages.push("FINAL_FACT_CHECK");
-    synthesis = { ...deterministicNarrative(provisional, lockedFindings), quarantine: { status: "QUARANTINED", unsupportedStatements: ["Fact-check stage failed; generated prose was discarded."] } };
+    synthesis = { ...deterministicNarrative(provisional, lockedFindings), quarantine: { status: "QUARANTINED", items: [{ text: "Generated prose was discarded because the fact-check stage failed.", reason: error.message }] } };
     stage(run, "FINAL_FACT_CHECK", "FAILED", { error: error.message });
   }
 

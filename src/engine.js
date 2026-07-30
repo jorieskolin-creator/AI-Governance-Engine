@@ -6,6 +6,7 @@ import { assessAntiPatterns, assessControls, groupDomainResults } from "./core/a
 import { evaluateHardGates } from "./core/hard-gates.js";
 import { selectPlaybookActions } from "./core/playbook-engine.js";
 import { calculateReadiness, humanDecisionRequirements } from "./core/readiness.js";
+import { buildAssuranceSummary, buildTransitionBoundary } from "./core/assurance-summary.js";
 import { loadKnowledgeSnapshot, knowledgeManifestView } from "./knowledge/provider.js";
 
 const ENGINE_VERSION = "governance-engine-0.2.0";
@@ -23,6 +24,7 @@ function solutionUnderstanding(dossier, registry, evidence) {
   const providers = evidence.filter((item) => item.signal === "model-inventory").map((item) => ({ source: item.path, excerpt: item.excerpt }));
   const signals = [...new Set(evidence.map((item) => item.signal))].sort();
   return {
+    name: dossier.name,
     intendedPurpose: dossier.intendedPurpose,
     expectedValue: dossier.expectedValue,
     currentStage: dossier.currentStage,
@@ -31,6 +33,7 @@ function solutionUnderstanding(dossier, registry, evidence) {
     jurisdictions: dossier.jurisdictions,
     roles: dossier.roles,
     users: dossier.users,
+    operatingBoundary: dossier.operatingBoundary,
     sourceCount: registry.registeredSources.length,
     sourceManifestHash: registry.registryHash,
     detectedProvidersAndModels: providers,
@@ -52,6 +55,20 @@ async function buildPackage({ dossier, knowledge, registry, evidence, registryFi
   const actions = await timed(trace, "playbook", () => selectPlaybookActions(knowledge.tactics, domains, antiPatterns, dossier));
   const readiness = calculateReadiness(controls, antiPatterns, gates);
   const humanDecisions = humanDecisionRequirements(gates, applicability, dossier);
+  const transitionBoundary = buildTransitionBoundary({ dossier, gates, domains, readiness, humanDecisions });
+  const knowledgeView = knowledgeManifestView(knowledge);
+  const recommendation = {
+    outcome: readiness.outcome,
+    rationale: readiness.outcome === "READY_FOR_NEXT_STAGE"
+      ? "No applicable control gap, confirmed anti-pattern, unresolved authority question, or hard gate prevents the declared transition."
+      : `${gates.length} gate(s), ${domains.flatMap((item) => item.gaps).length} control gap(s), and ${antiPatterns.filter((item) => item.state === "CONFIRMED_PRESENT").length} confirmed anti-pattern(s) determine this recommendation.`,
+    formalApproval: false,
+    boundary: "This is decision support. The engine cannot issue legal, privacy, security, governance, AI Forum, or AI Board approval."
+  };
+  const assuranceSummary = buildAssuranceSummary({
+    schemaVersion, recommendation, dimensions: readiness.dimensions, transitionBoundary, gates, domains, actions,
+    humanDecisions, evidence, solution, knowledge: knowledgeView, cognitive
+  });
   const completedAt = new Date();
   const draft = {
     schemaVersion,
@@ -60,17 +77,12 @@ async function buildPackage({ dossier, knowledge, registry, evidence, registryFi
     engineVersion: ENGINE_VERSION,
     rulesetVersion: RULESET_VERSION,
     generatedAt: completedAt.toISOString(),
-    knowledge: knowledgeManifestView(knowledge),
+    knowledge: knowledgeView,
     solution,
-    recommendation: {
-      outcome: readiness.outcome,
-      rationale: readiness.outcome === "READY_FOR_NEXT_STAGE"
-        ? "No applicable control gap, confirmed anti-pattern, unresolved authority question, or hard gate prevents the declared transition."
-        : `${gates.length} gate(s), ${domains.flatMap((item) => item.gaps).length} control gap(s), and ${antiPatterns.filter((item) => item.state === "CONFIRMED_PRESENT").length} confirmed anti-pattern(s) determine this recommendation.`,
-      formalApproval: false,
-      boundary: "This is decision support. The engine cannot issue legal, privacy, security, governance, AI Forum, or AI Board approval."
-    },
+    recommendation,
     dimensions: readiness.dimensions,
+    transitionBoundary,
+    assuranceSummary,
     applicability,
     domains,
     hardGates: gates,
@@ -120,7 +132,7 @@ export async function assessVerifiedSolution(input, options = {}) {
   return buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
     solution: input.solutionModel, trace, startedAt, runId: input.runId,
-    schemaVersion: "2.0.0", cognitiveCoverage: input.cognitiveCoverage,
+    schemaVersion: "2.1.0", cognitiveCoverage: input.cognitiveCoverage,
     cognitive: input.cognitive
   });
 }

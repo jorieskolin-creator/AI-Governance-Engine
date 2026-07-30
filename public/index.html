@@ -10,11 +10,8 @@
   <body>
     <header class="app-header">
       <div class="brand-mark">V</div>
-      <div>
-        <p class="eyebrow">Vivicta assurance systems</p>
-        <h1>AI Governance Engine</h1>
-      </div>
-      <div id="knowledge-status" class="knowledge-pill">Loading knowledge…</div>
+      <div><p class="eyebrow">Vivicta assurance systems</p><h1>AI Governance Engine</h1></div>
+      <div id="knowledge-status" class="knowledge-pill">Loading knowledge...</div>
     </header>
 
     <main>
@@ -22,86 +19,65 @@
         <div>
           <p class="eyebrow accent">Evidence-gated lifecycle readiness</p>
           <h2>Know what is ready, what is unknown, and what must happen next.</h2>
-          <p class="lede">Assess a codebase and intended-use dossier against six governance domains without confusing an automated recommendation with formal human approval.</p>
+          <p class="lede">Assess a codebase and intended-use dossier across six governance domains without confusing an automated recommendation with formal human approval.</p>
         </div>
-        <div class="boundary-card">
-          <span class="boundary-icon">H</span>
-          <div><strong>Human authority boundary</strong><p>Legal, Privacy, Security, Governance, AI Forum and AI Board decisions are never generated as approvals.</p></div>
-        </div>
+        <div class="boundary-card"><span class="boundary-icon">H</span><div><strong>Human authority boundary</strong><p>Legal, Privacy, Security, Governance, AI Forum and AI Board decisions are never generated as approvals.</p></div></div>
       </section>
 
       <section id="assessment-input" class="panel input-panel">
-        <div class="section-heading">
-          <div><p class="eyebrow">Assessment intake</p><h2>Solution dossier</h2></div>
-          <button id="sample-button" type="button" class="secondary-button">Load credible sample</button>
-        </div>
-
+        <div class="section-heading"><div><p class="eyebrow">Assessment intake</p><h2>Solution dossier</h2></div><button id="sample-button" type="button" class="secondary-button">Load credible sample</button></div>
         <form id="dossier-form">
-          <div class="form-grid two">
-            <label>Solution name<input id="name" required placeholder="Internal knowledge assistant" /></label>
-            <label>Accountable owner<input id="owner" required placeholder="Named role or person" /></label>
-          </div>
+          <div class="form-grid two"><label>Solution name<input id="name" required placeholder="Internal knowledge assistant" /></label><label>Accountable owner<input id="owner" required placeholder="Named role or person" /></label></div>
           <label>Intended purpose<textarea id="purpose" required rows="3" placeholder="What the AI system does, for whom, and within which boundary"></textarea></label>
           <label>Expected value<textarea id="value" required rows="2" placeholder="Measurable value hypothesis and success criteria"></textarea></label>
-
           <div class="form-grid four">
-            <label>Current lifecycle stage<select id="current-stage"></select></label>
-            <label>Target lifecycle stage<select id="target-stage"></select></label>
-            <label>Jurisdictions<input id="jurisdictions" value="EU" placeholder="EU, Finland" /></label>
-            <label>Regulatory roles<input id="roles" value="DEPLOYER" placeholder="PROVIDER, DEPLOYER" /></label>
+            <label>Current lifecycle stage<select id="current-stage"></select></label><label>Target lifecycle stage<select id="target-stage"></select></label>
+            <label>Jurisdictions<input id="jurisdictions" value="EU" placeholder="EU, Finland" /></label><label>Regulatory roles<input id="roles" value="DEPLOYER" placeholder="PROVIDER, DEPLOYER" /></label>
           </div>
-          <div class="form-grid two">
-            <label>Users and affected groups<input id="users" value="EMPLOYEES" placeholder="EMPLOYEES, CUSTOMERS" /></label>
-            <label class="upload-box">Codebase and evidence folder<input id="source-files" type="file" multiple webkitdirectory /><span id="file-summary">No folder selected</span></label>
-          </div>
+          <div class="form-grid two"><label>Users and affected groups<input id="users" value="EMPLOYEES" placeholder="EMPLOYEES, CUSTOMERS" /></label><label class="upload-box">Codebase and evidence folder<input id="source-files" type="file" multiple webkitdirectory /><span id="file-summary">No folder selected</span></label></div>
+
+          <fieldset class="operating-boundary">
+            <legend>Declared operating boundary</legend>
+            <div class="form-grid two"><label>Allowed uses<textarea id="allowed-uses" rows="3" placeholder="One allowed use per line"></textarea></label><label>Excluded uses<textarea id="excluded-uses" rows="3" placeholder="One prohibited or excluded use per line"></textarea></label></div>
+            <div class="form-grid four">
+              <label>Environment<select id="boundary-environment"><option value="UNKNOWN">Unknown</option><option value="ISOLATED_SANDBOX">Isolated sandbox</option><option value="CONTROLLED_PILOT">Controlled pilot</option><option value="PRODUCTION">Production</option></select></label>
+              <label>User scope<input id="boundary-users" placeholder="Named pilot users" /></label><label>Data scope<input id="boundary-data" placeholder="Synthetic or approved data" /></label><label>Boundary expiry<input id="boundary-expiry" type="date" /></label>
+            </div>
+            <div class="form-grid four"><label>Integration scope<input id="boundary-integrations" placeholder="Approved read-only integrations" /></label><label>Permission scope<input id="boundary-permissions" placeholder="Least-privilege permissions" /></label><label>Autonomy scope<input id="boundary-autonomy" placeholder="Human-reviewed output" /></label><label>Monitoring owner<input id="boundary-monitoring" placeholder="Named role or person" /></label></div>
+          </fieldset>
 
           <div class="flag-groups">
-            <fieldset><legend>Data</legend>
-              <label class="check"><input id="personal-data" type="checkbox" /> Personal data</label>
-              <label class="check"><input id="special-data" type="checkbox" /> Special-category data</label>
-              <label class="check"><input id="production-data" type="checkbox" /> Production data</label>
-            </fieldset>
-            <fieldset><legend>Exposure</legend>
-              <label class="check"><input id="external-users" type="checkbox" /> External users</label>
-              <label class="check"><input id="production-access" type="checkbox" /> Production access</label>
-              <label class="check"><input id="consequential" type="checkbox" /> Consequential decisions</label>
-            </fieldset>
-            <fieldset><legend>Agent authority</legend>
-              <label class="check"><input id="uses-agents" type="checkbox" /> Uses agents</label>
-              <label class="check"><input id="takes-actions" type="checkbox" /> Can take actions</label>
-              <label class="check"><input id="irreversible" type="checkbox" /> Irreversible actions</label>
-              <label class="check"><input id="human-override" type="checkbox" checked /> Human override</label>
-            </fieldset>
-            <fieldset><legend>Classification declaration</legend>
-              <label class="check"><input id="prohibited" type="checkbox" /> Prohibited-practice candidate</label>
-              <label class="check"><input id="high-risk" type="checkbox" /> High-risk candidate</label>
-            </fieldset>
+            <fieldset><legend>Data</legend><label class="check"><input id="personal-data" type="checkbox" /> Personal data</label><label class="check"><input id="special-data" type="checkbox" /> Special-category data</label><label class="check"><input id="production-data" type="checkbox" /> Production data</label></fieldset>
+            <fieldset><legend>Exposure</legend><label class="check"><input id="external-users" type="checkbox" /> External users</label><label class="check"><input id="production-access" type="checkbox" /> Production access</label><label class="check"><input id="consequential" type="checkbox" /> Consequential decisions</label></fieldset>
+            <fieldset><legend>Agent authority</legend><label class="check"><input id="uses-agents" type="checkbox" /> Uses agents</label><label class="check"><input id="takes-actions" type="checkbox" /> Can take actions</label><label class="check"><input id="irreversible" type="checkbox" /> Irreversible actions</label><label class="check"><input id="human-override" type="checkbox" checked /> Human override</label></fieldset>
+            <fieldset><legend>Classification declaration</legend><label class="check"><input id="prohibited" type="checkbox" /> Prohibited-practice candidate</label><label class="check"><input id="high-risk" type="checkbox" /> High-risk candidate</label></fieldset>
           </div>
-          <div class="submit-row">
-            <p>Text files up to 2 MB each are read locally and sent to this engine instance for assessment.</p>
-            <button id="assess-button" class="primary-button" type="submit">Run readiness assessment</button>
-          </div>
+          <div class="submit-row"><p>Text files up to 2 MB each are read locally and sent to this engine instance for assessment.</p><button id="assess-button" class="primary-button" type="submit">Run readiness assessment</button></div>
         </form>
       </section>
 
-      <section id="progress" class="panel progress-panel hidden" aria-live="polite">
-        <div class="spinner"></div><div><strong>Building the evidence package</strong><p>Registering sources, resolving applicability, verifying controls and applying hard gates.</p></div>
-      </section>
+      <section id="progress" class="panel progress-panel hidden" aria-live="polite"><div class="spinner"></div><div><strong>Building the evidence package</strong><p>Registering sources, resolving applicability, verifying controls and applying hard gates.</p></div></section>
 
       <section id="results" class="hidden" aria-live="polite">
-        <div id="recommendation" class="recommendation"></div>
-        <div id="metric-grid" class="metric-grid"></div>
-        <section class="panel"><div class="section-heading"><div><p class="eyebrow">Lifecycle</p><h2>Progression boundary</h2></div></div><div id="lifecycle" class="lifecycle"></div></section>
-        <section id="human-decisions" class="panel"></section>
-        <section class="panel"><div class="section-heading"><div><p class="eyebrow">Deterministic controls</p><h2>Hard gates</h2></div></div><div id="gates" class="card-list"></div></section>
-        <section class="panel"><div class="section-heading"><div><p class="eyebrow">A–F assurance model</p><h2>Domain assessment</h2></div></div><div id="domains" class="domain-grid"></div></section>
-        <section class="panel"><div class="section-heading"><div><p class="eyebrow">Controlled remediation</p><h2>Governance Action Playbook</h2></div></div><div id="actions" class="action-list"></div></section>
-        <section class="panel"><div class="section-heading"><div><p class="eyebrow">Auditability</p><h2>Evidence and run trace</h2></div><button id="download-button" class="secondary-button" type="button">Download JSON package</button></div><div id="trace"></div></section>
+        <div id="view-switch" class="view-switch" role="tablist" aria-label="Assessment result view"><button id="summary-tab" class="view-tab active" type="button" role="tab" aria-selected="true">Assurance Summary</button><button id="workspace-tab" class="view-tab" type="button" role="tab" aria-selected="false">Assessment Workspace</button></div>
+        <section id="summary-view" role="tabpanel">
+          <div class="summary-toolbar"><div><p class="eyebrow">Decision-ready output</p><strong>Assurance Summary</strong></div><div class="export-actions"><button id="print-button" class="secondary-button" type="button">Print / Save PDF</button><button id="html-button" class="secondary-button" type="button">Download HTML</button><button id="download-button" class="secondary-button" type="button">Download JSON</button></div></div>
+          <div id="assurance-summary"></div>
+        </section>
+        <section id="workspace-view" class="hidden" role="tabpanel">
+          <div id="recommendation" class="recommendation"></div><div id="metric-grid" class="metric-grid"></div>
+          <section class="panel"><div class="section-heading"><div><p class="eyebrow">Lifecycle</p><h2>Progression boundary</h2></div></div><div id="lifecycle" class="lifecycle"></div></section>
+          <section id="human-decisions" class="panel"></section>
+          <section class="panel"><div class="section-heading"><div><p class="eyebrow">Deterministic controls</p><h2>Hard gates</h2></div></div><div id="gates" class="card-list"></div></section>
+          <section class="panel"><div class="section-heading"><div><p class="eyebrow">A-F assurance model</p><h2>Domain assessment</h2></div></div><div id="domains" class="domain-grid"></div></section>
+          <section class="panel"><div class="section-heading"><div><p class="eyebrow">Controlled remediation</p><h2>Governance Action Playbook</h2></div></div><div id="actions" class="action-list"></div></section>
+          <section class="panel"><div class="section-heading"><div><p class="eyebrow">Auditability</p><h2>Evidence and run trace</h2></div></div><div id="trace"></div></section>
+        </section>
       </section>
 
       <section id="error" class="error-panel hidden" aria-live="assertive"></section>
     </main>
-    <footer>Vivicta AI Governance Engine · Readiness recommendation, not formal approval</footer>
+    <footer>Vivicta AI Governance Engine - Readiness recommendation, not formal approval</footer>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

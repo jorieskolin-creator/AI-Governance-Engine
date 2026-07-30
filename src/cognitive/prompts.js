@@ -2,15 +2,15 @@ import { DOMAINS } from "../contracts.js";
 import { sha256, stableStringify } from "../core/hash.js";
 
 export const PROMPT_VERSIONS = Object.freeze({
-  solution: "solution-understanding-2.0.0",
+  solution: "solution-understanding-2.1.0",
   imageExtraction: "image-extraction-2.0.0",
   routing: "semantic-routing-2.0.0",
-  domain: "domain-assessment-2.0.0",
+  domain: "domain-assessment-2.1.0",
   verification: "claim-verification-2.0.0",
   rescan: "targeted-rescan-2.0.0",
   adjudication: "claim-adjudication-2.0.0",
-  synthesis: "controlled-synthesis-2.0.0",
-  factCheck: "narrative-fact-check-2.0.0"
+  synthesis: "controlled-synthesis-2.1.0",
+  factCheck: "narrative-fact-check-2.1.0"
 });
 
 const TRUST_PREAMBLE = `You are operating inside an evidence-gated AI governance assessment.
@@ -53,7 +53,7 @@ function renderUnits(packets) {
 export function solutionPrompt(dossier, packets) {
   return `${TRUST_PREAMBLE}
 
-Task: construct a solution-understanding model. Keep DECLARED facts from the dossier, OBSERVED facts from source evidence, and INFERRED facts separate. Identify contradictions and unknowns. A contradiction must cite every relevant source-unit ID. Do not make a binding legal classification.
+Task: construct a solution-understanding model. Keep DECLARED facts from the dossier, OBSERVED facts from source evidence, and INFERRED facts separate. Identify contradictions and unknowns. Explicitly assess whether the observed implementation fits the declared allowed uses, excluded uses, environment, users, data, integrations, permissions, autonomy, monitoring and boundary expiry. A contradiction must cite every relevant source-unit ID. Do not make a binding legal classification or rewrite the declared operating boundary.
 
 INTENDED_USE_DOSSIER
 ${stableStringify(dossier)}
@@ -70,6 +70,7 @@ export function domainPrompt({ domain, dossier, solutionModel, packets, controls
 Task: assess governance domain ${domain}: ${DOMAINS[domain]}.
 Generate candidate claims, not conclusions. Control support and anti-pattern assessment are separate streams.
 Every factual claim needs at least one exact source-unit ID and an exact, short verbatim quote copied from that source unit. Missing evidence is UNKNOWN. A test source supports TESTED only when it contains successful execution results and adequate scope; test code alone can support at most IMPLEMENTED. Code or configuration can support at most IMPLEMENTED. Human validation requires an attributable human review record and does not equal formal approval.
+Evaluate contextual relevance before creating a claim. Documentation describing a desired control, a knowledge-base rule, a test fixture, an example, or an unrelated domain implementation is not evidence that the assessed solution implements that control. Generic keyword overlap is never sufficient. Use CONTROL_SUPPORT only when the cited artifact performs or records the precise assessed control for this solution.
 For gaps or evidence requests, cite the source unit that demonstrates the limitation or contradiction; if no source shows it, cite the dossier-derived source IDs already present in the solution model and state the limitation explicitly.
 
 DOMAIN_CONTROLS
@@ -135,13 +136,20 @@ export function synthesisPrompt({ solutionModel, lockedFindings, deterministic, 
     lockedFindings,
     recommendation: deterministic.recommendation,
     dimensions: deterministic.dimensions,
+    transitionBoundary: deterministic.transitionBoundary,
+    assuranceSummaryFrame: {
+      assessmentMode: deterministic.assuranceSummary.assessmentMode,
+      gateRows: deterministic.assuranceSummary.gateRows,
+      domainSummaries: deterministic.assuranceSummary.domainSummaries,
+      limitations: deterministic.assuranceSummary.limitations
+    },
     hardGates: deterministic.hardGates,
     humanDecisionRequirements: deterministic.humanDecisionRequirements,
     actions
   };
   return `${TRUST_PREAMBLE}
 
-Task: write a concise decision-support synthesis using only the locked data below. Every domain narrative, condition, and human question must cite existing finding IDs. Do not introduce new facts. Do not say compliant, approved, certified, safe, or authorized. The deterministic recommendation and gates are immutable.
+Task: write concise, decision-ready narrative items using only the locked data below. Every item must use a unique draft ID and cite the existing finding, gate, control and evidence IDs that support its exact text. Use sections EXECUTIVE_DECISION, DOMAIN_NARRATIVE, CONFIRMED_STRENGTH, BLOCKING_FINDING, CONDITION, HUMAN_QUESTION or LIMITATION. DOMAIN_NARRATIVE items require a domain; HUMAN_QUESTION items require an authority. Do not introduce new facts. Do not say compliant, approved, certified, safe or authorized. Do not define, rewrite, relax or contradict the deterministic transition boundary, recommendation, dimensions, gates or human authority.
 
 LOCKED_DECISION_DATA
 ${stableStringify(allowed)}
@@ -151,14 +159,14 @@ END_LOCKED_DECISION_DATA`;
 export function factCheckPrompt(synthesis, lockedFindings, deterministic) {
   return `${TRUST_PREAMBLE}
 
-Task: fact-check the synthesis against the locked findings and deterministic decision. List unsupported statements verbatim and provide a corrected executive summary containing only supported claims. You cannot change gates, readiness, evidence states, or human authority requirements.
+Task: fact-check every synthesis item against the locked findings and deterministic decision. Return exactly one item result for each supplied item ID. Mark unsupported or partially supported text and provide correctedText containing only supported claims; use an empty correctedText when correction is impossible. You cannot change the transition boundary, gates, readiness, evidence states or human authority requirements.
 
 SYNTHESIS
 ${stableStringify(synthesis)}
 LOCKED_FINDINGS
 ${stableStringify(lockedFindings)}
 DETERMINISTIC_DECISION
-${stableStringify({ recommendation: deterministic.recommendation, hardGates: deterministic.hardGates })}`;
+${stableStringify({ recommendation: deterministic.recommendation, transitionBoundary: deterministic.transitionBoundary, hardGates: deterministic.hardGates, assuranceSummary: deterministic.assuranceSummary })}`;
 }
 
 export function packetHash(packets) {

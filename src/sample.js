@@ -12,7 +12,19 @@ export const SAMPLE_REQUEST = {
     data: { personalData: false, specialCategoryData: false, productionData: false },
     exposure: { externalUsers: false, productionAccess: false, consequentialDecisions: false },
     agent: { usesAgents: true, canTakeActions: false, irreversibleActions: false, humanOverride: true },
-    classification: { prohibitedPractice: false, highRiskCandidate: false }
+    classification: { prohibitedPractice: false, highRiskCandidate: false },
+    operatingBoundary: {
+      allowedUses: ["Internal employee question answering using approved knowledge sources"],
+      excludedUses: ["Consequential employment decisions", "Autonomous external communication"],
+      environment: "CONTROLLED_PILOT",
+      userScope: "Named pilot employees",
+      dataScope: "Public, synthetic, or explicitly approved internal content",
+      integrationScope: "Read-only approved knowledge connectors",
+      permissionScope: "No privileged or irreversible actions",
+      autonomyScope: "Human-reviewed answers only",
+      monitoringOwner: "Solution owner",
+      expiresAt: "2027-01-31"
+    }
   },
   sources: [
     {
@@ -53,4 +65,3 @@ export const SAMPLE_REQUEST = {
     }
   ]
 };
-

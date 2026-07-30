@@ -17,6 +17,7 @@ const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 const allowedOrigin = process.env.ALLOWED_ORIGIN ?? `http://localhost:${port}`;
 const maxBodyBytes = 25 * 1024 * 1024;
 const cognitiveEnabled = process.env.COGNITIVE_PIPELINE_ENABLED === "true";
+const assuranceSummaryEnabled = process.env.ASSURANCE_SUMMARY_ENABLED !== "false";
 const cognitiveToken = process.env.COGNITIVE_API_TOKEN ?? "";
 function positiveEnvNumber(name, fallback) {
   const value = Number(process.env[name] ?? fallback);
@@ -117,6 +118,7 @@ const server = http.createServer(async (request, response) => {
       return sendJson(response, 200, { status: "ok", knowledge: knowledgeManifestView(knowledge) });
     }
     if (request.method === "GET" && url.pathname === "/api/sample") return sendJson(response, 200, SAMPLE_REQUEST);
+    if (request.method === "GET" && url.pathname === "/api/config") return sendJson(response, 200, { assuranceSummaryEnabled });
     if (request.method === "GET" && url.pathname === "/api/knowledge") return sendJson(response, 200, knowledgeManifestView(knowledge));
     if (request.method === "POST" && url.pathname === "/api/assess") {
       const payload = await readJson(request);

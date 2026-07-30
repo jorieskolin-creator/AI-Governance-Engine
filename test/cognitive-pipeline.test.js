@@ -20,6 +20,12 @@ function domainFromSchema(schemaName) {
   return schemaName.match(/^domain_([a-f])_claims$/)?.[1]?.toUpperCase();
 }
 
+function jsonBetween(prompt, start, end) {
+  const startAt = prompt.indexOf(`${start}\n`) + start.length + 1;
+  const endAt = prompt.indexOf(`\n${end}`, startAt);
+  return JSON.parse(prompt.slice(startAt, endAt).trim());
+}
+
 function mockTransport({ schemaName, prompt, profile }) {
   const unitId = firstUnitId(prompt);
   const domain = domainFromSchema(schemaName);
@@ -31,8 +37,15 @@ function mockTransport({ schemaName, prompt, profile }) {
     value = { claims: [{ claimType: "CONTROL_SUPPORT", statement: `Candidate evidence for domain ${domain}.`, sourceUnitIds: [unitId], evidenceQuotes: [{ sourceUnitId: unitId, quote }], controlIds: [controlByDomain[domain]], antiPatternIds: [], requirementIds: [], domains: [domain], severity: "MEDIUM", proposedAssuranceState: "IMPLEMENTED", limitations: ["Static evidence only."] }] };
   }
   else if (schemaName === "claim_verification" || schemaName === "claim_adjudication") value = { status: "SUPPORTED", rationale: "The cited source unit supports the narrow candidate statement.", checkedSourceUnitIds: [unitId], conflictingSourceUnitIds: [] };
-  else if (schemaName === "readiness_synthesis") value = { executiveSummary: "The deterministic package identifies remediation before progression.", domainNarratives: [], conditions: [], humanQuestions: [] };
-  else if (schemaName === "narrative_fact_check") value = { supported: true, unsupportedStatements: [], correctedExecutiveSummary: "The deterministic package identifies remediation before progression." };
+  else if (schemaName === "readiness_synthesis") {
+    const data = jsonBetween(prompt, "LOCKED_DECISION_DATA", "END_LOCKED_DECISION_DATA");
+    const finding = data.lockedFindings[0];
+    value = { items: [{ id: "draft-executive", section: "EXECUTIVE_DECISION", text: "The deterministic package identifies remediation before progression.", findingIds: finding ? [finding.id] : [], gateIds: data.hardGates[0] ? [data.hardGates[0].id] : [], controlIds: finding?.controlIds ?? [], evidenceIds: [] }] };
+  }
+  else if (schemaName === "narrative_fact_check") {
+    const synthesis = jsonBetween(prompt, "SYNTHESIS", "LOCKED_FINDINGS");
+    value = { supported: true, itemResults: synthesis.items.map((item) => ({ itemId: item.id, status: "SUPPORTED", rationale: "The item is bounded by its cited deterministic references.", correctedText: "" })) };
+  }
   else throw new Error(`Unexpected schema: ${schemaName}`);
   return Promise.resolve({ value, responseModel: profile.model, usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } });
 }
@@ -53,9 +66,9 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: mockTransport });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
-  assert.equal(result.schemaVersion, "2.0.0");
+  assert.equal(result.schemaVersion, "2.1.0");
   assert.equal(result.recommendation.formalApproval, false);
-  assert.equal(result.cognitive.coverage.complete, true);
+  assert.deepEqual(result.cognitive.coverage.failedStages, [], JSON.stringify(run.trace));
   assert.equal(result.cognitive.lockedFindings.length, 6);
   assert.ok(result.cognitive.verificationRecords.every((item) => item.status === "SUPPORTED"));
   assert.ok(result.evidence.filter((item) => item.signal === "verified-control-evidence").every((item) => item.assuranceState === "IMPLEMENTED"));
@@ -96,13 +109,17 @@ test("unsupported synthesis is quarantined and cannot alter deterministic author
   const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
   const adversarialSynthesis = async (args) => {
     const result = await mockTransport(args);
-    if (args.schemaName === "readiness_synthesis") result.value.executiveSummary = "The system is formally approved and legally compliant.";
-    if (args.schemaName === "narrative_fact_check") result.value = { supported: false, unsupportedStatements: ["The system is formally approved and legally compliant."], correctedExecutiveSummary: "The deterministic package requires remediation before progression." };
+    if (args.schemaName === "readiness_synthesis") result.value.items[0].text = "The system is formally approved and legally compliant.";
+    if (args.schemaName === "narrative_fact_check") {
+      const synthesis = jsonBetween(args.prompt, "SYNTHESIS", "LOCKED_FINDINGS");
+      result.value = { supported: false, itemResults: synthesis.items.map((item) => ({ itemId: item.id, status: "UNSUPPORTED", rationale: "Formal approval is outside the Engine authority.", correctedText: "The deterministic package requires remediation before progression." })) };
+    }
     return result;
   };
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: adversarialSynthesis });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
   assert.equal(result.recommendation.formalApproval, false);
   assert.equal(result.cognitive.narrative.quarantine.status, "QUARANTINED");
-  assert.doesNotMatch(result.cognitive.narrative.executiveSummary, /formally approved|legally compliant/i);
+  assert.ok(result.cognitive.narrative.items.length > 0);
+  assert.ok(result.cognitive.narrative.items.every((item) => !/formally approved|legally compliant/i.test(item.text)));
 });

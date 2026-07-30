@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 
 const projectRoot = resolve(import.meta.dirname, "..");
 const thisFile = fileURLToPath(import.meta.url);
-const sourceRoots = ["src", "test", "scripts"];
-const requiredFiles = ["public/index.html", "public/styles.css", "public/app.js", "railway.json", ".env.example"];
+const sourceRoots = ["src", "test", "scripts", "public"];
+const requiredFiles = ["public/index.html", "public/styles.css", "public/app.js", "public/report.js", "railway.json", ".env.example"];
 const forbiddenDomainTerms = [
   /finops_readiness/i,
   /crawl[\s_-]*walk[\s_-]*run/i,

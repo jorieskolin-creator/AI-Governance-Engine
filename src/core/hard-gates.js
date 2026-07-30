@@ -1,10 +1,10 @@
-import { newId } from "./hash.js";
+import { stableId } from "./hash.js";
 
 function gate(code, outcome, title, rationale, evidenceIds = [], authorities = []) {
-  return { id: newId("gate"), code, outcome, title, rationale, evidenceIds, requiredHumanAuthorities: authorities };
+  return { id: stableId("gate", { code, outcome, evidenceIds, authorities }), code, outcome, title, rationale, evidenceIds, requiredHumanAuthorities: authorities };
 }
 
-export function evaluateHardGates({ dossier, registryFindings, controlAssessments, applicability, evidence }) {
+export function evaluateHardGates({ dossier, registryFindings, controlAssessments, applicability, evidence, cognitiveCoverage = null }) {
   const gates = [];
   const control = (id) => controlAssessments.find((item) => item.controlId === id);
 
@@ -35,6 +35,16 @@ export function evaluateHardGates({ dossier, registryFindings, controlAssessment
     if (missingCritical.length) gates.push(gate("CRITICAL_DEPLOYMENT_CONTROLS", "BLOCK", "Critical deployment controls are not established", "Critical controls cannot be averaged away by otherwise high readiness.", missingCritical.flatMap((item) => item.gap.evidenceIds), ["SECURITY", "GOVERNANCE"]));
     gates.push(gate("HUMAN_DEPLOYMENT_DECISION", "REVIEW", "Deployment requires a human decision", "The readiness package is decision support; it cannot issue formal deployment approval.", [], [dossier.classification.highRiskCandidate ? "AI_BOARD" : "AI_FORUM"]));
   }
+  if (cognitiveCoverage?.required && !cognitiveCoverage.complete) {
+    const failed = cognitiveCoverage.failedStages?.join(", ") || "required cognitive stages";
+    gates.push(gate(
+      "COGNITIVE_ASSESSMENT_INCOMPLETE",
+      dossier.targetStage === "DEPLOYMENT" ? "BLOCK" : "REVIEW",
+      "Cognitive assessment is incomplete",
+      `The evidence-gated assessment did not complete: ${failed}. Missing or failed analysis cannot be treated as evidence of readiness.`,
+      [],
+      ["GOVERNANCE"]
+    ));
+  }
   return gates;
 }
-

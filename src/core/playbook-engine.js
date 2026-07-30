@@ -1,4 +1,4 @@
-import { newId } from "./hash.js";
+import { stableId } from "./hash.js";
 
 const CONTROL_SIGNAL_OVERRIDES = {
   "CTRL-A-02": "classification-unknown",
@@ -17,8 +17,7 @@ export function selectPlaybookActions(tactics, domains, antiPatternAssessments, 
   ];
   const selected = new Map();
   for (const finding of findings) {
-    const tactic = tactics.find((item) => item.findingSignals.includes(finding.signal) && item.domains.includes(finding.domain))
-      ?? tactics.find((item) => item.domains.includes(finding.domain) && item.lifecycleStages.includes(dossier.targetStage));
+    const tactic = tactics.find((item) => item.status === "APPROVED" && item.findingSignals.includes(finding.signal) && item.domains.includes(finding.domain));
     if (!tactic) continue;
     const existing = selected.get(tactic.id);
     if (existing) {
@@ -27,7 +26,7 @@ export function selectPlaybookActions(tactics, domains, antiPatternAssessments, 
       continue;
     }
     selected.set(tactic.id, {
-      id: newId("action"), tacticId: tactic.id, tacticVersion: tactic.version, title: tactic.title,
+      id: stableId("action", { tacticId: tactic.id, findingId: finding.id }), tacticId: tactic.id, tacticVersion: tactic.version, title: tactic.title,
       state: "CANDIDATE_ACTION", lockedFindingIds: [finding.id], evidenceIds: [...finding.evidenceIds],
       activationReason: finding.title, ownerRoles: tactic.ownerRoles, activities: tactic.activities,
       requiredArtifacts: tactic.requiredArtifacts, acceptanceCriteria: tactic.acceptanceCriteria,
@@ -37,4 +36,3 @@ export function selectPlaybookActions(tactics, domains, antiPatternAssessments, 
   }
   return [...selected.values()].map((item) => ({ ...item, lockedFindingIds: [...new Set(item.lockedFindingIds)], evidenceIds: [...new Set(item.evidenceIds)] }));
 }
-

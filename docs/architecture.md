@@ -4,25 +4,31 @@ The AI Governance Engine is a standalone evidence-processing service. It reuses 
 
 ```mermaid
 flowchart LR
-  D["Intended-use dossier"] --> R["Source registration and hashing"]
-  C["Code, configuration and tests"] --> R
-  E["Reviews and operational evidence"] --> R
-  V["Versioned Vercel knowledge manifest"] --> A["Applicability and A-F assessment"]
-  R --> A
-  A --> G["Deterministic hard gates"]
-  A --> P["Governance Action and Decision Playbook"]
-  G --> O["Canonical readiness package"]
-  P --> O
-  O --> U["Railway dashboard and API"]
+  D["Dossier and untrusted evidence"] --> P["Local parse, DLP, provenance and packet approval"]
+  P --> S["Locked solution understanding"]
+  S --> A["Parallel A-F candidate claims"]
+  A --> V["Independent verification and targeted rescan"]
+  V --> L["Locked findings only"]
+  K["Versioned Vercel knowledge manifest"] --> G["Deterministic applicability, controls and hard gates"]
+  L --> G
+  G --> T["Exact approved playbook mapping"]
+  G --> Y["Controlled synthesis"]
+  T --> Y
+  Y --> F["Independent narrative fact-check"]
+  F --> O["Canonical ReadinessPackageV2"]
   O --> H["Named human authorities"]
 ```
 
 ## Trust boundaries
 
-- Uploaded content is untrusted evidence, not executable instruction. The server stores neither submitted files nor secrets.
+- Uploaded content is untrusted evidence, not executable instruction. Raw bytes are memory-only; redacted excerpts, hashes, claims, findings, model traces, and the package may survive the run.
+- A packet is sent only after explicit packet/provider approval. The trace records provider, model, parameters, prompt/schema version, packet hash, usage, latency, retries, and output hash without recording credentials.
+- Provider disagreement is not resolved by majority vote. Unresolved high/critical disagreement is routed to a named human authority.
 - Evidence state is derived from artifact type. Code/configuration can establish only `IMPLEMENTED`; tests and scans can establish `TESTED`; operational records can establish `OPERATIONALLY_OBSERVED`.
 - `HUMAN_VALIDATED` and `FORMALLY_APPROVED` require a non-engine actor identifier plus an allow-listed authority.
 - Hard gates are deterministic and cannot be overridden by narrative generation.
+- Missing cognitive stages create `COGNITIVE_ASSESSMENT_INCOMPLETE`; positive deployment progression fails closed.
+- Synthesis sees only locked data. A different-provider fact-check quarantines unsupported prose and cannot alter deterministic results.
 - The output is a readiness recommendation. Approval, legal interpretation, privacy review, security acceptance, residual-risk acceptance, and deployment authorization remain named human acts.
 
 ## Deployment boundary

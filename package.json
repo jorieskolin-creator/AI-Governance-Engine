@@ -5,11 +5,18 @@
   "type": "module",
   "description": "Evidence-gated AI solution readiness engine",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.16.0"
   },
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test",
-    "check": "node scripts/check-sources.js && node --test"
+    "check": "node scripts/check-sources.js && node --test",
+    "benchmark:models": "node scripts/benchmark-models.js"
+  },
+  "dependencies": {
+    "mammoth": "1.12.0",
+    "pdfjs-dist": "5.4.149",
+    "read-excel-file": "9.3.5",
+    "unzipper": "0.12.5"
   }
 }

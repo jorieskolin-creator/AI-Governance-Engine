@@ -15,11 +15,33 @@ This is a clean governance implementation inspired by the FinOps Engine's proces
 - Produces a JSON readiness package and an interactive dashboard.
 - Records required human authorities without issuing formal approval.
 
+## Evidence-gated cognitive pipeline (v2)
+
+The optional v2 path adds semantic solution understanding, parallel A-F claim extraction, independent verification, targeted rescan/adjudication, deterministic assessment, controlled synthesis, and a separate fact-check. Its invariant is:
+
+`untrusted source → candidate claim → independent verification → locked finding → deterministic decision → controlled synthesis`
+
+Only locked findings become evidence for the deterministic engine. Raw model output cannot change applicability, assurance, anti-pattern state, hard gates, readiness, or formal authority.
+
+The v2 endpoints are disabled by default and require a bearer token:
+
+- `POST /api/v2/runs/preflight` parses and screens evidence locally and returns redacted packet previews.
+- `POST /api/v2/runs/{id}/execute` records explicit packet/provider approval and starts the run.
+- `GET /api/v2/runs/{id}` returns progress.
+- `GET /api/v2/runs/{id}/result` returns `ReadinessPackageV2`.
+- `DELETE /api/v2/runs/{id}` cancels and purges the ephemeral evidence.
+- `GET /api/v2/models` shows profile availability and approval state without exposing credentials.
+
+Preflight accepts UTF-8 or base64 content with an explicit MIME type. Supported formats are text/code/JSON/CSV, PDF, DOCX, XLSX, PNG, JPEG, and WebP. Office archives are checked for unsafe paths, macros, excessive expansion, and suspicious compression. Files, macros, spreadsheet formulas, scripts, links, and source instructions are never executed or calculated. Images must be marked by the caller as sanitized before they can be transmitted.
+
+Production model profiles are allow-listed through `MODEL_PROFILE_APPROVALS`. Pilot profiles are never promoted automatically.
+
 ## Run
 
-Node.js 20 or newer is the only dependency.
+Use Node.js 20.16 or newer. Install the pinned parser dependencies before starting:
 
 ```powershell
+npm install
 npm test
 npm start
 ```
@@ -55,6 +77,36 @@ Open `http://localhost:4174`. Use **Load credible sample** to inspect the comple
 ```
 
 `GET /api/sample` returns a complete sample request. `GET /api/knowledge` returns the active, versioned knowledge manifest.
+
+### v2 preflight example
+
+```json
+{
+  "dossier": { "...": "same dossier contract as v1" },
+  "sources": [
+    {
+      "path": "src/assistant.js",
+      "mimeType": "application/javascript",
+      "encoding": "utf8",
+      "content": "export function answer() { /* ... */ }",
+      "metadata": { "kind": "CODE" }
+    }
+  ]
+}
+```
+
+Use `Authorization: Bearer <COGNITIVE_API_TOKEN>` for every `/api/v2/*` request. Submit every returned packet ID to `/execute` with the explicitly approved provider names. A high/critical claim needs a provider different from its extractor; insufficient provider approval produces `COGNITIVE_ASSESSMENT_INCOMPLETE` rather than a positive recommendation.
+
+## Model qualification
+
+Run the live harness only in a controlled environment with provider credentials:
+
+```powershell
+$env:BENCHMARK_CONFIRM_LIVE_CALLS="true"
+npm run benchmark:models
+```
+
+Use `BENCHMARK_PROFILE_IDS` to constrain cost. The harness checks schemas and zero-tolerance integrity conditions and emits hashes, usage, and latency. It deliberately reports `REQUIRES_HUMAN_LABEL_REVIEW`: human-labelled precision and high/critical recall must meet the documented floors before profile IDs are added to `MODEL_PROFILE_APPROVALS`.
 
 ## Human authority boundary
 

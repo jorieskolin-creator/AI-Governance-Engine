@@ -18,3 +18,7 @@ export function stableStringify(value) {
 export function newId(prefix) {
   return `${prefix}-${randomUUID()}`;
 }
+
+export function stableId(prefix, value, length = 24) {
+  return `${prefix}-${sha256(value).slice(0, length)}`;
+}

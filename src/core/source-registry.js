@@ -1,5 +1,5 @@
 import { HUMAN_AUTHORITIES } from "../contracts.js";
-import { newId, sha256 } from "./hash.js";
+import { sha256, stableId } from "./hash.js";
 
 const SECRET_PATTERNS = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
@@ -63,7 +63,11 @@ function assuranceForKind(kind, metadata = {}) {
   if (kind === "FORMAL_APPROVAL" && validHuman) return "HUMAN_VALIDATED";
   if (kind === "HUMAN_REVIEW" && validHuman) return "HUMAN_VALIDATED";
   if (kind === "OPERATIONAL_LOG" || kind === "MONITORING_RECORD") return "OPERATIONALLY_OBSERVED";
-  if (["TEST", "SCAN_RESULT", "PENETRATION_TEST"].includes(kind)) return "TESTED";
+  if (["TEST", "SCAN_RESULT", "PENETRATION_TEST"].includes(kind)) {
+    const passed = [metadata.executionStatus, metadata.resultStatus, metadata.status].some((value) => value === "PASSED");
+    const scoped = typeof metadata.scope === "string" && metadata.scope.trim().length > 0;
+    return passed && scoped ? "TESTED" : kind === "TEST" ? "IMPLEMENTED" : "DECLARED";
+  }
   if (["CODE", "CONFIGURATION"].includes(kind)) return "IMPLEMENTED";
   return "DECLARED";
 }
@@ -89,7 +93,7 @@ export function buildSourceRegistry(sources, now = new Date()) {
 
     if (Array.isArray(source.metadata?.controlIds) && source.metadata.controlIds.length) {
       evidence.push({
-        id: newId("evd"), sourceId, path: source.path, kind: source.kind, sha256: sourceHash,
+        id: stableId("evd", { sourceId, signal: source.metadata.signal ?? "explicit-control-evidence", controlIds: source.metadata.controlIds, excerpt: safeContent.slice(0, 300) }), sourceId, path: source.path, kind: source.kind, sha256: sourceHash,
         excerpt: safeContent.slice(0, 300).replace(/\s+/g, " ").trim(),
         signal: source.metadata.signal ?? "explicit-control-evidence",
         domainIds: source.metadata.domainIds ?? [], controlIds: source.metadata.controlIds,
@@ -102,7 +106,7 @@ export function buildSourceRegistry(sources, now = new Date()) {
       const match = pattern.exec(source.content);
       if (!match) continue;
       const artifact = {
-        id: newId("evd"), sourceId, path: source.path, kind: "SCAN_RESULT", sha256: sourceHash,
+        id: stableId("evd", { sourceId, signal: "hardcoded-secret" }), sourceId, path: source.path, kind: "SCAN_RESULT", sha256: sourceHash,
         excerpt: "Potential secret material detected; value redacted.", signal: "hardcoded-secret", domainIds: ["D"],
         controlIds: ["CTRL-D-01"], antiPatternIds: ["AP-D-01"], assuranceState: "TESTED",
         polarity: "RISK", stale: false, capturedAt: now.toISOString(), metadata: { scanner: "built-in-secret-scan" }
@@ -116,7 +120,7 @@ export function buildSourceRegistry(sources, now = new Date()) {
       const textMatch = signal.text.exec(safeContent);
       if (!textMatch) continue;
       evidence.push({
-        id: newId("evd"), sourceId, path: source.path, kind: source.kind, sha256: sourceHash,
+        id: stableId("evd", { sourceId, signal: signal.signal, index: textMatch.index }), sourceId, path: source.path, kind: source.kind, sha256: sourceHash,
         excerpt: excerpt(safeContent, textMatch.index), signal: signal.signal, domainIds: signal.domains,
         controlIds: signal.controls, antiPatternIds: [], assuranceState, polarity: "SUPPORT",
         stale, capturedAt: now.toISOString(), metadata: source.metadata
@@ -125,7 +129,7 @@ export function buildSourceRegistry(sources, now = new Date()) {
 
     for (const antiPatternId of source.metadata?.testedAbsenceOf ?? []) {
       evidence.push({
-        id: newId("evd"), sourceId, path: source.path, kind: source.kind, sha256: sourceHash,
+        id: stableId("evd", { sourceId, signal: "tested-absence", antiPatternId }), sourceId, path: source.path, kind: source.kind, sha256: sourceHash,
         excerpt: `Explicit test for absence of ${antiPatternId}`, signal: "tested-absence", domainIds: [], controlIds: [],
         antiPatternIds: [antiPatternId], assuranceState, polarity: "ABSENCE_TEST", stale, capturedAt: now.toISOString(), metadata: source.metadata
       });
@@ -143,7 +147,7 @@ export function dossierEvidence(dossier, now = new Date()) {
     { signal: "classification", excerpt: `Prohibited=${dossier.classification.prohibitedPractice}; highRiskCandidate=${dossier.classification.highRiskCandidate}`, domains: ["A"], controls: ["CTRL-A-02"] }
   ];
   return entries.map((entry) => ({
-    ...common, id: newId("evd"), excerpt: entry.excerpt, signal: entry.signal, domainIds: entry.domains,
+    ...common, id: stableId("evd", { sourceId: "dossier", signal: entry.signal, excerpt: entry.excerpt }), excerpt: entry.excerpt, signal: entry.signal, domainIds: entry.domains,
     controlIds: entry.controls, antiPatternIds: [], polarity: "SUPPORT"
   }));
 }
@@ -151,7 +155,7 @@ export function dossierEvidence(dossier, now = new Date()) {
 export function dossierRiskEvidence(dossier, now = new Date()) {
   const base = { sourceId: "dossier", path: "intended-use-dossier", kind: "DECLARATION", sha256: sha256(dossier), assuranceState: "DECLARED", stale: false, capturedAt: now.toISOString(), polarity: "RISK", metadata: {} };
   const risks = [];
-  const push = (signal, excerpt, domainIds, controlIds, antiPatternIds) => risks.push({ ...base, id: newId("evd"), signal, excerpt, domainIds, controlIds, antiPatternIds });
+  const push = (signal, excerpt, domainIds, controlIds, antiPatternIds) => risks.push({ ...base, id: stableId("evd", { sourceId: "dossier", signal, excerpt }), signal, excerpt, domainIds, controlIds, antiPatternIds });
   if ((dossier.data.personalData || dossier.data.specialCategoryData) && dossier.data.productionData) {
     push("unapproved-sensitive-data", "The dossier declares use of production personal or special-category data.", ["B"], ["CTRL-B-01", "CTRL-B-02"], ["AP-B-01"]);
   }

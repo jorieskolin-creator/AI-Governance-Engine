@@ -76,6 +76,20 @@ test("code is implementation evidence, never proof of testing or operation", asy
   assert.equal(control(result, "CTRL-D-01").meetsTarget, false);
 });
 
+test("a test file is not TESTED evidence without a passed result and scope", async () => {
+  const result = await assessSolution(request({
+    sources: [{ path: "test/security.test.js", kind: "TEST", content: "assertPromptInjectionBlocked();", metadata: { controlIds: ["CTRL-D-02"] } }]
+  }));
+  assert.equal(control(result, "CTRL-D-02").state, "IMPLEMENTED");
+});
+
+test("passed test results with explicit scope can establish TESTED", async () => {
+  const result = await assessSolution(request({
+    sources: [{ path: "results/security-evaluation.json", kind: "TEST", content: "All 120 prompt-injection cases passed.", metadata: { controlIds: ["CTRL-D-02"], executionStatus: "PASSED", scope: "120 approved prompt-injection and leakage cases against build abc123" } }]
+  }));
+  assert.equal(control(result, "CTRL-D-02").state, "TESTED");
+});
+
 test("expired evidence cannot satisfy a control", async () => {
   const result = await assessSolution(request({
     sources: [{

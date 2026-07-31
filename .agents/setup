@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+toolchain_prefix="$HOME/.local"
+node_is_supported() {
+  "$1" -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 20 || (major === 20 && minor >= 16) ? 0 : 1)'
+}
+pnpm_is_supported() {
+  local version major
+  version="$("$1" --version 2>/dev/null)" || return 1
+  major="${version%%.*}"
+  [[ "$major" =~ ^[0-9]+$ ]] && (( major >= 9 ))
+}
+
+if [[ -x "$toolchain_prefix/bin/node" ]] && node_is_supported "$toolchain_prefix/bin/node"; then
+  export PATH="$toolchain_prefix/bin:$PATH"
+fi
+
+if ! command -v node >/dev/null 2>&1 || ! node_is_supported "$(command -v node)"; then
+  echo "Installing the Node.js 22 and pnpm toolchain..."
+  mkdir -p "$toolchain_prefix"
+  npm install --global --prefix "$toolchain_prefix" node@22 pnpm@10
+  export PATH="$toolchain_prefix/bin:$PATH"
+fi
+
+echo "Checking Node.js version..."
+node_is_supported "$(command -v node)"
+
+if ! command -v pnpm >/dev/null 2>&1 || ! pnpm_is_supported "$(command -v pnpm)"; then
+  echo "Installing pnpm..."
+  npm install --global --prefix "$toolchain_prefix" pnpm@10
+  export PATH="$toolchain_prefix/bin:$PATH"
+fi
+
+for profile in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+  if [[ -f "$profile" ]]; then
+    sed -i '/^# AI-Governance-Engine orb toolchain$/,+3d' "$profile"
+  fi
+done
+
+if [[ -f "$HOME/.bash_profile" ]]; then
+  login_profile="$HOME/.bash_profile"
+elif [[ -f "$HOME/.bash_login" ]]; then
+  login_profile="$HOME/.bash_login"
+else
+  login_profile="$HOME/.profile"
+fi
+
+profile_marker="# AI-Governance-Engine orb PATH"
+if ! grep -Fqx "$profile_marker" "$login_profile" 2>/dev/null; then
+  cat >> "$login_profile" <<'EOF'
+
+# AI-Governance-Engine orb PATH
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+EOF
+fi
+
+echo "Installing project dependencies..."
+pnpm install --frozen-lockfile

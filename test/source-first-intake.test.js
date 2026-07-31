@@ -5,6 +5,7 @@ import { SAMPLE_REQUEST } from "../src/sample.js";
 import { createPreflight, confirmPreflightDossier } from "../src/cognitive/preflight.js";
 import { parseAndScreenSources } from "../src/cognitive/source-intake.js";
 import { jurisdictionScope } from "../src/core/jurisdictions.js";
+import { resolveUploadMimeType } from "../public/upload-types.js";
 
 function sampleRequest() { return structuredClone(SAMPLE_REQUEST); }
 
@@ -45,6 +46,16 @@ High risk candidate: No`;
 
 test("Finland country names and ISO codes activate EU/EEA scope", () => {
   for (const value of ["Finland", "FI", "FIN", "Suomi"]) assert.equal(jurisdictionScope([value]).euEea, true, value);
+});
+
+test("recognized extensionless and dot-prefixed configuration files are accepted as inert text", async () => {
+  for (const name of [".env", ".env.example", "Dockerfile", "Makefile", ".gitignore"]) {
+    assert.equal(resolveUploadMimeType(name), "text/plain", name);
+  }
+  assert.equal(resolveUploadMimeType("unrecognized.binary"), "");
+  const run = await createPreflight({ sources: [{ path: ".env.example", mimeType: resolveUploadMimeType(".env.example"), encoding: "utf8", content: "OPENAI_API_KEY=replace-me" }] });
+  assert.equal(run.registeredSources[0].artifactClass, "CONFIGURATION");
+  assert.equal(run.packets[0].sourceUnits[0].evidenceKind, "CONFIGURATION");
 });
 
 test("a synthetic credential in a test fixture does not become a confirmed secret gate", async () => {

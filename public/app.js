@@ -1,4 +1,5 @@
 import { renderAssuranceSummary, standaloneReportHtml } from "/report.js";
+import { binaryMimeTypes, resolveUploadMimeType } from "/upload-types.js";
 
 const STAGES = [
   "QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION",
@@ -76,14 +77,6 @@ function dossierFromForm() {
   };
 }
 
-const mimeByExtension = {
-  pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  csv: "text/csv", html: "text/html", htm: "text/html", md: "text/markdown", txt: "text/plain", json: "application/json", yaml: "text/plain", yml: "text/plain", toml: "text/plain", ini: "text/plain",
-  js: "application/javascript", mjs: "application/javascript", cjs: "application/javascript", ts: "text/typescript", tsx: "text/typescript", jsx: "application/javascript", css: "text/css", py: "text/plain", java: "text/plain", go: "text/plain", rs: "text/plain", rb: "text/plain", php: "text/plain", cs: "text/plain", sql: "text/plain", tf: "text/plain",
-  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp"
-};
-const binaryMime = new Set(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "image/png", "image/jpeg", "image/webp"]);
-
 function bytesToBase64(buffer) {
   const bytes = new Uint8Array(buffer); let binary = "";
   for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
@@ -92,10 +85,9 @@ function bytesToBase64(buffer) {
 
 async function browserFileSource(file) {
   if (file.size > 15 * 1024 * 1024) throw new Error(`${file.name} exceeds the 15 MB source limit.`);
-  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
-  const mimeType = mimeByExtension[extension] || file.type;
+  const mimeType = resolveUploadMimeType(file.name, file.type);
   if (!mimeType) throw new Error(`${file.name} has an unsupported file type.`);
-  const encoding = binaryMime.has(mimeType) ? "base64" : "utf8";
+  const encoding = binaryMimeTypes.has(mimeType) ? "base64" : "utf8";
   const content = encoding === "base64" ? bytesToBase64(await file.arrayBuffer()) : await file.text();
   return { path: file.webkitRelativePath || file.name, mimeType, encoding, content };
 }

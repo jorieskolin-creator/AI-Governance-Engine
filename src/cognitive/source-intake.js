@@ -164,7 +164,7 @@ function sourceKindForPath(path) {
   const extension = extname(path).toLowerCase();
   if (/test|spec|eval/.test(path)) return "TEST";
   if ([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".py", ".java", ".go", ".rs", ".rb", ".cs"].includes(extension)) return "CODE";
-  if ([".json", ".yaml", ".yml", ".toml", ".ini", ".tf"].includes(extension)) return "CONFIGURATION";
+  if ([".json", ".yaml", ".yml", ".toml", ".ini", ".tf"].includes(extension) || /(?:^|[\\/])(?:\.env(?:\.[^\\/]+)?|dockerfile(?:\.[^\\/]+)?|makefile|procfile)$/i.test(path)) return "CONFIGURATION";
   return "DOCUMENT";
 }
 

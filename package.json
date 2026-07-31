@@ -11,11 +11,16 @@
     "start": "node src/server.js",
     "test": "node --test",
     "check": "node scripts/check-sources.js && node --test",
-    "benchmark:models": "node scripts/benchmark-models.js"
+    "benchmark:models": "node scripts/benchmark-models.js",
+    "kb:validate": "node scripts/knowledge-authoring.js validate",
+    "kb:compile": "node scripts/knowledge-authoring.js compile",
+    "kb:render": "node scripts/knowledge-authoring.js render",
+    "kb:manifest": "node scripts/knowledge-authoring.js manifest"
   },
   "dependencies": {
     "mammoth": "1.12.0",
     "pdfjs-dist": "5.4.149",
+    "pdfkit": "0.19.1",
     "read-excel-file": "9.3.5",
     "unzipper": "0.12.5"
   }

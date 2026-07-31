@@ -27,28 +27,29 @@ export function assessControls(controls, applicability, evidence, dossier, antiP
   const appMap = requirementStateMap(applicability);
   return controls.filter((control) => controlInScope(control, dossier)).map((control) => {
     const applicable = controlApplicability(control, appMap);
+    const targetState = control.targetStateByLifecycle?.[dossier.targetStage] ?? control.targetState;
     if (applicable === "NOT_APPLICABLE") {
-      return { id: stableId("control-assessment", { controlId: control.id, applicable }), controlId: control.id, domain: control.domain, title: control.title, applicability: applicable, state: "NOT_APPLICABLE", targetState: control.targetState, meetsTarget: true, evidenceIds: [], contradictions: [], gap: null };
+      return { id: stableId("control-assessment", { controlId: control.id, applicable }), controlId: control.id, domain: control.domain, title: control.title, applicability: applicable, state: "NOT_APPLICABLE", targetState, meetsTarget: true, evidenceIds: [], contradictions: [], gap: null };
     }
     const supporting = evidence.filter((item) => item.controlIds.includes(control.id) && item.polarity === "SUPPORT" && !item.stale && item.eligibleForAssurance !== false);
     const risks = evidence.filter((item) => ["RISK", "RISK_PARTIAL"].includes(item.polarity) && (item.controlIds.includes(control.id) || item.antiPatternIds.some((id) => antiPatterns.find((entry) => entry.id === id)?.relatedControlIds.includes(control.id))));
     const state = strongestState(supporting);
     const contradictions = supporting.length && risks.length ? risks.map((item) => item.id) : [];
-    const meetsTarget = STATE_WEIGHT[state] >= STATE_WEIGHT[control.targetState] && contradictions.length === 0;
+    const meetsTarget = STATE_WEIGHT[state] >= STATE_WEIGHT[targetState] && contradictions.length === 0;
     const gap = meetsTarget ? null : {
-      id: stableId("gap", { controlId: control.id, state, targetState: control.targetState, contradictions }), domain: control.domain, controlId: control.id, title: `${control.title} is not sufficiently established`,
+      id: stableId("gap", { controlId: control.id, state, targetState, contradictions }), domain: control.domain, controlId: control.id, title: `${control.title} is not sufficiently established`,
       description: state === "UNKNOWN"
         ? "No acceptable evidence establishes this control. Missing evidence remains unknown, not absent."
         : contradictions.length
           ? `Evidence supports ${state}, but contradictory risk evidence prevents reliance on the control.`
-          : `Available evidence establishes ${state}; ${control.targetState} is required for this lifecycle transition.`,
-      severity: control.severity, currentState: state, targetState: control.targetState,
+          : `Available evidence establishes ${state}; ${targetState} is required for this lifecycle transition.`,
+      severity: control.severity, currentState: state, targetState,
       signal: control.signals[0], evidenceIds: [...supporting, ...risks].map((item) => item.id),
       humanReviewRequired: applicable === "POTENTIALLY_APPLICABLE"
     };
     return {
       id: stableId("control-assessment", { controlId: control.id, applicable, state, contradictions }), controlId: control.id, domain: control.domain, title: control.title,
-      applicability: applicable, state, targetState: control.targetState, meetsTarget, evidenceIds: supporting.map((item) => item.id),
+      applicability: applicable, state, targetState, meetsTarget, evidenceIds: supporting.map((item) => item.id),
       contradictions, gap
     };
   });

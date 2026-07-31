@@ -14,6 +14,7 @@ import { executeCognitiveRun } from "./cognitive/pipeline.js";
 import { modelPolicy, publicModelPolicy } from "./cognitive/model-policy.js";
 import { EphemeralRunStore } from "./cognitive/run-store.js";
 import { buildSourceIngestionManifest } from "./core/source-ingestion.js";
+import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
 
 const port = Number(process.env.PORT ?? 4174);
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
@@ -149,8 +150,13 @@ const server = http.createServer(async (request, response) => {
       return sendJson(response, 200, { status: "ok", knowledge: knowledgeManifestView(knowledge) });
     }
     if (request.method === "GET" && url.pathname === "/api/sample") return sendJson(response, 200, SAMPLE_REQUEST);
-    if (request.method === "GET" && url.pathname === "/api/config") return sendJson(response, 200, { assuranceSummaryEnabled });
+    if (request.method === "GET" && url.pathname === "/api/config") return sendJson(response, 200, {
+      assuranceSummaryEnabled,
+      cognitivePipelineEnabled: cognitiveEnabled,
+      discoveryRecheckAvailable: cognitiveEnabled
+    });
     if (request.method === "GET" && url.pathname === "/api/knowledge") return sendJson(response, 200, knowledgeManifestView(knowledge));
+    if (request.method === "GET" && url.pathname === "/api/knowledge/diagnostics") return sendJson(response, 200, knowledge.diagnostics ?? { status: "UNKNOWN", issues: [{ severity: "WARNING", code: "DIAGNOSTICS_UNAVAILABLE", message: "Knowledge diagnostics were not generated at startup.", entryIds: [] }] });
     if (request.method === "POST" && url.pathname === "/api/discover") {
       const payload = await readJson(request);
       const validated = validatePreflightInput({ sources: payload.sources ?? [] }, { dossierOptional: true });
@@ -160,7 +166,12 @@ const server = http.createServer(async (request, response) => {
         solutionProfile: discoverSolutionProfile(screened.sourceUnits),
         sourceManifest: screened.registeredSources,
         dlpFindings: screened.dlpFindings,
-        sourceIngestion
+        sourceIngestion,
+        discoveryRecheck: {
+          status: cognitiveEnabled ? "AVAILABLE_AFTER_APPROVAL" : "DISABLED",
+          endpoint: cognitiveEnabled ? "/api/v2/runs/{id}/discover-recheck" : null,
+          policy: "AI recheck requires authenticated v2 preflight plus explicit packet and provider approval. Candidates never overwrite deterministic discovery."
+        }
       });
     }
     if (request.method === "POST" && url.pathname === "/api/assess") {
@@ -181,6 +192,14 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && discoverMatch) {
       const run = runStore.get(discoverMatch[1]);
       return run ? sendJson(response, 200, publicDiscoveryView(run)) : sendJson(response, 404, { error: "Run not found or expired" });
+    }
+    const recheckMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/discover-recheck$/);
+    if (request.method === "POST" && recheckMatch) {
+      const run = runStore.get(recheckMatch[1]);
+      if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
+      const blocking = run.dlpFindings.filter((item) => item.blocking);
+      if (blocking.length) return sendJson(response, 400, { error: "Preflight contains evidence that cannot be safely transmitted", blockingFindingIds: blocking.map((item) => item.id) });
+      return sendJson(response, 200, await recheckDiscovery(run, await readJson(request)));
     }
     const confirmMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/confirm$/);
     if (request.method === "POST" && confirmMatch) {

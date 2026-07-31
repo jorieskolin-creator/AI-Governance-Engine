@@ -2,14 +2,14 @@
 
 ## Decision-ready reporting
 
-The canonical readiness package is the only source of truth. Source-first intake first builds a content-addressed `SourceIngestionManifest 1.0.0`, then a field-level `solutionProfile`, immutable `assessmentIntake 1.1.0`, and deterministic `documentationReadiness` before governance assessment. The engine then builds `transitionBoundary`, enriched hard gates, and the `assuranceSummary 1.2.0` view model before any cognitive synthesis. The browser renders two views over that same package:
+The canonical readiness package is the only source of truth. Source-first intake first builds a content-addressed `SourceIngestionManifest 1.0.0`, then a field-level `solutionProfile`, immutable `assessmentIntake 1.2.0`, and deterministic `documentationReadiness` before governance assessment. The engine then builds `transitionBoundary`, enriched hard gates, and the `assuranceSummary 1.3.0` view model before any cognitive synthesis. The browser renders two views over that same package:
 
 - **Assessment Workspace** for intake, detailed controls, evidence, execution diagnostics, and remediation work.
 - **Assurance Summary** for owners, executives, and formal reviewers.
 
 The summary renderer does not calculate readiness. Live HTML and printable PDF use the same ordered report-section markup; only pagination and interactive controls differ. The downloadable HTML is self-contained, has embedded CSS, contains no executable scripts or external assets, and escapes all untrusted values. It contains no Evidence Digest or raw excerpts. JSON remains the complete canonical audit record.
 
-For `ReadinessPackageV2` 2.3.0, synthesis emits traceable `NarrativeItem` records. Item-level fact-checking either supports, corrects, or quarantines each item. If synthesis or fact-checking fails, the Engine renders a deterministic-only summary and raises `COGNITIVE_ASSESSMENT_INCOMPLETE` rather than suppressing the report. The deterministic fallback package remains available as schema 1.2.0.
+For `ReadinessPackageV2` 2.4.0, synthesis emits traceable `NarrativeItem` records. Item-level fact-checking either supports, corrects, or quarantines each item. If synthesis or fact-checking fails, the Engine renders a deterministic-only summary and raises `COGNITIVE_ASSESSMENT_INCOMPLETE` rather than suppressing the report. The deterministic fallback package remains available as schema 1.3.0.
 
 The AI Governance Engine is a standalone evidence-processing service. It reuses the useful shape of the FinOps Engine—parallel domain assessment, evidence verification, hard gates, controlled synthesis, traceability, and targeted action selection—without importing any FinOps domain model.
 

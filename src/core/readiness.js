@@ -14,8 +14,11 @@ export function calculateReadiness(controlAssessments, antiPatternAssessments, g
   const assurance = Math.round((applicable.reduce((sum, item) => sum + (STATE_WEIGHT[item.state] ?? 0), 0) / Math.max(1, applicable.length)) * 100);
   const activeRisks = antiPatternAssessments.filter((item) => ["CONFIRMED_PRESENT", "DECLARED_RISK", "DETECTED_CANDIDATE", "VERIFICATION_REQUIRED", "PARTIALLY_PRESENT"].includes(item.state));
   const gaps = applicable.map((item) => item.gap).filter(Boolean);
-  const maxSeverity = Math.max(0, ...activeRisks.map((item) => severityRank[item.severity]), ...gaps.map((item) => severityRank[item.severity]));
-  const residualRisk = ["LOW", "LOW", "MEDIUM", "HIGH", "CRITICAL"][maxSeverity];
+  const assuranceDeficitRank = Math.max(0, ...gaps.map((item) => severityRank[item.severity]));
+  const riskCandidateRank = Math.max(0, ...activeRisks.map((item) => severityRank[item.severity]));
+  const assuranceDeficit = gaps.length ? ["LOW", "LOW", "MEDIUM", "HIGH", "CRITICAL"][assuranceDeficitRank] : "NONE";
+  const riskDetermination = activeRisks.length ? `POTENTIAL_${["LOW", "LOW", "MEDIUM", "HIGH", "CRITICAL"][riskCandidateRank]}` : "NO_VERIFIED_RISK_FINDING";
+  const residualRisk = "NOT_DETERMINED";
   const riskDrivers = [
     ...(documentationReadiness?.contradictions ?? []).map((item) => ({
       id: item.id,
@@ -49,10 +52,12 @@ export function calculateReadiness(controlAssessments, antiPatternAssessments, g
       evidenceCoverage: coverage,
       controlAssurance: assurance,
       documentationAlignment: documentationReadiness?.status ?? "UNKNOWN",
+      assuranceDeficit,
+      riskDetermination,
       residualRisk,
       riskDrivers,
       gateStatus,
-      explanation: "Indicator, accepted-evidence, verified-evidence and assurance measures are diagnostic only. Documentation alignment, gate status and unresolved risk determine progression; scores cannot override a blocker."
+      explanation: "Deterministic control execution, accepted evidence, verified evidence and assurance measures are diagnostic only. Assurance deficit is not residual risk: residual risk remains undetermined until risks, mitigations and remaining exposure are evaluated. Documentation alignment and gates determine progression; scores cannot override a blocker."
     }
   };
 }

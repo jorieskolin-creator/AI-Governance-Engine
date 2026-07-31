@@ -98,11 +98,13 @@ Use **Print / Save PDF**, **Download HTML**, or the unchanged canonical **Downlo
 }
 ```
 
-`GET /api/sample` returns a complete sample request. `GET /api/knowledge` returns the active, versioned knowledge manifest. `GET /api/config` exposes non-secret experience flags.
+`GET /api/sample` returns a complete sample request. `GET /api/knowledge` returns the active, versioned knowledge manifest. `GET /api/knowledge/diagnostics` exposes hash checks, release status, structural validation and cross-document reference integrity without exposing knowledge content. `GET /api/config` exposes non-secret experience flags.
 
-`POST /api/discover` accepts source-first MIME-aware uploads without a dossier and returns a deterministic `solutionProfile`, source manifest, and local DLP findings. Binary sources use base64; HTML is parsed inertly.
+`POST /api/discover` accepts source-first MIME-aware uploads without a dossier and returns a deterministic `solutionProfile`, source manifest, local DLP findings, and the AI-recheck availability policy. Binary sources use base64; HTML is parsed inertly. Data is described with explicit multi-select categories, while current and intended user access are separate bounded modes.
 
-The deterministic package is schema `1.2.0`; `ReadinessPackageV2` is additive at schema `2.3.0`. Both include immutable `assessmentIntake` `1.1.0`, field-level `solutionProfile`, `documentationReadiness`, `sourceIngestion`, `transitionBoundary`, and `assuranceSummary`. The Assurance Summary contract is `assurance-summary-1.2.0`. V1 lexical matches are explicitly labelled as automated indicators because cognitive verification was not run.
+`POST /api/v2/runs/{id}/discover-recheck` can semantically recheck unresolved deterministic facts. It is intentionally available only after authenticated v2 preflight and explicit approval of every transmitted packet and provider. Exact source quotes are verified locally, results remain candidates requiring user confirmation, and the recheck cannot overwrite deterministic facts.
+
+The deterministic package is schema `1.3.0`; `ReadinessPackageV2` is additive at schema `2.4.0`. Both include immutable `assessmentIntake` `1.2.0`, field-level `solutionProfile`, `documentationReadiness`, `sourceIngestion`, `transitionBoundary`, and `assuranceSummary`. The Assurance Summary contract is `assurance-summary-1.3.0`. V1 lexical matches are explicitly labelled as automated indicators because cognitive verification was not run.
 
 ### v2 preflight example
 

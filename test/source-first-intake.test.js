@@ -5,6 +5,8 @@ import { SAMPLE_REQUEST } from "../src/sample.js";
 import { createPreflight, confirmPreflightDossier } from "../src/cognitive/preflight.js";
 import { parseAndScreenSources } from "../src/cognitive/source-intake.js";
 import { jurisdictionScope } from "../src/core/jurisdictions.js";
+import { validateDossier } from "../src/contracts.js";
+import { discoverSolutionProfile } from "../src/core/solution-profile.js";
 import { classifyUploadPath, provisionalIngestionManifest, resolveUploadMimeType } from "../public/upload-types.js";
 import { buildSourceIngestionManifest } from "../src/core/source-ingestion.js";
 
@@ -31,6 +33,9 @@ Integration scope: ${boundary.integrationScope}
 Permission scope: ${boundary.permissionScope}
 Autonomy scope: ${boundary.autonomyScope}
 Monitoring owner: ${boundary.monitoringOwner}
+Data categories: ${(dossier.data.categories ?? []).join(" ")}
+Current user access: ${dossier.exposure.currentUserAccess ?? "UNKNOWN"}
+Intended user access: ${dossier.exposure.intendedUserAccess ?? "UNKNOWN"}
 Personal data: No
 Special category data: No
 Production data: No
@@ -47,6 +52,25 @@ High risk candidate: No`;
 
 test("Finland country names and ISO codes activate EU/EEA scope", () => {
   for (const value of ["Finland", "FI", "FIN", "Suomi"]) assert.equal(jurisdictionScope([value]).euEea, true, value);
+});
+
+test("generic FI and provider occurrences do not become contextual intake facts", () => {
+  const profile = discoverSolutionProfile([{ id: "unit-noise", path: "architecture.md", artifactClass: "DOCUMENTATION", content: "The provider retries requests if a connection fails. FinOps is efficient." }]);
+  assert.deepEqual(profile.suggestedDossier.jurisdictions, []);
+  assert.deepEqual(profile.suggestedDossier.roles, []);
+  const labelled = discoverSolutionProfile([{ id: "unit-case", path: "case.md", artifactClass: "DOCUMENTATION", content: "Jurisdictions: Finland, EU\nRegulatory roles: Provider\nUsers: Employees" }]);
+  assert.deepEqual(labelled.suggestedDossier.jurisdictions.sort(), ["EU", "FI"]);
+  assert.deepEqual(labelled.suggestedDossier.roles, ["PROVIDER"]);
+});
+
+test("data categories and access modes derive compatibility facts without conflating current and intended exposure", async () => {
+  const dossier = validateDossier({ ...structuredClone(SAMPLE_REQUEST.dossier), data: { categories: ["SYNTHETIC", "CLEANED_APPROVED_PRODUCTION"] }, exposure: { currentUserAccess: "INTERNAL_ONLY", intendedUserAccess: "EXTERNAL_WITH_SOLUTION_OWNER", productionAccess: false, consequentialDecisions: false } });
+  assert.equal(dossier.data.productionData, true);
+  assert.equal(dossier.data.personalData, false);
+  assert.equal(dossier.exposure.externalUsers, true);
+  const input = sampleRequest(); input.dossier = dossier; input.dossier.operatingBoundary.environment = "ISOLATED_SANDBOX";
+  const result = await assessSolution(input);
+  assert.equal(result.documentationContradictions.some((item) => item.ruleId === "RULE-CONTRADICTION-SANDBOX-EXTERNAL-USERS"), false);
 });
 
 test("recognized extensionless and dot-prefixed configuration files are accepted as inert text", async () => {
@@ -122,6 +146,7 @@ test("semantic contradictions are stable, material, and cannot be confirmed away
   input.dossier.data.productionData = true;
   input.dossier.exposure.productionAccess = true;
   input.dossier.exposure.externalUsers = true;
+  input.dossier.exposure.currentUserAccess = "PUBLIC_ACCESS";
   input.dossier.exposure.consequentialDecisions = true;
   input.dossier.agent.usesAgents = false;
   input.dossier.agent.canTakeActions = true;
@@ -147,6 +172,9 @@ test("solution-name normalization avoids separator-only conflicts and retains ge
   alias.sources = [{ path: "package.json", kind: "CONFIGURATION", content: '{"name":"finops-assessment-engine"}' }];
   const aliasResult = await assessSolution(alias);
   assert.equal(aliasResult.documentationContradictions.some((item) => item.field === "name"), false);
+  const productAlias = sampleRequest(); productAlias.dossier.name = "finops-assessment-engine"; productAlias.sources = [{ path: "README.md", kind: "DOCUMENT", content: "# FinOps Engine" }];
+  const productAliasResult = await assessSolution(productAlias);
+  assert.equal(productAliasResult.documentationContradictions.some((item) => item.field === "name"), false);
   const conflict = sampleRequest();
   conflict.dossier.name = "Different Product";
   conflict.sources = alias.sources;

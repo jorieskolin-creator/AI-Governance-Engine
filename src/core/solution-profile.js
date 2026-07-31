@@ -10,7 +10,7 @@ const deployRequiredFields = Object.freeze([
   "name", "accountableOwner", "intendedPurpose", "expectedValue", "currentStage", "targetStage", "jurisdictions", "roles", "users",
   "operatingBoundary.allowedUses", "operatingBoundary.excludedUses", "operatingBoundary.environment", "operatingBoundary.userScope",
   "operatingBoundary.dataScope", "operatingBoundary.integrationScope", "operatingBoundary.permissionScope", "operatingBoundary.autonomyScope",
-  "operatingBoundary.monitoringOwner", "data.personalData", "data.specialCategoryData", "data.productionData", "exposure.externalUsers",
+  "operatingBoundary.monitoringOwner", "data.categories", "data.personalData", "data.specialCategoryData", "data.productionData", "exposure.currentUserAccess", "exposure.intendedUserAccess",
   "exposure.productionAccess", "exposure.consequentialDecisions", "agent.usesAgents", "agent.canTakeActions", "agent.irreversibleActions",
   "agent.humanOverride", "classification.prohibitedPractice", "classification.highRiskCandidate"
 ]);
@@ -22,7 +22,8 @@ export const FIELD_LABELS = Object.freeze({
   "operatingBoundary.userScope": "User scope", "operatingBoundary.dataScope": "Data scope", "operatingBoundary.integrationScope": "Integration scope",
   "operatingBoundary.permissionScope": "Permission scope", "operatingBoundary.autonomyScope": "Autonomy scope", "operatingBoundary.monitoringOwner": "Monitoring owner",
   "operatingBoundary.expiresAt": "Boundary expiry", "data.personalData": "Personal data", "data.specialCategoryData": "Special-category data",
-  "data.productionData": "Production data", "exposure.externalUsers": "External users", "exposure.productionAccess": "Production access",
+  "data.categories": "Data categories", "data.productionData": "Production data", "exposure.externalUsers": "External users (compatibility)",
+  "exposure.currentUserAccess": "Current user access", "exposure.intendedUserAccess": "Intended user access", "exposure.productionAccess": "Production access",
   "exposure.consequentialDecisions": "Consequential decisions", "agent.usesAgents": "Uses agents", "agent.canTakeActions": "Can take actions",
   "agent.irreversibleActions": "Irreversible actions", "agent.humanOverride": "Human override", "classification.prohibitedPractice": "Prohibited-practice candidate",
   "classification.highRiskCandidate": "High-risk candidate"
@@ -33,7 +34,11 @@ export const fieldLabel = (field) => FIELD_LABELS[field] ?? String(field ?? "").
 const normalize = (value) => String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 function normalizedFieldValue(field, value) {
   if (Array.isArray(value)) return value.map((item) => normalizedFieldValue(field, item)).sort().join("|");
-  if (field === "name") return normalize(value).replace(/^@[^/]+\//, "").replace(/[^a-z0-9]+/g, " ").trim();
+  if (field === "name") {
+    const tokens = normalize(value).replace(/^@[^/]+\//, "").replace(/[^a-z0-9]+/g, " ").trim().split(" ");
+    const distinctive = tokens.filter((item) => !["assessment", "engine", "system", "application", "app", "platform", "service", "solution"].includes(item));
+    return (distinctive.length ? distinctive : tokens).join(" ");
+  }
   return normalize(value);
 }
 const unique = (values) => [...new Set(values.filter((item) => item !== undefined && item !== null && item !== ""))];
@@ -77,24 +82,32 @@ function sourceText(sources) {
 }
 
 function explicitMatches(sources, value, field) {
-  const needle = normalize(Array.isArray(value) ? value.join(" ") : value);
+  const needles = (Array.isArray(value) ? value : [value]).map(normalize).filter(Boolean);
   const eligibleClasses = field === "name" ? ["DOCUMENTATION", "CONFIGURATION"] : ["DOCUMENTATION"];
   const eligible = sources.filter((source) => eligibleClasses.includes(source.artifactClass));
-  if (!needle) return [];
-  if (["true", "false"].includes(needle)) {
-    const fieldLabel = field.split(".").at(-1).replace(/([a-z])([A-Z])/g, "$1 $2");
-    const expected = needle === "true" ? "(?:yes|true)" : "(?:no|false)";
-    const pattern = new RegExp(`${fieldLabel}\\s*[:=\\-]\\s*${expected}\\b`, "i");
+  if (!needles.length) return [];
+  const aliases = {
+    name: ["solution name", "system name", "product name", "package name"], accountableOwner: ["accountable owner", "system owner", "solution owner", "product owner"],
+    intendedPurpose: ["intended purpose", "purpose", "mission"], expectedValue: ["expected value", "business value", "expected outcome", "value hypothesis"],
+    jurisdictions: ["jurisdictions?", "deployment countries", "operating countries"], roles: ["regulatory roles?", "ai act roles?", "roles"], users: ["users", "affected groups", "user groups"],
+    "data.categories": ["data categories", "approved data classes"], "exposure.currentUserAccess": ["current user access"], "exposure.intendedUserAccess": ["intended user access"]
+  };
+  const fieldAliases = aliases[field] ?? [field.split(".").at(-1).replace(/([a-z])([A-Z])/g, "$1 $2")];
+  const labelPattern = `(?:${fieldAliases.join("|")})`;
+  if (needles.length === 1 && ["true", "false"].includes(needles[0])) {
+    const expected = needles[0] === "true" ? "(?:yes|true)" : "(?:no|false)";
+    const pattern = new RegExp(`${labelPattern}\\s*[:=\\-]\\s*${expected}\\b`, "i");
     return eligible.filter((source) => pattern.test(source.content)).map((source) => source.id);
   }
-  return eligible.filter((source) => normalize(source.content).includes(needle)).map((source) => source.id);
+  return eligible.filter((source) => source.content.split(/\r?\n/).some((line) => new RegExp(`${labelPattern}\\s*[:=\\-]`, "i").test(line) && needles.every((needle) => normalize(line).includes(needle)))).map((source) => source.id);
 }
 
 function labelledValue(sources, labels) {
   const pattern = new RegExp(`(?:${labels.join("|")})\\s*[:=\\-]\\s*([^\\n\\r|]{2,180})`, "i");
   for (const source of sources.filter((item) => item.artifactClass === "DOCUMENTATION")) {
     const match = source.content.match(pattern);
-    if (match?.[1]?.trim()) return { value: match[1].trim(), sourceUnitIds: [source.id] };
+    const candidate = match?.[1]?.trim();
+    if (candidate && !/^(?:and|or|but|based|because|which|that|if|when|where)\b/i.test(candidate) && candidate.split(/\s+/).length >= 3) return { value: candidate, sourceUnitIds: [source.id] };
   }
   return null;
 }
@@ -115,11 +128,12 @@ function detectedName(sources) {
   return labelledValue(sources, ["solution name", "system name", "product name"]);
 }
 
-function detectedList(sources, values) {
+function detectedList(sources, labels, values) {
   const found = [];
   const ids = [];
+  const labelled = sources.flatMap((source) => source.content.split(/\r?\n/).filter((line) => new RegExp(`(?:${labels.join("|")})\\s*[:=\\-]`, "i").test(line)).map((line) => ({ source, line })));
   for (const [canonical, pattern] of values) {
-    for (const source of sources) if (pattern.test(source.content)) { found.push(canonical); ids.push(source.id); break; }
+    for (const item of labelled) if (pattern.test(item.line)) { found.push(canonical); ids.push(item.source.id); break; }
   }
   return { value: unique(found), sourceUnitIds: unique(ids) };
 }
@@ -135,8 +149,8 @@ function provisionalDossier(detected) {
     roles: detected.roles?.value ?? [],
     users: detected.users?.value ?? [],
     accountableOwner: detected.accountableOwner?.value ?? "",
-    data: { personalData: null, specialCategoryData: null, productionData: null },
-    exposure: { externalUsers: null, productionAccess: null, consequentialDecisions: null },
+    data: { categories: [], personalData: null, specialCategoryData: null, productionData: null },
+    exposure: { currentUserAccess: "UNKNOWN", intendedUserAccess: "UNKNOWN", externalUsers: null, productionAccess: null, consequentialDecisions: null },
     agent: { usesAgents: null, canTakeActions: null, irreversibleActions: null, humanOverride: null },
     classification: { prohibitedPractice: null, highRiskCandidate: null },
     operatingBoundary: {
@@ -172,8 +186,9 @@ function addSemanticContradictions(dossier, facts, contradictions) {
   if (sandbox && dossier.data.productionData === true && !approvedScope(dossier.operatingBoundary.dataScope)) {
     add("RULE-CONTRADICTION-SANDBOX-PRODUCTION-DATA", ["operatingBoundary.environment", "data.productionData", "operatingBoundary.dataScope"], "HIGH", "Production data is declared in an isolated sandbox without an explicit approved data scope.");
   }
-  if (sandbox && dossier.exposure.externalUsers === true && !approvedScope(dossier.operatingBoundary.userScope)) {
-    add("RULE-CONTRADICTION-SANDBOX-EXTERNAL-USERS", ["operatingBoundary.environment", "exposure.externalUsers", "operatingBoundary.userScope"], "HIGH", "External users are declared in an isolated sandbox without an explicit bounded user scope.");
+  const currentExternal = !["UNKNOWN", "INTERNAL_ONLY"].includes(dossier.exposure.currentUserAccess);
+  if (sandbox && currentExternal && !approvedScope(dossier.operatingBoundary.userScope)) {
+    add("RULE-CONTRADICTION-SANDBOX-EXTERNAL-USERS", ["operatingBoundary.environment", "exposure.currentUserAccess", "operatingBoundary.userScope"], "HIGH", "Current external access is declared in an isolated sandbox without an explicit bounded user scope.");
   }
   if (sandbox && dossier.exposure.consequentialDecisions === true && !/(simulation|shadow|no operational effect|non-consequential)/i.test(dossier.operatingBoundary.allowedUses.join(" "))) {
     add("RULE-CONTRADICTION-SANDBOX-CONSEQUENTIAL-DECISIONS", ["operatingBoundary.environment", "exposure.consequentialDecisions", "operatingBoundary.allowedUses"], "CRITICAL", "Consequential decisions are declared in an isolated sandbox without an explicit non-operational simulation boundary.");
@@ -200,9 +215,9 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
     intendedPurpose: labelledValue(sources, ["intended purpose", "purpose", "mission"]),
     expectedValue: labelledValue(sources, ["expected value", "business value", "expected outcome", "outcome"]),
     accountableOwner: labelledValue(sources, ["accountable owner", "system owner", "solution owner", "product owner"]),
-    jurisdictions: detectedList(sources, [["FI", /\b(?:Finland|Finnish|FI|FIN)\b/i], ["EU", /\b(?:European Union|EU|EEA)\b/i]]),
-    roles: detectedList(sources, [["PROVIDER", /\bprovider\b/i], ["DEPLOYER", /\bdeployer\b/i], ["IMPORTER", /\bimporter\b/i], ["DISTRIBUTOR", /\bdistributor\b/i]]),
-    users: detectedList(sources, [["EMPLOYEES", /\b(?:employees?|internal users?|staff)\b/i], ["CUSTOMERS", /\b(?:customers?|end users?|consumers?)\b/i]])
+    jurisdictions: detectedList(sources, ["jurisdictions?", "deployment countries", "operating countries"], [["FI", /\b(?:Finland|Finnish|FI|FIN)\b/i], ["EU", /\b(?:European Union|EU|EEA)\b/i]]),
+    roles: detectedList(sources, ["regulatory roles?", "ai act roles?", "roles"], [["PROVIDER", /\bprovider\b/i], ["DEPLOYER", /\bdeployer\b/i], ["IMPORTER", /\bimporter\b/i], ["DISTRIBUTOR", /\bdistributor\b/i]]),
+    users: detectedList(sources, ["users", "affected groups", "user groups"], [["EMPLOYEES", /\b(?:employees?|internal users?|staff)\b/i], ["CUSTOMERS", /\b(?:customers?|end users?|consumers?)\b/i]])
   };
   const dossier = declaredDossier ?? provisionalDossier(detected);
   const flattened = flattenDossier(dossier);
@@ -257,8 +272,8 @@ export function flattenDossier(dossier) {
     "operatingBoundary.dataScope": dossier.operatingBoundary?.dataScope ?? "", "operatingBoundary.integrationScope": dossier.operatingBoundary?.integrationScope ?? "",
     "operatingBoundary.permissionScope": dossier.operatingBoundary?.permissionScope ?? "", "operatingBoundary.autonomyScope": dossier.operatingBoundary?.autonomyScope ?? "",
     "operatingBoundary.monitoringOwner": dossier.operatingBoundary?.monitoringOwner ?? "", "operatingBoundary.expiresAt": dossier.operatingBoundary?.expiresAt ?? null,
-    "data.personalData": dossier.data?.personalData, "data.specialCategoryData": dossier.data?.specialCategoryData, "data.productionData": dossier.data?.productionData,
-    "exposure.externalUsers": dossier.exposure?.externalUsers, "exposure.productionAccess": dossier.exposure?.productionAccess,
+    "data.categories": dossier.data?.categories ?? [], "data.personalData": dossier.data?.personalData, "data.specialCategoryData": dossier.data?.specialCategoryData, "data.productionData": dossier.data?.productionData,
+    "exposure.currentUserAccess": dossier.exposure?.currentUserAccess ?? "UNKNOWN", "exposure.intendedUserAccess": dossier.exposure?.intendedUserAccess ?? "UNKNOWN", "exposure.externalUsers": dossier.exposure?.externalUsers, "exposure.productionAccess": dossier.exposure?.productionAccess,
     "exposure.consequentialDecisions": dossier.exposure?.consequentialDecisions, "agent.usesAgents": dossier.agent?.usesAgents,
     "agent.canTakeActions": dossier.agent?.canTakeActions, "agent.irreversibleActions": dossier.agent?.irreversibleActions,
     "agent.humanOverride": dossier.agent?.humanOverride, "classification.prohibitedPractice": dossier.classification?.prohibitedPractice,
@@ -272,8 +287,12 @@ export function buildDocumentationReadiness(profile, targetStage, sourceIngestio
     const item = profile.fields[field];
     const agentsExplicitlyExcluded = profile.fields["agent.usesAgents"]?.value === false && profile.fields["agent.usesAgents"]?.status === "CONFIRMED";
     const actionsExplicitlyExcluded = profile.fields["agent.canTakeActions"]?.value === false && profile.fields["agent.canTakeActions"]?.status === "CONFIRMED";
+    const legacyDataDocumented = ["data.personalData", "data.specialCategoryData", "data.productionData"].every((key) => profile.fields[key]?.status === "CONFIRMED");
+    const legacyExposureDocumented = profile.fields["exposure.externalUsers"]?.status === "CONFIRMED";
     const notApplicable = agentsExplicitlyExcluded && ["agent.canTakeActions", "agent.irreversibleActions", "agent.humanOverride"].includes(field)
-      || actionsExplicitlyExcluded && field === "agent.irreversibleActions";
+      || actionsExplicitlyExcluded && field === "agent.irreversibleActions"
+      || field === "data.categories" && (!Array.isArray(profile.fields[field]?.value) || profile.fields[field].value.length === 0) && legacyDataDocumented
+      || ["exposure.currentUserAccess", "exposure.intendedUserAccess"].includes(field) && legacyExposureDocumented && profile.fields[field]?.factClass !== "OBSERVED";
     statuses[field] = notApplicable ? "NOT_APPLICABLE"
       : !item || item.status === "UNKNOWN" ? "UNKNOWN"
       : item.status === "CONFLICTING" ? "CONFLICTING"
@@ -329,7 +348,7 @@ export function buildAssessmentIntake(dossier, profile, documentationReadiness, 
     if (!seenSources.has(key)) { seenSources.add(key); provenance.push(entry); }
   }
   const intake = {
-    version: "assessment-intake-1.1.0",
+    version: "assessment-intake-1.2.0",
     identity: { name: dossier.name, accountableOwner: dossier.accountableOwner },
     intendedUse: { intendedPurpose: dossier.intendedPurpose, expectedValue: dossier.expectedValue },
     lifecycle: { currentStage: dossier.currentStage, targetStage: dossier.targetStage },
@@ -350,6 +369,8 @@ export function buildAssessmentIntake(dossier, profile, documentationReadiness, 
 
 export function caseProfileView(assessmentIntake, profile) {
   const statusFor = (field) => assessmentIntake.documentationAlignment.fieldStatuses[field] ?? "UNKNOWN";
+  const exposureEntries = Object.entries(assessmentIntake.exposure).filter(([field]) => field !== "externalUsers"
+    || !("currentUserAccess" in assessmentIntake.exposure || "intendedUserAccess" in assessmentIntake.exposure));
   return {
     identityAndIntent: [
       { field: "name", label: "Solution name", value: assessmentIntake.identity.name, status: statusFor("name") },
@@ -370,7 +391,7 @@ export function caseProfileView(assessmentIntake, profile) {
     operatingBoundary: Object.entries(assessmentIntake.operatingBoundary).map(([field, value]) => ({ field: `operatingBoundary.${field}`, label: fieldLabel(`operatingBoundary.${field}`), value, status: statusFor(`operatingBoundary.${field}`) })),
     riskDeclarations: [
       ...Object.entries(assessmentIntake.data).map(([field, value]) => ({ field: `data.${field}`, label: fieldLabel(`data.${field}`), value, status: statusFor(`data.${field}`) })),
-      ...Object.entries(assessmentIntake.exposure).map(([field, value]) => ({ field: `exposure.${field}`, label: fieldLabel(`exposure.${field}`), value, status: statusFor(`exposure.${field}`) })),
+      ...exposureEntries.map(([field, value]) => ({ field: `exposure.${field}`, label: fieldLabel(`exposure.${field}`), value, status: statusFor(`exposure.${field}`) })),
       ...Object.entries(assessmentIntake.agentAuthority).map(([field, value]) => ({ field: `agent.${field}`, label: fieldLabel(`agent.${field}`), value, status: statusFor(`agent.${field}`) })),
       ...Object.entries(assessmentIntake.classification).map(([field, value]) => ({ field: `classification.${field}`, label: fieldLabel(`classification.${field}`), value, status: statusFor(`classification.${field}`) }))
     ]

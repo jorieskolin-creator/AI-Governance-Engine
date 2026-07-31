@@ -13,8 +13,8 @@ function request(overrides = {}) {
 
 test("v1 includes complete case context and a deterministic lifecycle boundary", async () => {
   const result = await assessSolution(request());
-  assert.equal(result.schemaVersion, "1.2.0");
-  assert.equal(result.assuranceSummary.version, "assurance-summary-1.2.0");
+  assert.equal(result.schemaVersion, "1.3.0");
+  assert.equal(result.assuranceSummary.version, "assurance-summary-1.3.0");
   assert.equal(result.transitionBoundary.immutable, true);
   assert.equal(result.transitionBoundary.currentStage, result.solution.currentStage);
   assert.equal(result.transitionBoundary.targetStage, result.solution.targetStage);
@@ -22,12 +22,15 @@ test("v1 includes complete case context and a deterministic lifecycle boundary",
   assert.equal(result.assessmentIntake.identity.name, result.solution.name);
   assert.equal(result.assessmentIntake.data.personalData, result.solution.data.personalData);
   assert.ok(result.assuranceSummary.caseProfile.identityAndIntent.some((item) => item.field === "accountableOwner"));
+  assert.ok(result.assuranceSummary.caseProfile.riskDeclarations.some((item) => item.field === "exposure.currentUserAccess"));
+  assert.ok(result.assuranceSummary.caseProfile.riskDeclarations.some((item) => item.field === "exposure.intendedUserAccess"));
+  assert.equal(result.assuranceSummary.caseProfile.riskDeclarations.some((item) => item.field === "exposure.externalUsers"), false);
   assert.equal(result.assuranceSummary.auditReference.canonicalJsonPath, "$.evidence");
   assert.equal(Object.hasOwn(result.assuranceSummary, "evidenceDigest"), false);
   assert.deepEqual(result.assuranceSummary.strengths, []);
   assert.ok(result.assuranceSummary.blockingFindings.every((item) => item.supportStatus === "COGNITIVE_VERIFICATION_NOT_RUN"));
   assert.ok(result.assuranceSummary.executiveGapGroups.length <= 8);
-  assert.equal(result.assessmentIntake.version, "assessment-intake-1.1.0");
+  assert.equal(result.assessmentIntake.version, "assessment-intake-1.2.0");
 });
 
 test("deployment targets use the production boundary label", async () => {
@@ -62,9 +65,9 @@ test("standalone report is escaped, offline, lean and case-identifiable", async 
   assert.match(html, new RegExp(result.packageHash));
   assert.doesNotMatch(html, /Evidence Digest|raw evidence excerpt/i);
   assert.doesNotMatch(html, /allowedUses|userScope|monitoringOwner|Userscope|Datascope/);
-  assert.match(html, /Assessment coverage/);
+  assert.match(html, /Deterministic controls evaluated/);
   assert.match(html, /Verified evidence/);
-  assert.match(html, /Leading residual-risk drivers/);
+  assert.match(html, /Leading decision drivers/);
   assert.match(html, /Trace:/);
   const ordered = ["01 · Decision", "Case Profile and Assessment Scope", "Documentation Alignment", "Deterministic Lifecycle Transition Boundary", "Evidence Interpretation", "Hard-Gate Matrix", "A–F Domain Overview", "Confirmed Strengths", "Blocking Gaps and Unknowns", "Governance Action Playbook", "Human Authority", "Audit Identity", "Limitations"];
   let cursor = -1;

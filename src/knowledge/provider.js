@@ -4,6 +4,7 @@ import { REQUIREMENTS } from "./requirements.js";
 import { CONTROLS } from "./controls.js";
 import { ANTIPATTERNS } from "./antipatterns.js";
 import { TACTICS } from "./playbook.js";
+import { evaluateKnowledgeSnapshot } from "./diagnostics.js";
 
 const DOCUMENT_TYPES = new Set(["normativeSources", "requirements", "controls", "antipatterns", "tactics"]);
 const RELEASE_STATUSES = new Set(["APPROVED", "CALIBRATION_TEST_ONLY", "PILOT", "DRAFT", "UNSPECIFIED"]);
@@ -20,7 +21,8 @@ function localSnapshot() {
     antipatterns: [...ANTIPATTERNS],
     tactics: [...TACTICS]
   };
-  return { ...snapshot, manifestHash: sha256(snapshot) };
+  const complete = { ...snapshot, manifestHash: sha256(snapshot), documentChecks: [] };
+  return { ...complete, diagnostics: evaluateKnowledgeSnapshot(complete) };
 }
 
 async function fetchBytes(url, token) {
@@ -68,6 +70,7 @@ export async function loadKnowledgeSnapshot(options = {}) {
   const manifest = decodeJson(manifestBytes, manifestUrl);
   validateManifest(manifest);
   const loaded = { normativeSources: [], requirements: [], controls: [], antipatterns: [], tactics: [] };
+  const documentChecks = [];
 
   for (const item of manifest.documents) {
     const bytes = await fetchBytes(item.url, token);
@@ -77,19 +80,24 @@ export async function loadKnowledgeSnapshot(options = {}) {
     const entries = Array.isArray(document) ? document : document.entries;
     if (!Array.isArray(entries)) throw new Error(`Knowledge document ${item.id} must contain an array or entries[]`);
     loaded[item.type].push(...entries);
+    documentChecks.push({ id: item.id, type: item.type, status: "HASH_VERIFIED", expectedHash: item.sha256, actualHash, entryCount: entries.length });
   }
 
   for (const [key, entries] of Object.entries(loaded)) {
     if (entries.length === 0) throw new Error(`Knowledge snapshot is missing ${key}`);
   }
-  return {
+  const snapshot = {
     version: manifest.version,
     source: "VERCEL_BLOB",
     releaseStatus: manifest.releaseStatus ?? "UNSPECIFIED",
     manifestUrl,
     manifestHash: sha256(manifestBytes),
+    documentChecks,
     ...loaded
   };
+  const diagnostics = evaluateKnowledgeSnapshot(snapshot);
+  if (diagnostics.status === "FAIL") throw new Error(`Knowledge structural integrity failed: ${diagnostics.issues.filter((item) => item.severity === "ERROR").map((item) => item.code).join(", ")}`);
+  return { ...snapshot, diagnostics };
 }
 
 export function knowledgeManifestView(snapshot) {
@@ -104,6 +112,12 @@ export function knowledgeManifestView(snapshot) {
     releaseStatus: snapshot.releaseStatus ?? "UNSPECIFIED",
     manifestHash: snapshot.manifestHash,
     manifestUrl,
+    diagnostics: {
+      version: snapshot.diagnostics?.version ?? "knowledge-diagnostics-unavailable",
+      status: snapshot.diagnostics?.status ?? "UNKNOWN",
+      errorCount: snapshot.diagnostics?.errorCount ?? null,
+      warningCount: snapshot.diagnostics?.warningCount ?? null
+    },
     counts: {
       normativeSources: snapshot.normativeSources.length,
       requirements: snapshot.requirements.length,

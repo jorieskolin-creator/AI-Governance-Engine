@@ -1,5 +1,7 @@
 import { jurisdictionScope } from "./jurisdictions.js";
 
+const externalAccess = (value) => value && !["UNKNOWN", "INTERNAL_ONLY"].includes(value);
+
 function conditionApplies(condition, dossier) {
   switch (condition) {
     case "ALWAYS": return "APPLICABLE";
@@ -8,9 +10,9 @@ function conditionApplies(condition, dossier) {
     case "PERSONAL_DATA": return dossier.data.personalData || dossier.data.specialCategoryData ? "APPLICABLE" : [dossier.data.personalData, dossier.data.specialCategoryData].includes(null) ? "POTENTIALLY_APPLICABLE" : "NOT_APPLICABLE";
     case "THIRD_PARTY_COMPONENTS": return "POTENTIALLY_APPLICABLE";
     case "USES_AGENTS": return dossier.agent.usesAgents === true ? "APPLICABLE" : dossier.agent.usesAgents === null ? "POTENTIALLY_APPLICABLE" : "NOT_APPLICABLE";
-    case "PRODUCTION_OR_EXTERNAL": return dossier.exposure.externalUsers || dossier.exposure.productionAccess || dossier.currentStage === "OPERATION_AND_MONITORING" ? "APPLICABLE" : [dossier.exposure.externalUsers, dossier.exposure.productionAccess].includes(null) ? "POTENTIALLY_APPLICABLE" : "NOT_APPLICABLE";
+    case "PRODUCTION_OR_EXTERNAL": return externalAccess(dossier.exposure.currentUserAccess) || dossier.exposure.productionAccess || dossier.currentStage === "OPERATION_AND_MONITORING" ? "APPLICABLE" : externalAccess(dossier.exposure.intendedUserAccess) || [dossier.exposure.externalUsers, dossier.exposure.productionAccess].includes(null) ? "POTENTIALLY_APPLICABLE" : "NOT_APPLICABLE";
     case "AFFECTS_PEOPLE": return dossier.users.length > 0 ? "APPLICABLE" : "POTENTIALLY_APPLICABLE";
-    case "INTERACTS_WITH_PEOPLE": return dossier.users.length > 0 || dossier.exposure.externalUsers ? "POTENTIALLY_APPLICABLE" : dossier.exposure.externalUsers === false ? "NOT_APPLICABLE" : "POTENTIALLY_APPLICABLE";
+    case "INTERACTS_WITH_PEOPLE": return dossier.users.length > 0 || externalAccess(dossier.exposure.currentUserAccess) || externalAccess(dossier.exposure.intendedUserAccess) ? "POTENTIALLY_APPLICABLE" : dossier.exposure.externalUsers === false ? "NOT_APPLICABLE" : "POTENTIALLY_APPLICABLE";
     default: return "POTENTIALLY_APPLICABLE";
   }
 }

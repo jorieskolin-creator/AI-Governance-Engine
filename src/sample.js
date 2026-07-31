@@ -9,8 +9,8 @@ export const SAMPLE_REQUEST = {
     roles: ["DEPLOYER"],
     users: ["EMPLOYEES"],
     accountableOwner: "Internal Services Product Owner",
-    data: { personalData: false, specialCategoryData: false, productionData: false },
-    exposure: { externalUsers: false, productionAccess: false, consequentialDecisions: false },
+    data: { categories: ["SYNTHETIC", "PUBLIC_NON_PERSONAL"], personalData: false, specialCategoryData: false, productionData: false },
+    exposure: { currentUserAccess: "INTERNAL_ONLY", intendedUserAccess: "INTERNAL_ONLY", externalUsers: false, productionAccess: false, consequentialDecisions: false },
     agent: { usesAgents: true, canTakeActions: false, irreversibleActions: false, humanOverride: true },
     classification: { prohibitedPractice: false, highRiskCandidate: false },
     operatingBoundary: {

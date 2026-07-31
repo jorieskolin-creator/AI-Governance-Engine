@@ -131,7 +131,7 @@ export async function assessSolution(input, options = {}) {
   return buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
     solution: solutionUnderstanding(dossier, registry, evidence, sourceIngestion), solutionProfile, sourceIngestion, trace, startedAt, runId,
-    schemaVersion: "1.2.0", cognitiveCoverage: null, cognitive: null
+    schemaVersion: "1.3.0", cognitiveCoverage: null, cognitive: null
   });
 }
 
@@ -151,7 +151,7 @@ export async function assessVerifiedSolution(input, options = {}) {
   return buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
     solution: { ...input.solutionModel, sourceIngestion }, solutionProfile, sourceIngestion, trace, startedAt, runId: input.runId,
-    schemaVersion: "2.3.0", cognitiveCoverage: input.cognitiveCoverage,
+    schemaVersion: "2.4.0", cognitiveCoverage: input.cognitiveCoverage,
     cognitive: input.cognitive
   });
 }

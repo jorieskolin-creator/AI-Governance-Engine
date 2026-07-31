@@ -1,4 +1,4 @@
-export const REPORT_VERSION = "assurance-report-1.2.0";
+export const REPORT_VERSION = "assurance-report-1.3.0";
 
 const array = (value) => Array.isArray(value) ? value : [];
 const label = (value) => String(value ?? "").replaceAll("_", " ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -56,14 +56,15 @@ function decisionMarkup(pkg, summary) {
     ["Knowledge status", `${label(pkg.knowledge?.releaseStatus ?? "UNSPECIFIED")} · ${pkg.knowledge?.version ?? "Unknown"}`]
   ];
   const dimensions = [
-    ["Assessment coverage", `${summary.dimensions.assessmentCoverage ?? summary.dimensions.indicatorCoverage ?? summary.dimensions.evidenceCoverage}%`],
+    ["Deterministic controls evaluated", `${summary.dimensions.assessmentCoverage ?? summary.dimensions.indicatorCoverage ?? summary.dimensions.evidenceCoverage}%`],
     ["Verified evidence", `${summary.dimensions.verifiedEvidenceCoverage ?? 0}%`],
     ["Control assurance", `${summary.dimensions.controlAssurance}%`],
-    ["Residual risk", label(summary.dimensions.residualRisk)],
+    ["Assurance deficit", label(summary.dimensions.assuranceDeficit ?? summary.dimensions.residualRisk)],
+    ["Risk determination", label(summary.dimensions.riskDetermination ?? summary.dimensions.residualRisk)],
     ["Gate status", label(summary.dimensions.gateStatus)]
   ];
   const drivers = array(summary.dimensions.riskDrivers);
-  const driverMarkup = drivers.length ? `<div class="risk-driver-list"><strong>Leading residual-risk drivers</strong><ul>${drivers.map((item) => `<li>${escapeHtml(`${item.title} — ${label(item.basisStatus)}`)}<small class="report-trace">Trace: ${escapeHtml(shortTrace(item))}</small></li>`).join("")}</ul></div>` : "";
+  const driverMarkup = drivers.length ? `<div class="risk-driver-list"><strong>Leading decision drivers</strong><ul>${drivers.map((item) => `<li>${escapeHtml(`${item.title} — ${label(item.basisStatus)}`)}<small class="report-trace">Trace: ${escapeHtml(shortTrace(item))}</small></li>`).join("")}</ul></div>` : "";
   return `<section class="report-decision-hero" data-report-section="01"><div class="report-decision-top"><div><p class="report-eyebrow report-eyebrow-light">01 · Decision</p><h1>${escapeHtml(solutionName(pkg))}</h1><h2>${escapeHtml(label(summary.decision.outcome))}</h2></div>${status(summary.humanAuthority.formalDecisionStatus)}</div><p class="report-decision-rationale">${escapeHtml(summary.decision.rationale)}</p><div class="hero-case-facts">${heroFacts.map(([name, value]) => `<div><span>${escapeHtml(name)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div><div class="report-metrics">${dimensions.map(([name, value]) => `<div class="report-metric"><span>${escapeHtml(name)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>${driverMarkup}<p class="report-authority-note">${escapeHtml(summary.humanAuthority.boundary)}</p>${summary.knowledgeNotice ? `<div class="report-pilot-banner">${escapeHtml(summary.knowledgeNotice)}</div>` : ""}</section>`;
 }
 
@@ -79,7 +80,7 @@ function documentationMarkup(summary) {
   const declaredOnly = array(doc.userDeclaredOnlyFields);
   const metrics = [
     ["Overall status", label(doc.status ?? "UNKNOWN")],
-    ["Satisfied applicable fields", `${doc.satisfiedFieldCount ?? doc.documentedAndConfirmedCount ?? 0} / ${doc.mandatoryFieldCount ?? 0}`],
+    ["Deployment-profile completeness", `${doc.satisfiedFieldCount ?? doc.documentedAndConfirmedCount ?? 0} / ${doc.mandatoryFieldCount ?? 0}`],
     ["Documentation-to-code alignment", label(doc.documentationToCodeAlignment ?? "UNKNOWN")],
     ["Deployment ready", doc.deploymentReady === true ? "Yes" : "No"],
     ["Source coverage", label(doc.sourceCoverageStatus ?? "SUBMITTED_SCOPE_ONLY")]

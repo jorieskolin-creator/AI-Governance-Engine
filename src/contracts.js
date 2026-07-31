@@ -79,6 +79,28 @@ export const BOUNDARY_ENVIRONMENTS = Object.freeze([
   "PRODUCTION"
 ]);
 
+export const USER_ACCESS_MODES = Object.freeze([
+  "UNKNOWN",
+  "INTERNAL_ONLY",
+  "EXTERNAL_WITH_SOLUTION_OWNER",
+  "CONTROLLED_EXTERNAL_PILOT",
+  "RESTRICTED_CUSTOMER_USE",
+  "PUBLIC_ACCESS",
+  "EXTERNAL_UNSPECIFIED"
+]);
+
+export const DATA_CATEGORIES = Object.freeze([
+  "SYNTHETIC",
+  "PUBLIC_NON_PERSONAL",
+  "ANONYMIZED",
+  "PSEUDONYMIZED",
+  "CLEANED_APPROVED_PRODUCTION",
+  "RAW_PRODUCTION",
+  "PERSONAL_DATA",
+  "SPECIAL_CATEGORY_DATA",
+  "CONFIDENTIAL_OR_PROPRIETARY"
+]);
+
 export const STATE_WEIGHT = Object.freeze({
   UNKNOWN: 0,
   DECLARED: 0.15,
@@ -142,6 +164,15 @@ export function validateDossier(input) {
   enumValue(environment, BOUNDARY_ENVIRONMENTS, "dossier.operatingBoundary.environment");
   const expiresAt = optionalString(rawBoundary.expiresAt, "dossier.operatingBoundary.expiresAt");
   if (expiresAt) invariant(!Number.isNaN(Date.parse(expiresAt)), "dossier.operatingBoundary.expiresAt must be an ISO date or date-time");
+  const dataCategories = optionalStringArray(input.data?.categories, "dossier.data.categories");
+  for (const category of dataCategories) enumValue(category, DATA_CATEGORIES, "dossier.data.categories[]");
+  const currentUserAccess = input.exposure?.currentUserAccess ?? (input.exposure?.externalUsers === false ? "INTERNAL_ONLY" : "UNKNOWN");
+  const intendedUserAccess = input.exposure?.intendedUserAccess ?? (input.exposure?.externalUsers === true ? "EXTERNAL_UNSPECIFIED" : input.exposure?.externalUsers === false ? "INTERNAL_ONLY" : "UNKNOWN");
+  enumValue(currentUserAccess, USER_ACCESS_MODES, "dossier.exposure.currentUserAccess");
+  enumValue(intendedUserAccess, USER_ACCESS_MODES, "dossier.exposure.intendedUserAccess");
+  const categorizedPersonal = dataCategories.includes("PERSONAL_DATA") || dataCategories.includes("SPECIAL_CATEGORY_DATA") || dataCategories.includes("PSEUDONYMIZED");
+  const categorizedProduction = dataCategories.includes("CLEANED_APPROVED_PRODUCTION") || dataCategories.includes("RAW_PRODUCTION");
+  const categorizedExternal = !["UNKNOWN", "INTERNAL_ONLY"].includes(intendedUserAccess);
 
   return {
     ...structuredClone(input),
@@ -154,8 +185,19 @@ export function validateDossier(input) {
     jurisdictions: optionalStringArray(input.jurisdictions, "dossier.jurisdictions"),
     roles: optionalStringArray(input.roles, "dossier.roles"),
     users: optionalStringArray(input.users, "dossier.users"),
-    data: Object.fromEntries(["personalData", "specialCategoryData", "productionData"].map((field) => [field, input.data?.[field] ?? null])),
-    exposure: Object.fromEntries(["externalUsers", "productionAccess", "consequentialDecisions"].map((field) => [field, input.exposure?.[field] ?? null])),
+    data: {
+      categories: dataCategories,
+      personalData: input.data?.personalData ?? (dataCategories.length ? categorizedPersonal : null),
+      specialCategoryData: input.data?.specialCategoryData ?? (dataCategories.length ? dataCategories.includes("SPECIAL_CATEGORY_DATA") : null),
+      productionData: input.data?.productionData ?? (dataCategories.length ? categorizedProduction : null)
+    },
+    exposure: {
+      currentUserAccess,
+      intendedUserAccess,
+      externalUsers: input.exposure?.externalUsers ?? (intendedUserAccess === "UNKNOWN" ? null : categorizedExternal),
+      productionAccess: input.exposure?.productionAccess ?? null,
+      consequentialDecisions: input.exposure?.consequentialDecisions ?? null
+    },
     agent: Object.fromEntries(["usesAgents", "canTakeActions", "irreversibleActions", "humanOverride"].map((field) => [field, input.agent?.[field] ?? null])),
     classification: Object.fromEntries(["prohibitedPractice", "highRiskCandidate"].map((field) => [field, input.classification?.[field] ?? null])),
     operatingBoundary: {

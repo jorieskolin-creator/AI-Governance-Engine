@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Evidence-gated AI solution readiness assessment" />
     <title>Vivicta AI Governance Engine</title>
-    <link rel="stylesheet" href="/styles.css?v=source-first-1.1.0" />
+    <link rel="stylesheet" href="/styles.css?v=source-first-1.2.0" />
   </head>
   <body>
     <header class="app-header">
@@ -27,6 +27,10 @@
       <section id="source-intake" class="panel source-intake-panel">
         <div class="section-heading"><div><p class="eyebrow">Source-first intake</p><h2>Upload evidence and code</h2></div><button id="sample-button" type="button" class="secondary-button">Load credible sample</button></div>
         <p class="section-intro">The Engine parses submitted sources without executing code, macros, scripts, forms or embedded instructions. It proposes a cited Assessment Intake for your confirmation.</p>
+        <details id="knowledge-diagnostics" class="knowledge-diagnostics">
+          <summary>Knowledge Base connection and integrity</summary>
+          <div id="knowledge-diagnostics-content">Loading connection and reference checks...</div>
+        </details>
         <div class="form-grid two">
           <label class="upload-box">Codebase or evidence folder<input id="source-folder" type="file" multiple webkitdirectory /><span id="folder-summary">No folder selected</span></label>
             <label class="upload-box">Individual documents and files<input id="source-files" type="file" multiple /><span id="file-summary">No individual files selected</span></label>
@@ -58,8 +62,8 @@
           </fieldset>
 
           <div class="flag-groups">
-            <fieldset><legend>Data</legend><label>Personal data<select id="personal-data" class="tri-state"></select></label><label>Special-category data<select id="special-data" class="tri-state"></select></label><label>Production data<select id="production-data" class="tri-state"></select></label></fieldset>
-            <fieldset><legend>Exposure</legend><label>External users<select id="external-users" class="tri-state"></select></label><label>Production access<select id="production-access" class="tri-state"></select></label><label>Consequential decisions<select id="consequential" class="tri-state"></select></label></fieldset>
+            <fieldset class="data-profile"><legend>Data profile</legend><p class="field-hint">Select every category that may enter the assessed boundary.</p><div id="data-categories" class="category-options"><label><input type="checkbox" value="SYNTHETIC" />Simulated / synthetic data</label><label><input type="checkbox" value="PUBLIC_NON_PERSONAL" />Public non-personal data</label><label><input type="checkbox" value="ANONYMIZED" />Anonymized data</label><label><input type="checkbox" value="PSEUDONYMIZED" />Pseudonymized data</label><label><input type="checkbox" value="CLEANED_APPROVED_PRODUCTION" />Cleaned and approved production data</label><label><input type="checkbox" value="RAW_PRODUCTION" />Raw production data</label><label><input type="checkbox" value="PERSONAL_DATA" />Personal data</label><label><input type="checkbox" value="SPECIAL_CATEGORY_DATA" />Special-category data</label><label><input type="checkbox" value="CONFIDENTIAL_OR_PROPRIETARY" />Confidential or proprietary data</label></div></fieldset>
+            <fieldset><legend>User access and exposure</legend><label>Current user access<select id="current-user-access" class="access-mode"></select></label><label>Intended user access<select id="intended-user-access" class="access-mode"></select></label><label>Production access<select id="production-access" class="tri-state"></select></label><label>Consequential decisions<select id="consequential" class="tri-state"></select></label></fieldset>
             <fieldset><legend>Agent authority</legend><label>Uses agents<select id="uses-agents" class="tri-state"></select></label><label>Can take actions<select id="takes-actions" class="tri-state"></select></label><label>Irreversible actions<select id="irreversible" class="tri-state"></select></label><label>Human override<select id="human-override" class="tri-state"></select></label></fieldset>
             <fieldset><legend>Classification declaration</legend><label>Prohibited-practice candidate<select id="prohibited" class="tri-state"></select></label><label>High-risk candidate<select id="high-risk" class="tri-state"></select></label></fieldset>
           </div>
@@ -89,6 +93,6 @@
       <section id="error" class="error-panel hidden" aria-live="assertive"></section>
     </main>
     <footer>Vivicta AI Governance Engine - Readiness recommendation, not formal approval</footer>
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/app.js?v=source-first-1.2.0"></script>
   </body>
 </html>

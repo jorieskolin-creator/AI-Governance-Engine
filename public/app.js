@@ -5,6 +5,7 @@ const STAGES = [
   "QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION",
   "DEPLOYMENT", "OPERATION_AND_MONITORING", "REVIEW_AND_EVALUATION", "RETIREMENT"
 ];
+const ACCESS_MODES = ["UNKNOWN", "INTERNAL_ONLY", "EXTERNAL_WITH_SOLUTION_OWNER", "CONTROLLED_EXTERNAL_PILOT", "RESTRICTED_CUSTOMER_USE", "PUBLIC_ACCESS", "EXTERNAL_UNSPECIFIED"];
 let lastPackage = null;
 let sampleSources = [];
 let summaryEnabled = true;
@@ -15,6 +16,7 @@ const label = (value) => String(value ?? "").replaceAll("_", " ").toLowerCase().
 const commaList = (value) => value.split(",").map((entry) => entry.trim()).filter(Boolean);
 const lineList = (value) => value.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
 const triState = (id) => $(id).value === "UNKNOWN" ? null : $(id).value === "YES";
+const checkedValues = (id) => [...$(id).querySelectorAll('input[type="checkbox"]:checked')].map((item) => item.value);
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -40,6 +42,10 @@ function stageOptions() {
     }
     select.value = "UNKNOWN";
   }
+  for (const select of document.querySelectorAll("select.access-mode")) {
+    for (const value of ACCESS_MODES) { const option = el("option", "", label(value)); option.value = value; select.append(option); }
+    select.value = "UNKNOWN";
+  }
 }
 
 function fillDossier(dossier) {
@@ -53,8 +59,10 @@ function fillDossier(dossier) {
   $("boundary-integrations").value = boundary.integrationScope ?? ""; $("boundary-permissions").value = boundary.permissionScope ?? ""; $("boundary-autonomy").value = boundary.autonomyScope ?? "";
   $("boundary-monitoring").value = boundary.monitoringOwner ?? ""; $("boundary-expiry").value = boundary.expiresAt?.slice(0, 10) ?? "";
   const setTri = (id, value) => { $(id).value = value === null || value === undefined ? "UNKNOWN" : value ? "YES" : "NO"; };
-  setTri("personal-data", dossier.data?.personalData); setTri("special-data", dossier.data?.specialCategoryData); setTri("production-data", dossier.data?.productionData);
-  setTri("external-users", dossier.exposure?.externalUsers); setTri("production-access", dossier.exposure?.productionAccess); setTri("consequential", dossier.exposure?.consequentialDecisions);
+  const categories = new Set(dossier.data?.categories ?? []); for (const input of $("data-categories").querySelectorAll('input[type="checkbox"]')) input.checked = categories.has(input.value);
+  $("current-user-access").value = dossier.exposure?.currentUserAccess ?? (dossier.exposure?.externalUsers === false ? "INTERNAL_ONLY" : "UNKNOWN");
+  $("intended-user-access").value = dossier.exposure?.intendedUserAccess ?? (dossier.exposure?.externalUsers === true ? "EXTERNAL_UNSPECIFIED" : dossier.exposure?.externalUsers === false ? "INTERNAL_ONLY" : "UNKNOWN");
+  setTri("production-access", dossier.exposure?.productionAccess); setTri("consequential", dossier.exposure?.consequentialDecisions);
   setTri("uses-agents", dossier.agent?.usesAgents); setTri("takes-actions", dossier.agent?.canTakeActions); setTri("irreversible", dossier.agent?.irreversibleActions); setTri("human-override", dossier.agent?.humanOverride);
   setTri("prohibited", dossier.classification?.prohibitedPractice); setTri("high-risk", dossier.classification?.highRiskCandidate);
 }
@@ -64,8 +72,8 @@ function dossierFromForm() {
     name: $("name").value, intendedPurpose: $("purpose").value, expectedValue: $("value").value,
     currentStage: $("current-stage").value, targetStage: $("target-stage").value,
     jurisdictions: commaList($("jurisdictions").value), roles: commaList($("roles").value), users: commaList($("users").value), accountableOwner: $("owner").value,
-    data: { personalData: triState("personal-data"), specialCategoryData: triState("special-data"), productionData: triState("production-data") },
-    exposure: { externalUsers: triState("external-users"), productionAccess: triState("production-access"), consequentialDecisions: triState("consequential") },
+    data: { categories: checkedValues("data-categories") },
+    exposure: { currentUserAccess: $("current-user-access").value, intendedUserAccess: $("intended-user-access").value, productionAccess: triState("production-access"), consequentialDecisions: triState("consequential") },
     agent: { usesAgents: triState("uses-agents"), canTakeActions: triState("takes-actions"), irreversibleActions: triState("irreversible"), humanOverride: triState("human-override") },
     classification: { prohibitedPractice: triState("prohibited"), highRiskCandidate: triState("high-risk") },
     operatingBoundary: {
@@ -121,7 +129,7 @@ async function selectedSources() {
   return preparedSources;
 }
 
-function renderDiscovery(profile, dlpFindings = []) {
+function renderDiscovery(profile, dlpFindings = [], recheck = null) {
   const root = $("discovery-results"); root.replaceChildren();
   const heading = el("div", "discovery-heading");
   heading.append(el("strong", "", "Detected Assessment Intake draft"), el("span", "", `${profile.sourceCount} parsed source(s) · ${dlpFindings.length} local screening indicator(s)`));
@@ -134,7 +142,13 @@ function renderDiscovery(profile, dlpFindings = []) {
     card.append(badge(fact?.status ?? "UNKNOWN"), el("small", "", fact?.sourceUnitIds?.length ? `${fact.sourceUnitIds.length} cited source unit(s)` : "No documentary source located"));
     grid.append(card);
   }
-  root.append(grid); root.classList.remove("hidden");
+  root.append(grid);
+  if (recheck) {
+    root.append(el("p", "discovery-recheck-note", recheck.status === "AVAILABLE_AFTER_APPROVAL"
+      ? "AI semantic recheck is available in the authenticated v2 flow after explicit packet and provider approval. It proposes cited candidates only; it never overwrites this deterministic draft."
+      : "AI semantic recheck is disabled. Missing fields remain unknown until documented or declared by the user."));
+  }
+  root.classList.remove("hidden");
 }
 
 async function discoverCaseInformation() {
@@ -148,8 +162,9 @@ async function discoverCaseInformation() {
     }
     const response = await fetch("/api/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(prepared) });
     const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Source discovery failed");
-    fillDossier(body.solutionProfile.suggestedDossier); renderDiscovery(body.solutionProfile, body.dlpFindings);
-    $("discovery-status").textContent = "Draft ready. Confirm or correct each field before assessment; corrections remain user declarations.";
+    fillDossier(body.solutionProfile.suggestedDossier); renderDiscovery(body.solutionProfile, body.dlpFindings, body.discoveryRecheck);
+    const unresolved = Object.values(body.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED").length;
+    $("discovery-status").textContent = `Draft ready with ${unresolved} unresolved field(s). Confirm or correct the draft; approved v2 runs may use a cited AI recheck.`;
     $("assessment-input").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     $("discovery-status").textContent = "Discovery could not be completed."; $("error").textContent = error.message; $("error").classList.remove("hidden");
@@ -163,7 +178,7 @@ function renderRecommendation(pkg) {
 }
 
 function renderMetrics(pkg) {
-  const values = [["Assessment coverage", `${pkg.dimensions.assessmentCoverage ?? pkg.dimensions.indicatorCoverage ?? pkg.dimensions.evidenceCoverage}%`], ["Verified evidence", `${pkg.dimensions.verifiedEvidenceCoverage ?? 0}%`], ["Control assurance", `${pkg.dimensions.controlAssurance}%`], ["Residual risk", pkg.dimensions.residualRisk], ["Gate status", pkg.dimensions.gateStatus]];
+  const values = [["Deterministic controls evaluated", `${pkg.dimensions.assessmentCoverage ?? pkg.dimensions.indicatorCoverage ?? pkg.dimensions.evidenceCoverage}%`], ["Verified evidence", `${pkg.dimensions.verifiedEvidenceCoverage ?? 0}%`], ["Control assurance", `${pkg.dimensions.controlAssurance}%`], ["Assurance deficit", pkg.dimensions.assuranceDeficit ?? pkg.dimensions.residualRisk], ["Risk determination", pkg.dimensions.riskDetermination ?? pkg.dimensions.residualRisk], ["Gate status", pkg.dimensions.gateStatus]];
   $("metric-grid").replaceChildren(...values.map(([name, value]) => { const card = el("div", "metric"); card.append(el("span", "", name), el("strong", "", label(value))); return card; }));
 }
 
@@ -288,13 +303,31 @@ function printReport() {
 }
 
 stageOptions();
+function renderKnowledgeDiagnostics(kb, diagnostics) {
+  const status = diagnostics?.status ?? "UNKNOWN";
+  $("knowledge-status").textContent = `${kb.releaseStatus ?? "UNSPECIFIED"} · ${kb.source} · ${status} · ${kb.version}`;
+  const content = $("knowledge-diagnostics-content"); content.replaceChildren();
+  const summary = el("div", "knowledge-diagnostics-summary");
+  summary.append(el("strong", "", `${kb.source} connection: ${status}`), el("span", "", `${diagnostics?.errorCount ?? 0} error(s) · ${diagnostics?.warningCount ?? 0} warning(s) · manifest ${String(kb.manifestHash ?? "not available").slice(0, 12)}`));
+  content.append(summary);
+  const issues = diagnostics?.issues ?? [];
+  if (!issues.length) content.append(el("p", "", "All configured reference and hash checks passed."));
+  else {
+    const list = el("ul", "knowledge-diagnostics-issues");
+    for (const issue of issues.slice(0, 8)) list.append(el("li", "", `${issue.severity}: ${issue.message}`));
+    content.append(list);
+  }
+  content.append(el("p", "knowledge-diagnostics-note", "The runtime fetches the manifest and referenced JSON documents at startup, verifies configured SHA-256 hashes, validates cross-document IDs, and fails closed on integrity errors. Calibration status remains visible and is not production authority."));
+}
+
 Promise.all([
   fetch("/api/knowledge").then((response) => response.json()),
-  fetch("/api/config").then((response) => response.json()).catch(() => ({ assuranceSummaryEnabled: true }))
-]).then(([kb, config]) => {
-  $("knowledge-status").textContent = `${kb.releaseStatus ?? "UNSPECIFIED"} · ${kb.source} · ${kb.version}`;
+  fetch("/api/config").then((response) => response.json()).catch(() => ({ assuranceSummaryEnabled: true })),
+  fetch("/api/knowledge/diagnostics").then((response) => response.json()).catch(() => ({ status: "UNKNOWN", issues: [] }))
+]).then(([kb, config, diagnostics]) => {
+  renderKnowledgeDiagnostics(kb, diagnostics);
   summaryEnabled = config.assuranceSummaryEnabled !== false;
-}).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; });
+}).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; $("knowledge-diagnostics-content").textContent = "Knowledge connection diagnostics are unavailable."; });
 $("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("dossier-form").addEventListener("submit", runAssessment);
 $("summary-tab").addEventListener("click", () => selectView("summary")); $("workspace-tab").addEventListener("click", () => selectView("workspace"));
 $("print-button").addEventListener("click", printReport); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);

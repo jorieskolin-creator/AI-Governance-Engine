@@ -6,6 +6,7 @@ import { executeCognitiveRun } from "../src/cognitive/pipeline.js";
 import { modelPolicy } from "../src/cognitive/model-policy.js";
 import { StructuredModelClient, ModelBudget } from "../src/cognitive/provider-client.js";
 import { loadKnowledgeSnapshot } from "../src/knowledge/provider.js";
+import { recheckDiscovery } from "../src/cognitive/discovery-recheck.js";
 import { SAMPLE_REQUEST } from "../src/sample.js";
 
 function preflightInput(sources) {
@@ -59,6 +60,25 @@ test("preflight redacts secrets and keeps prompt-like source text inert", async 
   assert.ok(view.packets.every((item) => item.transmissionState === "PENDING_APPROVAL"));
 });
 
+test("AI discovery recheck returns quote-grounded candidates without overwriting deterministic facts", async () => {
+  const run = await createPreflight({ sources: [{ path: "README.md", mimeType: "text/markdown", content: "# FinOps Engine\nSolution name: FinOps Engine\nIntended purpose: Assess FinOps evidence for governance decisions." }] });
+  const unit = run.packets[0].sourceUnits[0];
+  const policy = modelPolicy({ OPENAI_API_KEY: "test", NODE_ENV: "development" });
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ profile }) => ({
+    value: { candidates: [{ field: "name", status: "CANDIDATE", value: "FinOps Engine", sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote: "Solution name: FinOps Engine" }], rationale: "The product name is explicitly labelled." }] },
+    responseModel: profile.model, usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
+  }) });
+  const before = structuredClone(run.solutionProfile);
+  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["OPENAI"] }));
+  const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
+  assert.equal(result.candidates[0].status, "CANDIDATE");
+  assert.match(result.candidates[0].limitations[0], /requires user confirmation/i);
+  assert.deepEqual(run.solutionProfile, before);
+  assert.equal(run.transmissionManifest[0].stage, "DISCOVERY_RECHECK");
+  assert.equal(run.transmissionManifest[0].provider, "OPENAI");
+  assert.ok(run.transmissionManifest[0].approvedAt);
+});
+
 test("v2 accepts only verified claims into the deterministic readiness package", async () => {
   const run = await createPreflight(preflightInput([{ path: "src/assistant.js", mimeType: "application/javascript", content: "export function answer() { return 'bounded'; }" }]));
   const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
@@ -66,7 +86,7 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: mockTransport });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
-  assert.equal(result.schemaVersion, "2.3.0");
+  assert.equal(result.schemaVersion, "2.4.0");
   assert.equal(result.recommendation.formalApproval, false);
   assert.deepEqual(result.cognitive.coverage.failedStages, [], JSON.stringify(run.trace));
   assert.equal(result.cognitive.lockedFindings.length, 6);

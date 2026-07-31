@@ -51,7 +51,7 @@ export function validateExecutionApproval(input, run) {
   });
   invariant(approvedPackets.length === run.packets.length, "Every proposed packet requires an explicit approval entry");
   invariant(new Set(approvedPackets.map((item) => item.packetId)).size === run.packets.length, "Each packet must be approved exactly once");
-  return { approvedPackets };
+  return { approvedPackets, approvedAt: new Date().toISOString() };
 }
 
 export function createGovernanceClaim(value, extractor) {
@@ -99,6 +99,30 @@ export const SOLUTION_MODEL_SCHEMA = {
       statement: { type: "string" }, sourceUnitIds: { type: "array", items: { type: "string" } }, severity: { type: "string", enum: SEVERITIES }
     } } },
     unknowns: { type: "array", items: { type: "string" } }
+  }
+};
+
+export const DISCOVERY_RECHECK_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["candidates"],
+  properties: {
+    candidates: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["field", "status", "value", "sourceUnitIds", "evidenceQuotes", "rationale"],
+        properties: {
+          field: { type: "string" },
+          status: { type: "string", enum: ["CANDIDATE", "CONFLICTING", "NOT_FOUND"] },
+          value: { type: "string" },
+          sourceUnitIds: { type: "array", items: { type: "string" } },
+          evidenceQuotes: { type: "array", items: { type: "object", additionalProperties: false, required: ["sourceUnitId", "quote"], properties: { sourceUnitId: { type: "string" }, quote: { type: "string" } } } },
+          rationale: { type: "string" }
+        }
+      }
+    }
   }
 };
 

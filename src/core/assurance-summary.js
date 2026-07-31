@@ -136,7 +136,7 @@ function deterministicDomainNarrative(domain) {
   const unknown = applicable.filter((item) => item.state === "UNKNOWN").length;
   const belowTarget = applicable.filter((item) => !item.meetsTarget && item.state !== "UNKNOWN").length;
   if (!applicable.length) return "No control is applicable to the declared lifecycle boundary.";
-  if (unknown === applicable.length) return `All ${applicable.length} applicable controls lack acceptable evidence; missing evidence remains unknown.`;
+  if (unknown === applicable.length) return applicable.length === 1 ? "The applicable control lacks acceptable evidence; missing evidence remains unknown." : `All ${applicable.length} applicable controls lack acceptable evidence; missing evidence remains unknown.`;
   if (unknown) return `${unknown} of ${applicable.length} applicable controls lack acceptable evidence; ${belowTarget} additional control(s) remain below target.`;
   if (belowTarget) return `${belowTarget} of ${applicable.length} applicable controls have evidence below the required assurance target.`;
   return `All ${applicable.length} applicable controls meet the deterministic assurance target.`;
@@ -241,7 +241,7 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
   ]);
 
   return {
-    version: "assurance-summary-1.2.0",
+    version: "assurance-summary-1.3.0",
     assessmentMode: mode,
     decision: recommendation,
     dimensions,

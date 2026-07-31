@@ -59,7 +59,11 @@ export function assessAntiPatterns(antiPatterns, evidence, controlAssessments) {
   return antiPatterns.map((antiPattern) => {
     const riskEvidence = evidence.filter((item) => item.antiPatternIds.includes(antiPattern.id) && item.polarity === "RISK");
     const partialRiskEvidence = evidence.filter((item) => item.antiPatternIds.includes(antiPattern.id) && item.polarity === "RISK_PARTIAL");
-    const absenceEvidence = evidence.filter((item) => item.antiPatternIds.includes(antiPattern.id) && item.polarity === "ABSENCE_TEST" && !item.stale && ["TESTED", "OPERATIONALLY_OBSERVED", "HUMAN_VALIDATED", "FORMALLY_APPROVED"].includes(item.assuranceState));
+    const absenceEvidence = evidence.filter((item) => {
+      const test = item.metadata?.absenceTest;
+      const explicitTest = test?.scope && test?.method && test?.executedAt && test?.systemVersion && /pass|absent|not found|no occurrence/i.test(test?.result ?? "");
+      return item.antiPatternIds.includes(antiPattern.id) && item.polarity === "ABSENCE_TEST" && !item.stale && explicitTest && ["TESTED", "OPERATIONALLY_OBSERVED", "HUMAN_VALIDATED", "FORMALLY_APPROVED"].includes(item.assuranceState);
+    });
     const relatedControls = controlAssessments.filter((item) => antiPattern.relatedControlIds.includes(item.controlId));
     const lockedRiskEvidence = riskEvidence.filter((item) => item.metadata?.lockedFindingId);
     const declaredRiskEvidence = riskEvidence.filter((item) => item.sourceId === "dossier" || item.evidenceClass === "DECLARED_RISK");

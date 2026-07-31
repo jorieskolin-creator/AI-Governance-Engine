@@ -237,14 +237,17 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
     ...(solution.limitations ?? []),
     ...(mode === "DETERMINISTIC_ONLY" ? ["Automated indicators have not passed the cognitive claim-verification pipeline and are not confirmed findings."] : []),
     ...(knowledge.releaseStatus !== "APPROVED" ? [`The assessment uses ${knowledge.releaseStatus ?? "UNSPECIFIED"} knowledge rather than an approved production normative mapping.`] : []),
-    ...(cognitive?.coverage && !cognitive.coverage.complete ? [`Cognitive assessment incomplete: ${cognitive.coverage.failedStages.join(", ")}.`] : [])
+    ...(cognitive?.coverage && !cognitive.coverage.complete ? [`Cognitive assessment incomplete: ${cognitive.coverage.failedStages.join(", ")}.`] : []),
+    ...(cognitive?.publicationGate?.status === "REPORT_WITH_LIMITATIONS" ? cognitive.publicationGate.limitations.map((item) => `Publication limitation: ${item}.`) : []),
+    ...(cognitive?.publicationGate?.status === "REPORT_WITHHELD" ? ["Generated assurance narrative was withheld; use the deterministic package and audit ledger."] : [])
   ]);
 
   return {
-    version: "assurance-summary-1.3.0",
+    version: "assurance-summary-1.4.0",
     assessmentMode: mode,
     decision: recommendation,
     dimensions,
+    publicationQuality: cognitive?.publicationGate ?? { status: "REPORT_WITH_LIMITATIONS", readinessIndependent: true, limitations: ["COGNITIVE_PUBLICATION_GATE_NOT_RUN"], blockers: [] },
     caseProfile: caseProfileView(assessmentIntake, solutionProfile),
     documentationAlignment: documentationReadiness,
     transitionBoundary,

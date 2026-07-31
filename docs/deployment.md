@@ -8,7 +8,7 @@
 6. Optionally set `ALLOWED_ORIGIN` to the Railway public URL.
 7. Deploy. Railway executes `npm run check`, starts `npm start`, and probes `/health`.
 
-## Enabling v2 safely
+## Enabling the authenticated v2 API and v3 cognitive contract safely
 
 Keep `COGNITIVE_PIPELINE_ENABLED=false` until the following are configured:
 
@@ -16,9 +16,11 @@ Keep `COGNITIVE_PIPELINE_ENABLED=false` until the following are configured:
 2. Keep provider keys server-side: `OPENAI_API_KEY` (preferred) or `GPT_API_KEY`, `ANTHROPIC_API_KEY`, and `GEMINI_API_KEY`.
 3. Run `npm run benchmark:models` in a controlled environment with `BENCHMARK_CONFIRM_LIVE_CALLS=true` and review the output against the qualification floors.
 4. Add only qualified profile IDs to `MODEL_PROFILE_APPROVALS`.
-5. Set `COGNITIVE_PIPELINE_ENABLED=true` and redeploy.
+5. Set `COGNITIVE_PIPELINE_ENABLED=true` while keeping `COGNITIVE_PIPELINE_V3_ENABLED=false` for compatibility/shadow calibration.
+6. Compare the 2.5.0 audit packages, coverage matrices, unresolved ledgers, publication gates, costs and reviewer labels against the D3/AP-D3 golden cases.
+7. Set `COGNITIVE_PIPELINE_V3_ENABLED=true` only after every integrity floor passes, then redeploy.
 
-The service will not run pilot profiles in production. A run also fails closed when the user has not approved a provider for every packet, cross-provider verification cannot be performed, a required model stage fails, or the model budget is exhausted.
+The service will not run pilot profiles in production. Packet/provider approval is enforced for each actual transmission rather than requiring one provider for the complete dossier. A run fails closed when cross-provider verification cannot be performed, mandatory assessment coverage is incomplete, a required model stage fails, the approved model identity changes, or a global/per-stage model budget is exhausted.
 
 The pilot run store is in memory. Raw evidence expires after 60 minutes and is purged after success, failure, cancellation, or timeout. A Railway restart invalidates in-progress runs and requires re-upload. Persisting packages or queues is a later production-hardening step, not part of this vertical slice.
 

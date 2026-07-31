@@ -17,13 +17,13 @@ This is a clean governance implementation inspired by the FinOps Engine's proces
 - Exports the Assurance Summary as a printable A4 report and a script-free, self-contained HTML file that works offline. Full evidence remains only in the protected JSON audit package.
 - Records required human authorities without issuing formal approval.
 
-## Evidence-gated cognitive pipeline (v2)
+## Evidence-gated cognitive pipeline (v3 contract)
 
-The optional v2 path adds semantic solution understanding, parallel A-F claim extraction, independent verification, targeted rescan/adjudication, deterministic assessment, controlled synthesis, and a separate fact-check. Its invariant is:
+The authenticated v2 API now carries cognitive contract `3.0.0`: independently verified solution understanding, immutable raw/derived evidence lineage, object-level assessment coverage, parallel A-F claim extraction, independent verification, bounded rescan/adjudication, deterministic assessment, controlled synthesis, repair/re-analysis, and a separate publication gate. Its invariant is:
 
-`untrusted source → candidate claim → independent verification → locked finding → deterministic decision → controlled synthesis`
+`raw source → derived source → candidate fact/claim → verification → adjudicated claim → locked finding → deterministic decision → action → narrative → fact-check → publication gate`
 
-Only locked findings become evidence for the deterministic engine. Raw model output cannot change applicability, assurance, anti-pattern state, hard gates, readiness, or formal authority.
+Only decision-eligible adjudicated claims become locked findings and deterministic evidence. Unsupported, conflicting, and unverifiable claims remain in a separate audit ledger. Raw model output cannot change applicability, assurance, anti-pattern state, hard gates, readiness, lifecycle boundaries, or formal authority.
 
 The v2 endpoints are disabled by default and require a bearer token:
 
@@ -40,7 +40,7 @@ Preflight accepts UTF-8 or base64 content with an explicit MIME type. Supported 
 
 Mixed selections continue when at least one relevant source is parseable. Dependency, generated, build, cache, and version-control content is recorded as `KNOWN_IRRELEVANT`; source-like, parse, and unsafe exclusions create `SOURCE_COVERAGE_INCOMPLETE`. That gate requires review and an isolated sandbox in early stages and blocks Deployment or later progression until the blind spot is resubmitted or covered by an attributable scoped human review. Ordinary intake confirmation cannot clear it.
 
-Production model profiles are allow-listed through `MODEL_PROFILE_APPROVALS`. Pilot profiles are never promoted automatically.
+Production model profiles are allow-listed per stage through `MODEL_PROFILE_APPROVALS`. Pilot profiles are never promoted automatically. Set `COGNITIVE_PIPELINE_V3_ENABLED=true` only after shadow calibration; integrity protections remain fail-closed in compatibility mode.
 
 ## Run
 
@@ -104,7 +104,7 @@ Use **Print / Save PDF**, **Download HTML**, or the unchanged canonical **Downlo
 
 `POST /api/v2/runs/{id}/discover-recheck` can semantically recheck unresolved deterministic facts. It is intentionally available only after authenticated v2 preflight and explicit approval of every transmitted packet and provider. Exact source quotes are verified locally, results remain candidates requiring user confirmation, and the recheck cannot overwrite deterministic facts.
 
-The deterministic package is schema `1.3.0`; `ReadinessPackageV2` is additive at schema `2.4.0`. Both include immutable `assessmentIntake` `1.2.0`, field-level `solutionProfile`, `documentationReadiness`, `sourceIngestion`, `transitionBoundary`, and `assuranceSummary`. The Assurance Summary contract is `assurance-summary-1.3.0`. V1 lexical matches are explicitly labelled as automated indicators because cognitive verification was not run.
+The deterministic package is schema `1.3.0`; `ReadinessPackageV2` is additive at schema `2.5.0`. Both include immutable `assessmentIntake` `1.2.0`, field-level `solutionProfile`, `documentationReadiness`, `sourceIngestion`, `transitionBoundary`, and `assuranceSummary`. The Assurance Summary contract is `assurance-summary-1.4.0`. V2.5 additionally exposes derived-source lineage, adjudicated and unresolved claim ledgers, object-level coverage, finding locks, exact action grounding, bounded re-analysis, and the readiness-independent publication gate. V1 lexical matches remain automated indicators because cognitive verification was not run.
 
 ### v2 preflight example
 
@@ -124,7 +124,7 @@ The deterministic package is schema `1.3.0`; `ReadinessPackageV2` is additive at
 
 The dossier is optional at preflight. When omitted, call `/discover`, submit the reviewed dossier and field confirmations to `/confirm`, then approve the resulting redacted packets for `/execute`.
 
-Use `Authorization: Bearer <COGNITIVE_API_TOKEN>` for every `/api/v2/*` request. Submit every returned packet ID to `/execute` with the explicitly approved provider names. A high/critical claim needs a provider different from its extractor; insufficient provider approval produces `COGNITIVE_ASSESSMENT_INCOMPLETE` rather than a positive recommendation.
+Use `Authorization: Bearer <COGNITIVE_API_TOKEN>` for every `/api/v2/*` request. Submit every returned packet ID to `/execute` with explicitly approved provider names. Approval is evaluated per transmitted packet and stage. Decision-relevant claims require a provider different from their extractor; insufficient independent-provider coverage produces `COGNITIVE_ASSESSMENT_INCOMPLETE` rather than a positive recommendation.
 
 ## Model qualification
 

@@ -133,7 +133,7 @@ async function extractSegments(source, bytes) {
   throw new Error(`Unsupported format for ${source.path}`);
 }
 
-function redactText(text) {
+export function redactText(text) {
   let value = text;
   const findings = [];
   for (const entry of [...SECRET_PATTERNS, ...PERSONAL_PATTERNS]) {
@@ -181,7 +181,7 @@ function chunkText(source, sourceId, segment, maxChars = 6000) {
     const locator = `${segment.locator};lines:${startLine}-${endLine}`;
     const unit = {
       id: stableId("unit", { sourceId, locator, text: redacted.text }), sourceId, path: source.path,
-      format: source.format, mimeType: source.mimeType, evidenceKind: source.metadata?.kind ?? sourceKindForPath(source.path), assuranceCeiling: assuranceCeiling(source), locator, sha256: sha256(raw),
+      format: source.format, mimeType: source.mimeType, evidenceKind: source.metadata?.kind ?? sourceKindForPath(source.path), evidenceClass: source.metadata?.kind === "DECLARATION" ? "DECLARED" : "OBSERVED", assuranceCeiling: assuranceCeiling(source), locator, sha256: sha256(raw),
       content: redacted.text, sensitivity: redacted.findings.map((item) => item.type),
       transmissionState: "PENDING_APPROVAL", coverage: { characters: raw.length, startLine, endLine }
     };
@@ -229,7 +229,7 @@ export async function parseAndScreenSources(sources, options = {}) {
       if (source.format === "PDF" && !segment.text.trim()) {
         const unit = {
           id: stableId("unit", { sourceId, locator: segment.locator, sourceHash, emptyVisualPage: true }), sourceId, path: source.path,
-          format: source.format, mimeType: source.mimeType, evidenceKind: "DOCUMENT", assuranceCeiling: "DECLARED", locator: segment.locator, sha256: sourceHash,
+          format: source.format, mimeType: source.mimeType, evidenceKind: "DOCUMENT", evidenceClass: "OBSERVED", assuranceCeiling: "DECLARED", locator: segment.locator, sha256: sourceHash,
           content: "[PDF PAGE HAS NO EXTRACTABLE TEXT]", sensitivity: ["UNSCREENED_PDF_PAGE"], transmissionState: "PENDING_APPROVAL", coverage: { characters: 0 }
         };
         sourceUnits.push(unit);
@@ -240,7 +240,7 @@ export async function parseAndScreenSources(sources, options = {}) {
         const sanitized = source.metadata?.sanitized === true;
         const unit = {
           id: stableId("unit", { sourceId, locator: segment.locator, sourceHash }), sourceId, path: source.path,
-          format: source.format, mimeType: source.mimeType, evidenceKind: source.metadata?.kind ?? "DOCUMENT", assuranceCeiling: assuranceCeiling(source), locator: segment.locator, sha256: sourceHash,
+          format: source.format, mimeType: source.mimeType, evidenceKind: source.metadata?.kind ?? "DOCUMENT", evidenceClass: source.metadata?.kind === "DECLARATION" ? "DECLARED" : "OBSERVED", assuranceCeiling: assuranceCeiling(source), locator: segment.locator, sha256: sourceHash,
           content: "[IMAGE CONTENT — transmit only after explicit approval]", media: segment.media,
           sensitivity: sanitized ? [] : ["UNSCREENED_IMAGE"], transmissionState: "PENDING_APPROVAL", coverage: { images: 1 }
         };

@@ -4,7 +4,7 @@ import { buildSourceRegistry, dossierEvidence, dossierRiskEvidence } from "./cor
 import { evaluateApplicability } from "./core/applicability.js";
 import { assessAntiPatterns, assessControls, groupDomainResults } from "./core/assessment.js";
 import { evaluateHardGates } from "./core/hard-gates.js";
-import { selectPlaybookActions } from "./core/playbook-engine.js";
+import { buildActionGroundingRecords, selectPlaybookActions } from "./core/playbook-engine.js";
 import { calculateReadiness, humanDecisionRequirements } from "./core/readiness.js";
 import { buildAssuranceSummary, buildTransitionBoundary } from "./core/assurance-summary.js";
 import { loadKnowledgeSnapshot, knowledgeManifestView } from "./knowledge/provider.js";
@@ -53,7 +53,7 @@ function solutionUnderstanding(dossier, registry, evidence, sourceIngestion) {
   };
 }
 
-async function buildPackage({ dossier, knowledge, registry, evidence, registryFindings, solution, solutionProfile, sourceIngestion, trace, startedAt, runId, schemaVersion, cognitiveCoverage, cognitive }) {
+async function buildPackage({ dossier, knowledge, registry, evidence, registryFindings, solution, solutionProfile, sourceIngestion, trace, startedAt, runId, schemaVersion, cognitiveCoverage, cognitive, lockedFindings = [] }) {
   const documentationReadiness = buildDocumentationReadiness(solutionProfile, dossier.targetStage, sourceIngestion);
   const assessmentIntake = buildAssessmentIntake(dossier, solutionProfile, documentationReadiness, registry.registeredSources, sourceIngestion);
   const applicability = await timed(trace, "applicability", () => evaluateApplicability(knowledge.requirements, dossier, startedAt));
@@ -61,7 +61,8 @@ async function buildPackage({ dossier, knowledge, registry, evidence, registryFi
   const antiPatterns = await timed(trace, "antipattern-assessment", () => assessAntiPatterns(knowledge.antipatterns, evidence, controls));
   const domains = groupDomainResults(controls, antiPatterns);
   const gates = await timed(trace, "hard-gates", () => evaluateHardGates({ dossier, registryFindings, controlAssessments: controls, applicability, evidence, documentationReadiness, sourceIngestion, cognitiveCoverage }));
-  const actions = await timed(trace, "playbook", () => selectPlaybookActions(knowledge.tactics, domains, antiPatterns, dossier));
+  const actions = await timed(trace, "playbook", () => selectPlaybookActions(knowledge.tactics, lockedFindings));
+  const actionGroundingRecords = buildActionGroundingRecords(actions, lockedFindings, knowledge.tactics);
   const readiness = calculateReadiness(controls, antiPatterns, gates, evidence, documentationReadiness);
   const humanDecisions = humanDecisionRequirements(gates, applicability, dossier);
   const transitionBoundary = buildTransitionBoundary({ dossier, gates, domains, readiness, humanDecisions, documentationReadiness });
@@ -102,9 +103,17 @@ async function buildPackage({ dossier, knowledge, registry, evidence, registryFi
     domains,
     hardGates: gates,
     actions,
+    actionGroundingRecords,
     humanDecisionRequirements: humanDecisions,
     evidence: evidence.map((item) => ({ ...item, metadata: undefined })),
     cognitive: cognitive ?? undefined,
+    derivedSourceUnits: cognitive?.derivedSourceUnits ?? [],
+    adjudicatedClaims: cognitive?.adjudicatedClaims ?? [],
+    unresolvedClaims: cognitive?.unresolvedClaims ?? [],
+    coverageMatrix: cognitive?.coverageMatrix ?? null,
+    findingLockRecords: cognitive?.findingLockRecords ?? [],
+    reanalysisTrace: cognitive?.reanalysisTrace ?? [],
+    publicationGate: cognitive?.publicationGate ?? null,
     trace: {
       inputHash: sha256({ dossier, sources: registry.registeredSources }),
       evidenceSnapshotHash: sha256(evidence.map(({ id, sha256: hash, assuranceState, polarity }) => ({ id, hash, assuranceState, polarity }))),
@@ -131,7 +140,7 @@ export async function assessSolution(input, options = {}) {
   return buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
     solution: solutionUnderstanding(dossier, registry, evidence, sourceIngestion), solutionProfile, sourceIngestion, trace, startedAt, runId,
-    schemaVersion: "1.3.0", cognitiveCoverage: null, cognitive: null
+    schemaVersion: "1.3.0", cognitiveCoverage: null, cognitive: null, lockedFindings: []
   });
 }
 
@@ -151,7 +160,7 @@ export async function assessVerifiedSolution(input, options = {}) {
   return buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
     solution: { ...input.solutionModel, sourceIngestion }, solutionProfile, sourceIngestion, trace, startedAt, runId: input.runId,
-    schemaVersion: "2.4.0", cognitiveCoverage: input.cognitiveCoverage,
-    cognitive: input.cognitive
+    schemaVersion: "2.5.0", cognitiveCoverage: input.cognitiveCoverage,
+    cognitive: input.cognitive, lockedFindings: input.lockedFindings ?? input.cognitive?.lockedFindings ?? []
   });
 }

@@ -110,17 +110,52 @@ export class ModelBudget {
     this.startedAt = Date.now();
     this.calls = 0;
     this.tokens = 0;
+    this.callsByStage = new Map();
+    this.tokensByStage = new Map();
+    this.startedAtByStage = new Map();
+    this.maxCallsByStage = options.maxCallsByStage ?? { ROUTING: 2, EXTRACTION: 20, SOLUTION_UNDERSTANDING: 2, DOMAIN_ASSESSMENT: 16, VERIFICATION: 100, ADJUDICATION: 20, SYNTHESIS: 3, FACT_CHECK: 4 };
+    this.maxTokensByStage = options.maxTokensByStage ?? { ROUTING: 20000, EXTRACTION: 200000, SOLUTION_UNDERSTANDING: 100000, DOMAIN_ASSESSMENT: 300000, VERIFICATION: 300000, ADJUDICATION: 120000, SYNTHESIS: 100000, FACT_CHECK: 100000 };
+    this.maxMsByStage = options.maxMsByStage ?? { ROUTING: 120000, EXTRACTION: 300000, SOLUTION_UNDERSTANDING: 240000, DOMAIN_ASSESSMENT: 600000, VERIFICATION: 600000, ADJUDICATION: 300000, SYNTHESIS: 240000, FACT_CHECK: 240000 };
   }
 
-  reserve() {
+  reserve(stage = "UNKNOWN", expectedOutputTokens = 0) {
     if (this.calls >= this.maxCalls) throw new Error("Model-call budget exhausted");
-    if (this.tokens >= this.maxTokens) throw new Error("Model-token budget exhausted");
+    if (this.tokens + expectedOutputTokens > this.maxTokens) throw new Error("Model-token budget cannot safely reserve the requested output");
     if (Date.now() - this.startedAt >= this.maxMs) throw new Error("Model-time budget exhausted");
+    const stageCalls = this.callsByStage.get(stage) ?? 0;
+    const stageLimit = this.maxCallsByStage[stage];
+    if (stageLimit && stageCalls >= stageLimit) throw new Error(`Model-call budget exhausted for ${stage}`);
+    const stageTokens = this.tokensByStage.get(stage) ?? 0;
+    const stageTokenLimit = this.maxTokensByStage[stage];
+    if (stageTokenLimit && stageTokens + expectedOutputTokens > stageTokenLimit) throw new Error(`Model-token budget cannot safely reserve the requested output for ${stage}`);
+    const stageStartedAt = this.startedAtByStage.get(stage) ?? Date.now();
+    this.startedAtByStage.set(stage, stageStartedAt);
+    const stageTimeLimit = this.maxMsByStage[stage];
+    if (stageTimeLimit && Date.now() - stageStartedAt >= stageTimeLimit) throw new Error(`Model-time budget exhausted for ${stage}`);
     this.calls += 1;
+    this.callsByStage.set(stage, stageCalls + 1);
   }
 
-  record(usage) { this.tokens += usage.totalTokens ?? 0; }
-  view() { return { calls: this.calls, tokens: this.tokens, elapsedMs: Date.now() - this.startedAt, maxCalls: this.maxCalls, maxTokens: this.maxTokens, maxMs: this.maxMs }; }
+  record(usage, stage = "UNKNOWN") {
+    const tokens = usage.totalTokens ?? 0;
+    this.tokens += tokens;
+    this.tokensByStage.set(stage, (this.tokensByStage.get(stage) ?? 0) + tokens);
+    if (this.tokens > this.maxTokens) throw new Error("Model-token budget exhausted");
+    if (this.maxTokensByStage[stage] && this.tokensByStage.get(stage) > this.maxTokensByStage[stage]) throw new Error(`Model-token budget exhausted for ${stage}`);
+  }
+  view() {
+    return {
+      calls: this.calls, tokens: this.tokens, elapsedMs: Date.now() - this.startedAt,
+      maxCalls: this.maxCalls, maxTokens: this.maxTokens, maxMs: this.maxMs,
+      callsByStage: Object.fromEntries(this.callsByStage), tokensByStage: Object.fromEntries(this.tokensByStage),
+      maxCallsByStage: this.maxCallsByStage, maxTokensByStage: this.maxTokensByStage, maxMsByStage: this.maxMsByStage
+    };
+  }
+}
+
+function responseModelMatches(configured, returned) {
+  if (!returned) return false;
+  return returned === configured || returned.startsWith(`${configured}-`);
 }
 
 export class StructuredModelClient {
@@ -135,7 +170,7 @@ export class StructuredModelClient {
     const requestHash = sha256({ profile: profile.id, prompt, schemaName, schema, packetHash, promptVersion, media: media.map((item) => ({ mimeType: item.mimeType, sha256: sha256(Buffer.from(item.data, "base64")) })) });
     let lastError;
     for (let retry = 0; retry <= 1; retry += 1) {
-      this.budget.reserve();
+      this.budget.reserve(profile.role, profile.maxOutputTokens ?? 0);
       const started = Date.now();
       const repairPrompt = retry === 0 ? prompt : `${prompt}\n\nSCHEMA_REPAIR: The previous response was malformed or violated the schema. Return one complete JSON value that exactly matches the supplied schema.`;
       try {
@@ -146,8 +181,9 @@ export class StructuredModelClient {
             : profile.provider === "ANTHROPIC"
               ? await anthropicRequest(profile, this.policy.credentials.ANTHROPIC, repairPrompt, schemaName, schema, media)
               : await geminiRequest(profile, this.policy.credentials.GEMINI, repairPrompt, schemaName, schema, media);
+        if (!responseModelMatches(profile.model, response.responseModel)) throw new Error(`Provider returned unapproved model ${response.responseModel ?? "UNKNOWN"}; expected ${profile.model}`);
         validateSchema(response.value, schema);
-        this.budget.record(response.usage ?? {});
+        this.budget.record(response.usage ?? {}, profile.role);
         const trace = this.trace(profile, promptVersion, schemaName, packetHash, requestHash, started, response, retry, null);
         this.traces.push(trace);
         return { value: response.value, trace };
@@ -163,10 +199,11 @@ export class StructuredModelClient {
 
   trace(profile, promptVersion, schemaName, packetHash, requestHash, started, response, retry, error) {
     return {
-      id: `model-${sha256({ requestHash, retry, started }).slice(0, 24)}`, provider: profile.provider, configuredModel: profile.model,
+      id: `model-event-${sha256({ requestHash, retry, started }).slice(0, 24)}`,
+      requestId: `model-request-${requestHash.slice(0, 24)}`, provider: profile.provider, configuredModel: profile.model,
       responseModel: response?.responseModel ?? null,
       parameters: profile.provider === "GEMINI" ? { thinkingLevel: profile.thinkingLevel } : { effort: profile.effort },
-      promptVersion, schemaName, schemaVersion: "2.0.0", packetHash, requestHash,
+      promptVersion, schemaName, schemaVersion: "3.0.0", packetHash, requestHash,
       usage: response?.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, latencyMs: Date.now() - started,
       retry, refusal: Boolean(error?.refusal), status: error ? "FAILED" : "COMPLETED", error: error ? error.message : null,
       outputHash: response ? sha256(stableStringify(response.value)) : null

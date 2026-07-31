@@ -3,10 +3,14 @@ import { stableId } from "../core/hash.js";
 import { acceptedFormatsByMime } from "../../public/upload-types.js";
 
 export const FACT_CLASSES = Object.freeze(["DECLARED", "OBSERVED", "INFERRED"]);
-export const CLAIM_TYPES = Object.freeze(["FACT", "CONTROL_SUPPORT", "GAP", "RISK", "ANTIPATTERN", "CONTRADICTION", "UNKNOWN", "EVIDENCE_REQUEST"]);
+export const CLAIM_TYPES = Object.freeze(["FACT", "CONTROL_SUPPORT", "GAP", "RISK", "ANTIPATTERN", "ABSENCE_TEST", "CONTRADICTION", "UNKNOWN", "EVIDENCE_REQUEST"]);
 export const VERIFICATION_STATES = Object.freeze(["SUPPORTED", "PARTIAL", "UNSUPPORTED", "CONFLICTING", "NOT_VERIFIABLE"]);
 export const TRANSMISSION_STATES = Object.freeze(["LOCAL_ONLY", "PENDING_APPROVAL", "APPROVED", "TRANSMITTED", "PURGED"]);
 export const NARRATIVE_SECTIONS = Object.freeze(["EXECUTIVE_DECISION", "DOMAIN_NARRATIVE", "CONFIRMED_STRENGTH", "BLOCKING_FINDING", "CONDITION", "HUMAN_QUESTION", "LIMITATION"]);
+export const COVERAGE_STATES = Object.freeze(["ASSESSED", "UNKNOWN", "NOT_APPLICABLE", "FAILED", "HUMAN_INTERPRETATION_REQUIRED"]);
+export const FACT_CHECK_ISSUES = Object.freeze(["NONE", "NARRATIVE_WORDING_ERROR", "REFERENCE_OR_GROUNDING_ERROR", "DETERMINISTIC_INCONSISTENCY", "TACTIC_GROUNDING_ERROR", "AUTHORITY_OVERREACH"]);
+export const PUBLICATION_STATES = Object.freeze(["REPORT_READY", "REPORT_WITH_LIMITATIONS", "REPORT_WITHHELD"]);
+export const COGNITIVE_CONTRACT_VERSION = "3.0.0";
 
 export const ACCEPTED_FORMATS = acceptedFormatsByMime;
 
@@ -78,12 +82,28 @@ export function createGovernanceClaim(value, extractor) {
     controlIds: [...new Set(value.controlIds)].sort(),
     antiPatternIds: [...new Set(value.antiPatternIds)].sort(),
     requirementIds: [...new Set(value.requirementIds)].sort(),
+    findingDefinitionIds: stringArray(value.findingDefinitionIds) ? [...new Set(value.findingDefinitionIds)].sort() : [],
+    assessmentObjectIds: stringArray(value.assessmentObjectIds) ? [...new Set(value.assessmentObjectIds)].sort() : [],
     domains: [...new Set(value.domains)].sort(),
     severity,
     proposedAssuranceState: value.proposedAssuranceState ?? "UNKNOWN",
+    proposedFindingState: typeof value.proposedFindingState === "string" && value.proposedFindingState.trim() ? value.proposedFindingState.trim() : null,
     limitations: stringArray(value.limitations) ? value.limitations : [],
+    absenceTest: value.absenceTest && typeof value.absenceTest === "object" ? {
+      scope: String(value.absenceTest.scope ?? "").trim(),
+      method: String(value.absenceTest.method ?? "").trim(),
+      executedAt: String(value.absenceTest.executedAt ?? "").trim(),
+      result: String(value.absenceTest.result ?? "").trim(),
+      systemVersion: String(value.absenceTest.systemVersion ?? "").trim(),
+      limitations: stringArray(value.absenceTest.limitations) ? value.absenceTest.limitations : []
+    } : null,
     extractor
   };
+  if (value.claimType === "ABSENCE_TEST") {
+    invariant(normalized.antiPatternIds.length > 0, "ABSENCE_TEST requires at least one antiPatternId");
+    invariant(normalized.absenceTest?.scope && normalized.absenceTest?.method && normalized.absenceTest?.executedAt && normalized.absenceTest?.result && normalized.absenceTest?.systemVersion, "ABSENCE_TEST requires scope, method, executedAt, result, and systemVersion");
+  }
+  if (normalized.findingDefinitionIds.length) invariant(normalized.proposedFindingState, "Claims mapped to finding definitions require proposedFindingState");
   return { id: stableId("claim", normalized), ...normalized };
 }
 
@@ -92,13 +112,23 @@ export const SOLUTION_MODEL_SCHEMA = {
   additionalProperties: false,
   required: ["facts", "contradictions", "unknowns"],
   properties: {
-    facts: { type: "array", items: { type: "object", additionalProperties: false, required: ["factClass", "category", "statement", "sourceUnitIds"], properties: {
-      factClass: { type: "string", enum: FACT_CLASSES }, category: { type: "string" }, statement: { type: "string" }, sourceUnitIds: { type: "array", items: { type: "string" } }
+    facts: { type: "array", items: { type: "object", additionalProperties: false, required: ["factClass", "category", "statement", "sourceUnitIds", "evidenceQuotes"], properties: {
+      factClass: { type: "string", enum: FACT_CLASSES }, category: { type: "string" }, statement: { type: "string" }, sourceUnitIds: { type: "array", items: { type: "string" } },
+      evidenceQuotes: { type: "array", items: { type: "object", additionalProperties: false, required: ["sourceUnitId", "quote"], properties: { sourceUnitId: { type: "string" }, quote: { type: "string" } } } }
     } } },
     contradictions: { type: "array", items: { type: "object", additionalProperties: false, required: ["statement", "sourceUnitIds", "severity"], properties: {
       statement: { type: "string" }, sourceUnitIds: { type: "array", items: { type: "string" } }, severity: { type: "string", enum: SEVERITIES }
     } } },
     unknowns: { type: "array", items: { type: "string" } }
+  }
+};
+
+export const SOLUTION_FACT_VERIFICATION_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["factResults"], properties: {
+    factResults: { type: "array", items: { type: "object", additionalProperties: false, required: ["factId", "status", "rationale", "checkedSourceUnitIds", "conflictingSourceUnitIds"], properties: {
+      factId: { type: "string" }, status: { type: "string", enum: VERIFICATION_STATES }, rationale: { type: "string" },
+      checkedSourceUnitIds: { type: "array", items: { type: "string" } }, conflictingSourceUnitIds: { type: "array", items: { type: "string" } }
+    } } }
   }
 };
 
@@ -159,10 +189,15 @@ export const DOMAIN_CLAIMS_SCHEMA = {
           controlIds: { type: "array", items: { type: "string" } },
           antiPatternIds: { type: "array", items: { type: "string" } },
           requirementIds: { type: "array", items: { type: "string" } },
+          findingDefinitionIds: { type: "array", items: { type: "string" } },
+          assessmentObjectIds: { type: "array", items: { type: "string" } },
           domains: { type: "array", items: { type: "string", enum: Object.keys(DOMAINS) } },
           severity: { type: "string", enum: SEVERITIES },
           proposedAssuranceState: { type: "string", enum: ["UNKNOWN", "DECLARED", "IMPLEMENTED", "TESTED", "OPERATIONALLY_OBSERVED", "HUMAN_VALIDATED"] },
-          limitations: { type: "array", items: { type: "string" } }
+          limitations: { type: "array", items: { type: "string" } }, proposedFindingState: { type: "string" },
+          absenceTest: { type: "object", additionalProperties: false, required: ["scope", "method", "executedAt", "result", "systemVersion", "limitations"], properties: {
+            scope: { type: "string" }, method: { type: "string" }, executedAt: { type: "string" }, result: { type: "string" }, systemVersion: { type: "string" }, limitations: { type: "array", items: { type: "string" } }
+          } }
         }
       }
     }
@@ -171,7 +206,11 @@ export const DOMAIN_CLAIMS_SCHEMA = {
 
 export const VERIFICATION_SCHEMA = {
   type: "object", additionalProperties: false, required: ["status", "rationale", "checkedSourceUnitIds", "conflictingSourceUnitIds"], properties: {
-    status: { type: "string", enum: VERIFICATION_STATES }, rationale: { type: "string" }, checkedSourceUnitIds: { type: "array", items: { type: "string" } }, conflictingSourceUnitIds: { type: "array", items: { type: "string" } }
+    status: { type: "string", enum: VERIFICATION_STATES }, rationale: { type: "string" }, checkedSourceUnitIds: { type: "array", items: { type: "string" } }, conflictingSourceUnitIds: { type: "array", items: { type: "string" } },
+    acceptedAssuranceState: { type: "string", enum: ["UNKNOWN", "DECLARED", "IMPLEMENTED", "TESTED", "OPERATIONALLY_OBSERVED", "HUMAN_VALIDATED"] },
+    mappingStatus: { type: "string", enum: ["SUPPORTED", "PARTIAL", "UNSUPPORTED", "NOT_CHECKED"] },
+    scopeStatus: { type: "string", enum: ["SUPPORTED", "PARTIAL", "OVERSTATED", "NOT_CHECKED"] },
+    quoteStatus: { type: "string", enum: ["SUPPORTED", "PARTIAL", "UNSUPPORTED", "NOT_CHECKED"] }
   }
 };
 
@@ -189,7 +228,7 @@ export const SYNTHESIS_SCHEMA = {
           id: { type: "string" }, section: { type: "string", enum: NARRATIVE_SECTIONS }, text: { type: "string" },
           domain: { type: "string", enum: Object.keys(DOMAINS) }, authority: { type: "string" },
           findingIds: { type: "array", items: { type: "string" } }, gateIds: { type: "array", items: { type: "string" } },
-          controlIds: { type: "array", items: { type: "string" } }, evidenceIds: { type: "array", items: { type: "string" } }
+          controlIds: { type: "array", items: { type: "string" } }, evidenceIds: { type: "array", items: { type: "string" } }, actionIds: { type: "array", items: { type: "string" } }
         }
       }
     }
@@ -200,7 +239,8 @@ export const FACT_CHECK_SCHEMA = {
   type: "object", additionalProperties: false, required: ["supported", "itemResults"], properties: {
     supported: { type: "boolean" },
     itemResults: { type: "array", items: { type: "object", additionalProperties: false, required: ["itemId", "status", "rationale", "correctedText"], properties: {
-      itemId: { type: "string" }, status: { type: "string", enum: ["SUPPORTED", "PARTIAL", "UNSUPPORTED"] }, rationale: { type: "string" }, correctedText: { type: "string" }
+      itemId: { type: "string" }, status: { type: "string", enum: ["SUPPORTED", "PARTIAL", "UNSUPPORTED"] }, rationale: { type: "string" }, correctedText: { type: "string" },
+      issueType: { type: "string", enum: FACT_CHECK_ISSUES }, affectedFindingIds: { type: "array", items: { type: "string" } }, affectedActionIds: { type: "array", items: { type: "string" } }
     } } }
   }
 };

@@ -1,4 +1,4 @@
-export const REPORT_VERSION = "assurance-report-1.3.0";
+export const REPORT_VERSION = "assurance-report-1.4.0";
 
 const array = (value) => Array.isArray(value) ? value : [];
 const label = (value) => String(value ?? "").replaceAll("_", " ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -16,6 +16,13 @@ function displayValue(value) {
   if (value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0)) return "Unknown";
   if (Array.isArray(value)) return value.map((item) => label(item)).join(", ");
   return typeof value === "string" && /^[A-Z][A-Z0-9_]+$/.test(value) ? label(value) : String(value);
+}
+
+function publicationLabel(value) {
+  if (value === "REPORT_READY") return "Ready for publication";
+  if (value === "REPORT_WITH_LIMITATIONS") return "Limited narrative";
+  if (value === "REPORT_WITHHELD") return "Generated narrative withheld";
+  return "Publication check not run";
 }
 
 function shortTrace(item = {}) {
@@ -52,6 +59,7 @@ function decisionMarkup(pkg, summary) {
     ["Lifecycle transition", `${label(transition.currentStage)} → ${label(transition.targetStage)}`],
     ["Assessment date", pkg.generatedAt ? new Date(pkg.generatedAt).toISOString().slice(0, 10) : "Unknown"],
     ["Assessment mode", label(summary.assessmentMode)],
+    ["Publication quality", publicationLabel(summary.publicationQuality?.status)],
     ["Documentation alignment", label(doc.status ?? "UNKNOWN")],
     ["Knowledge status", `${label(pkg.knowledge?.releaseStatus ?? "UNSPECIFIED")} · ${pkg.knowledge?.version ?? "Unknown"}`]
   ];

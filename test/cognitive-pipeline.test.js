@@ -32,7 +32,14 @@ function mockTransport({ schemaName, prompt, profile }) {
   const domain = domainFromSchema(schemaName);
   const controlByDomain = { A: "CTRL-A-01", B: "CTRL-B-01", C: "CTRL-C-01", D: "CTRL-D-01", E: "CTRL-E-01", F: "CTRL-F-01" };
   let value;
-  if (schemaName === "solution_model") value = { facts: [{ factClass: "OBSERVED", category: "architecture", statement: "A source packet is available for assessment.", sourceUnitIds: [unitId] }], contradictions: [], unknowns: ["Production operation is not established."] };
+  if (schemaName === "solution_model") {
+    const quote = prompt.match(new RegExp(`SOURCE_UNIT ${unitId}\\n[^\\n]*\\n([^\\n]+)`))?.[1] ?? "[missing quote]";
+    value = { facts: [{ factClass: "OBSERVED", category: "architecture", statement: "A source packet is available for assessment.", sourceUnitIds: [unitId], evidenceQuotes: [{ sourceUnitId: unitId, quote }] }], contradictions: [], unknowns: ["Production operation is not established."] };
+  }
+  else if (schemaName === "solution_fact_verification") {
+    const facts = jsonBetween(prompt, "SOLUTION_FACT_CANDIDATES", "SOURCE_PACKET");
+    value = { factResults: facts.map((fact) => ({ factId: fact.id, status: "SUPPORTED", rationale: "The fact is explicitly supported.", checkedSourceUnitIds: fact.sourceUnitIds, conflictingSourceUnitIds: [] })) };
+  }
   else if (domain) {
     const quote = prompt.match(new RegExp(`SOURCE_UNIT ${unitId}\\n[^\\n]*\\n([^\\n]+)`))?.[1] ?? "[missing quote]";
     value = { claims: [{ claimType: "CONTROL_SUPPORT", statement: `Candidate evidence for domain ${domain}.`, sourceUnitIds: [unitId], evidenceQuotes: [{ sourceUnitId: unitId, quote }], controlIds: [controlByDomain[domain]], antiPatternIds: [], requirementIds: [], domains: [domain], severity: "MEDIUM", proposedAssuranceState: "IMPLEMENTED", limitations: ["Static evidence only."] }] };
@@ -86,9 +93,10 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: mockTransport });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
-  assert.equal(result.schemaVersion, "2.4.0");
+  assert.equal(result.schemaVersion, "2.5.0");
+  assert.equal(result.cognitive.contractVersion, "3.0.0");
   assert.equal(result.recommendation.formalApproval, false);
-  assert.deepEqual(result.cognitive.coverage.failedStages, [], JSON.stringify(run.trace));
+  assert.ok(result.cognitive.coverage.failedStages.includes("ASSESSMENT_COVERAGE_INCOMPLETE"));
   assert.equal(result.cognitive.lockedFindings.length, 6);
   assert.ok(result.cognitive.verificationRecords.every((item) => item.status === "SUPPORTED"));
   assert.ok(result.evidence.filter((item) => item.signal === "verified-control-evidence").every((item) => item.assuranceState === "IMPLEMENTED"));
@@ -119,6 +127,8 @@ test("a fabricated evidence quote is rejected before model verification", async 
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: badQuoteTransport });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
   assert.ok(result.cognitive.verificationRecords.some((item) => item.verifierProvider === "LOCAL" && item.status === "UNSUPPORTED"));
+  assert.equal(result.cognitive.lockedFindings.length, 0);
+  assert.equal(result.cognitive.unresolvedClaims.length, 6);
   assert.equal(result.evidence.filter((item) => item.signal === "verified-control-evidence").length, 0);
 });
 
@@ -139,7 +149,75 @@ test("unsupported synthesis is quarantined and cannot alter deterministic author
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: adversarialSynthesis });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
   assert.equal(result.recommendation.formalApproval, false);
-  assert.equal(result.cognitive.narrative.quarantine.status, "QUARANTINED");
+  assert.ok(["REPORT_WITH_LIMITATIONS", "REPORT_WITHHELD"].includes(result.publicationGate.status));
   assert.ok(result.cognitive.narrative.items.length > 0);
   assert.ok(result.cognitive.narrative.items.every((item) => !/formally approved|legally compliant/i.test(item.text)));
+});
+
+test("one failed domain returns a partial deterministic package and incomplete coverage gate", async () => {
+  const run = await createPreflight(preflightInput([{ path: "src/assistant.js", mimeType: "application/javascript", content: "export function answer() { return 'bounded'; }" }]));
+  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
+  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  const failingDomain = async (args) => {
+    if (args.schemaName === "domain_c_claims") throw new Error("Simulated domain C refusal");
+    return mockTransport(args);
+  };
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 60 }), transport: failingDomain });
+  const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
+  assert.equal(result.schemaVersion, "2.5.0");
+  assert.equal(result.coverageMatrix.domainStatus.C, "FAILED");
+  assert.ok(result.cognitive.coverage.failedStages.includes("DOMAIN_ASSESSMENT:C"));
+  assert.ok(result.hardGates.some((item) => item.code === "COGNITIVE_ASSESSMENT_INCOMPLETE"));
+  assert.notEqual(result.recommendation.outcome, "READY_FOR_NEXT_STAGE");
+});
+
+test("fact-check repair candidates require a second successful fact-check", async () => {
+  const run = await createPreflight(preflightInput([{ path: "governance/purpose.md", mimeType: "text/markdown", content: "Purpose and owner are documented for a bounded prototype." }]));
+  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
+  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  let factChecks = 0;
+  const repairTransport = async (args) => {
+    const result = await mockTransport(args);
+    if (args.schemaName === "narrative_fact_check") {
+      factChecks += 1;
+      const synthesis = jsonBetween(args.prompt, "SYNTHESIS", "LOCKED_FINDINGS");
+      result.value = factChecks === 1
+        ? { supported: false, itemResults: synthesis.items.filter((item) => item.supportStatus !== "DETERMINISTIC").map((item) => ({ itemId: item.id, status: "PARTIAL", rationale: "The wording was broader than its citations.", correctedText: "The deterministic package identifies remediation before progression.", issueType: "NARRATIVE_WORDING_ERROR", affectedFindingIds: item.findingIds, affectedActionIds: [] })) }
+        : { supported: true, itemResults: synthesis.items.filter((item) => item.supportStatus !== "DETERMINISTIC").map((item) => ({ itemId: item.id, status: "SUPPORTED", rationale: "The repaired wording is supported.", correctedText: "", issueType: "NONE", affectedFindingIds: [], affectedActionIds: [] })) };
+    }
+    return result;
+  };
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 60 }), transport: repairTransport });
+  const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
+  assert.equal(factChecks, 2);
+  assert.ok(result.cognitive.narrative.items.some((item) => item.supportStatus === "FACT_CHECKED" && /identifies remediation/i.test(item.text)));
+  assert.equal(result.cognitive.factCheckIntegrity.valid, true);
+});
+
+test("a fact-check grounding challenge reopens the affected claim and recomputes deterministically", async () => {
+  const run = await createPreflight(preflightInput([{ path: "governance/purpose.md", mimeType: "text/markdown", content: "Purpose and owner are documented for a bounded prototype." }]));
+  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
+  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  let factChecks = 0; let reanalysisCalls = 0;
+  const transport = async (args) => {
+    const result = await mockTransport(args);
+    if (args.schemaName === "claim_adjudication" && /FACT_CHECK_GROUNDING_CHALLENGE/.test(args.prompt)) reanalysisCalls += 1;
+    if (args.schemaName === "narrative_fact_check") {
+      factChecks += 1;
+      const synthesis = jsonBetween(args.prompt, "SYNTHESIS", "LOCKED_FINDINGS");
+      result.value = factChecks === 1
+        ? { supported: false, itemResults: synthesis.items.filter((item) => item.supportStatus !== "DETERMINISTIC").map((item) => ({ itemId: item.id, status: "PARTIAL", rationale: "The cited finding needs renewed grounding review.", correctedText: "The deterministic package identifies remediation before progression.", issueType: "REFERENCE_OR_GROUNDING_ERROR", affectedFindingIds: item.findingIds, affectedActionIds: [] })) }
+        : { supported: true, itemResults: synthesis.items.filter((item) => item.supportStatus !== "DETERMINISTIC").map((item) => ({ itemId: item.id, status: "SUPPORTED", rationale: "The revised wording is grounded.", correctedText: "", issueType: "NONE", affectedFindingIds: [], affectedActionIds: [] })) };
+    }
+    return result;
+  };
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 80 }), transport });
+  const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
+  assert.equal(reanalysisCalls, 1);
+  assert.ok(result.cognitive.verificationRecords.some((item) => item.attempt === "FACT_CHECK_REANALYSIS"));
+  assert.ok(result.cognitive.reanalysisTrace.some((item) => item.trigger === "FACT_CHECK_GROUNDING_CHALLENGE"));
+  assert.equal(result.recommendation.formalApproval, false);
 });

@@ -56,7 +56,7 @@ export async function createPreflight(input, options = {}) {
   const ttlMs = options.ttlMs ?? 60 * 60 * 1000;
   const run = {
     id: stableId("run", { dossier: validated.dossier, manifest: screened.registeredSources, createdAt: now.toISOString() }),
-    schemaVersion: "2.4.0", status: validated.dossier ? "AWAITING_TRANSMISSION_APPROVAL" : "AWAITING_INTAKE_CONFIRMATION", stage: validated.dossier ? "PREFLIGHT" : "DISCOVERY",
+    schemaVersion: "2.5.0", status: validated.dossier ? "AWAITING_TRANSMISSION_APPROVAL" : "AWAITING_INTAKE_CONFIRMATION", stage: validated.dossier ? "PREFLIGHT" : "DISCOVERY",
     createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + ttlMs).toISOString(), dossier: validated.dossier,
     registeredSources: screened.registeredSources, dlpFindings: screened.dlpFindings,
     sourceIngestion: buildSourceIngestionManifest({ submitted: input.sourceIngestion, parsedSources: screened.registeredSources.filter((item) => item.path !== "intended-use-dossier.json"), failedSources: screened.failedSources }),

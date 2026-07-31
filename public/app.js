@@ -174,6 +174,7 @@ async function discoverCaseInformation() {
 function renderRecommendation(pkg) {
   const root = $("recommendation"); root.className = `recommendation ${pkg.recommendation.outcome}`; root.replaceChildren();
   root.append(el("p", "eyebrow", "Readiness recommendation"), el("h2", "", label(pkg.recommendation.outcome)), el("p", "", pkg.recommendation.rationale));
+  if (pkg.publicationGate?.status) root.append(el("p", "recommendation-boundary", `Report quality: ${label(pkg.publicationGate.status)}. This status is independent from lifecycle readiness.`));
   const boundary = el("p", "recommendation-boundary", pkg.recommendation.boundary); root.append(boundary);
 }
 

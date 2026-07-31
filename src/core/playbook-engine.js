@@ -1,38 +1,77 @@
 import { stableId } from "./hash.js";
 
-const CONTROL_SIGNAL_OVERRIDES = {
-  "CTRL-A-02": "classification-unknown",
-  "CTRL-B-01": "data-flow-gap",
-  "CTRL-B-02": "privacy-evidence-gap",
-  "CTRL-C-03": "excessive-agency",
-  "CTRL-D-02": "evaluation-evidence-gap",
-  "CTRL-D-03": "missing-failsafe",
-  "CTRL-F-03": "lifecycle-evidence-gap"
-};
+const unique = (values) => [...new Set(values.filter(Boolean))];
 
-export function selectPlaybookActions(tactics, domains, antiPatternAssessments, dossier) {
-  const findings = [
-    ...domains.flatMap((domain) => domain.gaps.map((gap) => ({ id: gap.id, domain: gap.domain, severity: gap.severity, signal: CONTROL_SIGNAL_OVERRIDES[gap.controlId] ?? gap.signal, title: gap.title, evidenceIds: gap.evidenceIds }))),
-    ...antiPatternAssessments.filter((item) => item.state === "CONFIRMED_PRESENT").map((item) => ({ id: item.id, domain: item.domain, severity: item.severity, signal: item.antiPatternId === "AP-D-01" ? "unsafe-experiment-boundary" : item.antiPatternId === "AP-B-01" ? "unapproved-sensitive-data" : item.antiPatternId === "AP-C-02" ? "excessive-agency" : "", title: item.title, evidenceIds: item.evidenceIds }))
-  ];
+function eligibleIds(tactic) {
+  return new Set([...(tactic.eligibleFindingIds ?? []), ...(tactic.findingSignals ?? [])]);
+}
+
+export function selectPlaybookActions(tactics, lockedFindings = []) {
   const selected = new Map();
-  for (const finding of findings) {
-    const tactic = tactics.find((item) => item.status === "APPROVED" && item.findingSignals.includes(finding.signal) && item.domains.includes(finding.domain));
-    if (!tactic) continue;
-    const existing = selected.get(tactic.id);
-    if (existing) {
-      existing.lockedFindingIds.push(finding.id);
-      existing.evidenceIds.push(...finding.evidenceIds);
-      continue;
+  for (const finding of lockedFindings) {
+    const findingDefinitionIds = finding.findingDefinitionIds ?? [];
+    if (!findingDefinitionIds.length) continue;
+    for (const tactic of tactics) {
+      if (tactic.status !== "APPROVED") continue;
+      const eligible = eligibleIds(tactic);
+      const matchedFindingDefinitionIds = findingDefinitionIds.filter((id) => eligible.has(id));
+      if (!matchedFindingDefinitionIds.length) continue;
+      const existing = selected.get(tactic.id);
+      if (existing) {
+        existing.lockedFindingIds.push(finding.id);
+        existing.findingDefinitionIds.push(...matchedFindingDefinitionIds);
+        existing.evidenceIds.push(...(finding.evidenceLinks ?? []).map((item) => item.id));
+        continue;
+      }
+      selected.set(tactic.id, {
+        id: stableId("action", { tacticId: tactic.id, findingId: finding.id, findingDefinitionIds: matchedFindingDefinitionIds }),
+        tacticId: tactic.id,
+        tacticVersion: tactic.version,
+        title: tactic.title,
+        state: "CANDIDATE_ACTION",
+        lockedFindingIds: [finding.id],
+        findingDefinitionIds: matchedFindingDefinitionIds,
+        evidenceIds: (finding.evidenceLinks ?? []).map((item) => item.id),
+        activationReason: finding.statement,
+        ownerRoles: tactic.ownerRoles,
+        activities: tactic.activities,
+        requiredArtifacts: tactic.requiredArtifacts,
+        acceptanceCriteria: tactic.acceptanceCriteria,
+        verification: tactic.verification,
+        blocksTransition: tactic.blocksTransition,
+        completionEffect: tactic.completionEffect,
+        warning: "Selecting this action does not close a finding. New evidence and reassessment are required."
+      });
     }
-    selected.set(tactic.id, {
-      id: stableId("action", { tacticId: tactic.id, findingId: finding.id }), tacticId: tactic.id, tacticVersion: tactic.version, title: tactic.title,
-      state: "CANDIDATE_ACTION", lockedFindingIds: [finding.id], evidenceIds: [...finding.evidenceIds],
-      activationReason: finding.title, ownerRoles: tactic.ownerRoles, activities: tactic.activities,
-      requiredArtifacts: tactic.requiredArtifacts, acceptanceCriteria: tactic.acceptanceCriteria,
-      verification: tactic.verification, blocksTransition: tactic.blocksTransition, completionEffect: tactic.completionEffect,
-      warning: "Selecting this action does not close a finding. New evidence and reassessment are required."
-    });
   }
-  return [...selected.values()].map((item) => ({ ...item, lockedFindingIds: [...new Set(item.lockedFindingIds)], evidenceIds: [...new Set(item.evidenceIds)] }));
+  return [...selected.values()].map((item) => ({
+    ...item,
+    lockedFindingIds: unique(item.lockedFindingIds),
+    findingDefinitionIds: unique(item.findingDefinitionIds),
+    evidenceIds: unique(item.evidenceIds)
+  }));
+}
+
+export function buildActionGroundingRecords(actions, lockedFindings, tactics) {
+  const findingMap = new Map(lockedFindings.map((item) => [item.id, item]));
+  const tacticMap = new Map(tactics.map((item) => [item.id, item]));
+  return actions.map((action) => {
+    const tactic = tacticMap.get(action.tacticId);
+    const findings = action.lockedFindingIds.map((id) => findingMap.get(id)).filter(Boolean);
+    const eligible = eligibleIds(tactic ?? {});
+    const exact = findings.length === action.lockedFindingIds.length && findings.every((finding) => finding.findingDefinitionIds?.some((id) => eligible.has(id)));
+    const value = {
+      actionId: action.id,
+      tacticId: action.tacticId,
+      tacticVersion: action.tacticVersion,
+      lockedFindingIds: action.lockedFindingIds,
+      findingDefinitionIds: action.findingDefinitionIds,
+      requiredEvidence: action.requiredArtifacts,
+      acceptanceCriteria: action.acceptanceCriteria,
+      verificationMethod: action.verification,
+      status: tactic?.status === "APPROVED" && exact ? "GROUNDED" : "QUARANTINED",
+      reason: !tactic ? "TACTIC_NOT_FOUND" : tactic.status !== "APPROVED" ? "TACTIC_NOT_APPROVED" : !exact ? "EXACT_FINDING_MAPPING_MISSING" : "EXACT_APPROVED_MAPPING"
+    };
+    return { id: stableId("action-grounding", value), ...value };
+  });
 }

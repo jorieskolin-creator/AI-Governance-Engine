@@ -1,6 +1,6 @@
 import { DOMAINS } from "../contracts.js";
 import { stableId } from "./hash.js";
-import { caseProfileView } from "./solution-profile.js";
+import { caseProfileView, fieldLabel } from "./solution-profile.js";
 
 const HIGH = new Set(["HIGH", "CRITICAL"]);
 const BLOCKING_FINDING_TYPES = new Set(["GAP", "RISK", "ANTIPATTERN", "CONTRADICTION", "UNKNOWN", "EVIDENCE_REQUEST"]);
@@ -85,7 +85,7 @@ export function buildTransitionBoundary({ dossier, gates, domains, readiness, hu
     ["monitoringOwner", !configured.monitoringOwner], ["expiresAt", !configured.expiresAt]
   ].filter(([, missing]) => missing).map(([key]) => key);
   for (const key of missingParameters) {
-    conditions.push(boundaryItem(`Declare the ${label(key)} before relying on this operating boundary.`, basis({ ruleIds: ["RULE-BOUNDARY-MISSING-DECLARATION"] })));
+    conditions.push(boundaryItem(`Declare the ${fieldLabel(`operatingBoundary.${key}`).toLowerCase()} before relying on this operating boundary.`, basis({ ruleIds: ["RULE-BOUNDARY-MISSING-DECLARATION"] })));
   }
 
   const boundary = {
@@ -117,14 +117,52 @@ export function buildTransitionBoundary({ dossier, gates, domains, readiness, hu
   return { ...boundary, hash: stableId("transition-boundary", boundary) };
 }
 
-function domainStatus(domain) {
+function domainStatus(domain, gates) {
+  const controlIds = new Set(domain.controls.map((item) => item.controlId));
+  const relatedGates = gates.filter((item) => item.controlIds.some((id) => controlIds.has(id)));
+  if (relatedGates.some((item) => item.outcome === "BLOCK")) return "HARD_GATE_BLOCKED";
+  if (relatedGates.some((item) => item.outcome === "REVIEW") || domain.gaps.some((item) => item.humanReviewRequired)) return "HUMAN_REVIEW_REQUIRED";
   const confirmed = domain.antiPatterns.filter((item) => ["CONFIRMED_PRESENT", "DECLARED_RISK", "DETECTED_CANDIDATE", "VERIFICATION_REQUIRED", "PARTIALLY_PRESENT"].includes(item.state));
-  if (confirmed.some((item) => item.severity === "CRITICAL") || domain.gaps.some((item) => item.severity === "CRITICAL")) return "BLOCKED";
-  if (domain.gaps.some((item) => item.humanReviewRequired)) return "HUMAN_REVIEW";
-  if (domain.gaps.some((item) => item.severity === "HIGH")) return "REMEDIATE";
-  if (domain.controls.some((item) => item.state === "UNKNOWN")) return "UNKNOWN";
+  const applicable = domain.controls.filter((item) => item.state !== "NOT_APPLICABLE");
+  if (applicable.length && applicable.every((item) => item.state === "UNKNOWN")) return "INSUFFICIENT_EVIDENCE";
+  if (confirmed.some((item) => item.severity === "CRITICAL") || domain.gaps.some((item) => ["HIGH", "CRITICAL"].includes(item.severity))) return "REMEDIATION_REQUIRED";
+  if (domain.controls.some((item) => item.state === "UNKNOWN")) return "INSUFFICIENT_EVIDENCE";
   if (domain.gaps.length || confirmed.length) return "CONDITIONAL";
   return "READY";
+}
+
+function deterministicDomainNarrative(domain) {
+  const applicable = domain.controls.filter((item) => item.state !== "NOT_APPLICABLE");
+  const unknown = applicable.filter((item) => item.state === "UNKNOWN").length;
+  const belowTarget = applicable.filter((item) => !item.meetsTarget && item.state !== "UNKNOWN").length;
+  if (!applicable.length) return "No control is applicable to the declared lifecycle boundary.";
+  if (unknown === applicable.length) return `All ${applicable.length} applicable controls lack acceptable evidence; missing evidence remains unknown.`;
+  if (unknown) return `${unknown} of ${applicable.length} applicable controls lack acceptable evidence; ${belowTarget} additional control(s) remain below target.`;
+  if (belowTarget) return `${belowTarget} of ${applicable.length} applicable controls have evidence below the required assurance target.`;
+  return `All ${applicable.length} applicable controls meet the deterministic assurance target.`;
+}
+
+function executiveGapGroups(domains, documentationReadiness, sourceIngestion) {
+  const groups = domains.filter((domain) => domain.gaps.length).map((domain) => {
+    const unknown = domain.gaps.filter((item) => item.currentState === "UNKNOWN").length;
+    const statement = unknown === domain.gaps.length
+      ? `${unknown} applicable control(s) lack acceptable evidence; silence is not treated as absence.`
+      : `${domain.gaps.length} applicable control(s) remain below target, including ${unknown} with unknown evidence status.`;
+    return narrativeItem("EXECUTIVE_GAP_GROUP", `${domain.id} — ${domain.title}: ${statement}`, {
+      findingIds: domain.gaps.map((item) => item.id), controlIds: domain.gaps.map((item) => item.controlId), evidenceIds: domain.gaps.flatMap((item) => item.evidenceIds)
+    }, "DETERMINISTIC_CONSOLIDATION");
+  });
+  if (documentationReadiness?.status !== "DOCUMENTED_AND_CONFIRMED") {
+    groups.push(narrativeItem("EXECUTIVE_GAP_GROUP", `Documentation alignment: ${documentationReadiness.satisfiedFieldCount} of ${documentationReadiness.mandatoryFieldCount} applicable fields are satisfied; ${documentationReadiness.materialContradictionCount ?? 0} material contradiction(s) require resolution.`, {
+      ruleIds: ["RULE-DOCUMENTATION-READINESS"]
+    }, "DETERMINISTIC_CONSOLIDATION"));
+  }
+  if (sourceIngestion?.coverageStatus === "INCOMPLETE_REVIEW_REQUIRED") {
+    groups.push(narrativeItem("EXECUTIVE_GAP_GROUP", `Source coverage: ${sourceIngestion.relevantExclusionCount} selected source file(s) could not be assessed and require resolution or attributable review.`, {
+      ruleIds: ["RULE-SOURCE-COVERAGE"]
+    }, "DETERMINISTIC_CONSOLIDATION"));
+  }
+  return groups.slice(0, 8);
 }
 
 function evidenceClass(item, mode) {
@@ -142,6 +180,7 @@ function narrativeItem(section, text, references = {}, supportStatus = "DETERMIN
     gateIds: unique(references.gateIds ?? []),
     controlIds: unique(references.controlIds ?? []),
     evidenceIds: unique(references.evidenceIds ?? []),
+    ruleIds: unique(references.ruleIds ?? []),
     supportStatus
   };
   return { id: stableId("narrative", value), ...value };
@@ -170,7 +209,7 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
     }, "COGNITIVE_VERIFICATION_NOT_RUN"));
 
   const gateRows = gates.map((item) => ({
-    id: item.id, code: item.code, title: item.title, state: item.outcome, rationale: item.rationale,
+    id: item.id, code: item.code, title: item.title, state: item.outcome, rationale: item.rationale, basisStatus: item.basisStatus,
     availableEvidence: item.evidenceIds.map((id) => evidenceById.get(id)).filter(Boolean).slice(0, 3).map((entry) => ({ id: entry.id, path: entry.path, evidenceClass: evidenceClass(entry, mode), assuranceState: entry.assuranceState })),
     clearanceCriteria: item.clearanceCriteria,
     requiredEvidenceKinds: item.requiredEvidenceKinds,
@@ -182,13 +221,13 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
   const domainSummaries = domains.map((domain) => ({
     id: domain.id,
     title: DOMAINS[domain.id],
-    status: domainStatus(domain),
+    status: domainStatus(domain, gates),
     controlsMet: domain.controls.filter((item) => item.state !== "NOT_APPLICABLE" && item.meetsTarget).length,
     applicableControls: domain.controls.filter((item) => item.state !== "NOT_APPLICABLE").length,
     verifiedFindingIds: mode === "COGNITIVE_VERIFIED" ? locked.filter((item) => item.domains.includes(domain.id) && item.strength === "SUPPORTED").map((item) => item.id) : [],
     gapIds: domain.gaps.map((item) => item.id),
     unknownCount: domain.controls.filter((item) => item.state === "UNKNOWN").length,
-    narrative: cognitive?.narrative?.items?.find((item) => item.section === "DOMAIN_NARRATIVE" && item.domain === domain.id)?.text ?? null
+    narrative: cognitive?.narrative?.items?.find((item) => item.section === "DOMAIN_NARRATIVE" && item.domain === domain.id)?.text ?? deterministicDomainNarrative(domain)
   }));
 
   const narrativeItems = cognitive?.narrative?.items ?? [
@@ -202,7 +241,7 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
   ]);
 
   return {
-    version: "assurance-summary-1.1.0",
+    version: "assurance-summary-1.2.0",
     assessmentMode: mode,
     decision: recommendation,
     dimensions,
@@ -210,8 +249,8 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
     documentationAlignment: documentationReadiness,
     transitionBoundary,
     evidenceInterpretation: [
-      { evidenceClass: "DECLARED", title: "Declared", description: "A dossier assertion that still requires corroboration where the control demands it." },
-      { evidenceClass: "OBSERVED", title: "Observed", description: "A source fact independently verified at an exact evidence location." },
+      { evidenceClass: "DECLARED", title: "Declared", description: "An unverified submitted assertion that requires corroboration where the control demands it." },
+      { evidenceClass: "OBSERVED", title: "Observed", description: "A fact mechanically located at a stable source position; observation alone does not establish semantic sufficiency." },
       { evidenceClass: "INFERRED", title: "Inferred", description: "A labelled interpretation that cannot establish control assurance by itself." },
       { evidenceClass: "UNKNOWN", title: "Unknown", description: "Required evidence is unavailable or insufficient; silence is not treated as absence." }
     ],
@@ -219,6 +258,7 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
     domainSummaries,
     strengths,
     blockingFindings: blockers,
+    executiveGapGroups: executiveGapGroups(domains, documentationReadiness, assessmentIntake.sourceIngestion),
     actionAvailability: actions.length ? { status: "APPROVED_ACTIONS_AVAILABLE", count: actions.length, message: `${actions.length} approved action pattern(s) are linked to findings.` } : {
       status: domains.some((item) => item.gaps.length) ? "NO_APPROVED_TACTIC_AVAILABLE" : "NO_ACTION_REQUIRED",
       count: 0,
@@ -227,7 +267,7 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
     actions,
     humanAuthority: {
       boundary: recommendation.boundary,
-      formalDecisionStatus: "PENDING_OR_EXTERNAL",
+      formalDecisionStatus: "FORMAL_DECISION_PENDING",
       requirements: humanDecisions
     },
     narrativeItems,

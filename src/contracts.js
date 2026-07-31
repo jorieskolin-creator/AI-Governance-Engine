@@ -192,8 +192,8 @@ export function inferEvidenceKind(path) {
   if (/monitor|telemetry|observability|incident|runtime/.test(lower)) return "MONITORING_RECORD";
   if (/review|assessment|sign[-_ ]?off/.test(lower)) return "HUMAN_REVIEW";
   if (/approval|decision[-_ ]?record/.test(lower)) return "FORMAL_APPROVAL";
-  if (/\.env|\.ya?ml$|\.json$|\.toml$|\.ini$|docker|terraform|\.tf$/.test(lower)) return "CONFIGURATION";
-  if (/\.(js|mjs|cjs|ts|tsx|jsx|py|java|go|rs|rb|php|cs|sql)$/.test(lower)) return "CODE";
+  if (/\.env|\.ya?ml$|\.json$|\.toml$|\.ini$|\.xml$|\.(?:properties|conf|cfg|gradle|kts|tf)$|docker|terraform/.test(lower)) return "CONFIGURATION";
+  if (/\.(js|mjs|cjs|ts|tsx|jsx|py|java|go|rs|rb|php|cs|sql|sh|bash|zsh|fish|ps1|psm1|bat|cmd|c|cc|cpp|cxx|h|hh|hpp|kt|swift|scala|groovy|graphql|gql|prisma|proto|vue|svelte|astro)$/.test(lower)) return "CODE";
   return "DOCUMENT";
 }
 
@@ -204,8 +204,8 @@ export function classifyArtifact(path, metadata = {}) {
   if (/(^|\/)(?:fixtures?|mocks?|examples?|samples?)(\/|$)/.test(lower)) return "FIXTURE_OR_EXAMPLE";
   if (/(^|\/)(?:test|tests|spec|specs|__tests__)(\/|$)/.test(lower) || /(^|\/)(?:test|spec)[._-][^/]+$/.test(lower) || /(?:^|[._-])(?:test|spec)\.[^.]+$/.test(lower)) return "TEST";
   if (/\.(?:md|txt|html?|pdf|docx?|xlsx?|csv)$/.test(lower)) return "DOCUMENTATION";
-  if (/\.(?:json|ya?ml|toml|ini|tf)$/.test(lower) || /dockerfile|\.env/.test(lower)) return "CONFIGURATION";
-  if (/\.(?:js|mjs|cjs|ts|tsx|jsx|py|java|go|rs|rb|php|cs|sql)$/.test(lower)) return "PRODUCTION_CODE";
+  if (/\.(?:json|ya?ml|toml|ini|xml|properties|conf|cfg|gradle|kts|tf)$/.test(lower) || /dockerfile|makefile|procfile|\.env/.test(lower)) return "CONFIGURATION";
+  if (/\.(?:js|mjs|cjs|ts|tsx|jsx|py|java|go|rs|rb|php|cs|sql|sh|bash|zsh|fish|ps1|psm1|bat|cmd|c|cc|cpp|cxx|h|hh|hpp|kt|swift|scala|groovy|graphql|gql|prisma|proto|vue|svelte|astro)$/.test(lower)) return "PRODUCTION_CODE";
   return "OTHER";
 }
 

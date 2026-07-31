@@ -7,6 +7,7 @@ This is a clean governance implementation inspired by the FinOps Engine's proces
 ## What the engine does
 
 - Starts from uploaded sources, registers and hashes them, and proposes a cited Assessment Intake for user confirmation.
+- Uses one browser/server source registry, continues through mixed repositories, and records every parsed, irrelevant, unsupported, failed, or unsafe file in a content-addressed Source Ingestion Manifest.
 - Scans code, configuration, tests, reviews, and operational records for governance-relevant signals.
 - Evaluates six governance domains across seven lifecycle stages.
 - Separates evidence coverage, control assurance, residual risk, and hard-gate status.
@@ -35,7 +36,9 @@ The v2 endpoints are disabled by default and require a bearer token:
 - `DELETE /api/v2/runs/{id}` cancels and purges the ephemeral evidence.
 - `GET /api/v2/models` shows profile availability and approval state without exposing credentials.
 
-Preflight accepts UTF-8 or base64 content with an explicit MIME type. Supported formats are text/code/JSON/CSV, PDF, DOCX, XLSX, PNG, JPEG, and WebP. Office archives are checked for unsafe paths, macros, excessive expansion, and suspicious compression. Files, macros, spreadsheet formulas, scripts, links, and source instructions are never executed or calculated. Images must be marked by the caller as sanitized before they can be transmitted.
+Preflight accepts UTF-8 or base64 content with an explicit MIME type. Supported formats include common repository text and code, JSON, CSV, inert HTML, PDF, DOCX, XLSX, PNG, JPEG, and WebP. Office archives are checked for unsafe paths, macros, excessive expansion, and suspicious compression. Files, macros, spreadsheet formulas, scripts, links, and source instructions are never executed or calculated. Images must be marked by the caller as sanitized before they can be transmitted.
+
+Mixed selections continue when at least one relevant source is parseable. Dependency, generated, build, cache, and version-control content is recorded as `KNOWN_IRRELEVANT`; source-like, parse, and unsafe exclusions create `SOURCE_COVERAGE_INCOMPLETE`. That gate requires review and an isolated sandbox in early stages and blocks Deployment or later progression until the blind spot is resubmitted or covered by an attributable scoped human review. Ordinary intake confirmation cannot clear it.
 
 Production model profiles are allow-listed through `MODEL_PROFILE_APPROVALS`. Pilot profiles are never promoted automatically.
 
@@ -99,7 +102,7 @@ Use **Print / Save PDF**, **Download HTML**, or the unchanged canonical **Downlo
 
 `POST /api/discover` accepts source-first MIME-aware uploads without a dossier and returns a deterministic `solutionProfile`, source manifest, and local DLP findings. Binary sources use base64; HTML is parsed inertly.
 
-The deterministic package is schema `1.1.0`; `ReadinessPackageV2` is additive at schema `2.2.0`. Both include immutable `assessmentIntake`, field-level `solutionProfile`, `documentationReadiness`, `transitionBoundary`, and `assuranceSummary`. The Assurance Summary contract is `assurance-summary-1.1.0`. V1 lexical matches are explicitly labelled as automated indicators because cognitive verification was not run.
+The deterministic package is schema `1.2.0`; `ReadinessPackageV2` is additive at schema `2.3.0`. Both include immutable `assessmentIntake` `1.1.0`, field-level `solutionProfile`, `documentationReadiness`, `sourceIngestion`, `transitionBoundary`, and `assuranceSummary`. The Assurance Summary contract is `assurance-summary-1.2.0`. V1 lexical matches are explicitly labelled as automated indicators because cognitive verification was not run.
 
 ### v2 preflight example
 

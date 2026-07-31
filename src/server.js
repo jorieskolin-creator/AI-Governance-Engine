@@ -13,6 +13,7 @@ import { discoverSolutionProfile } from "./core/solution-profile.js";
 import { executeCognitiveRun } from "./cognitive/pipeline.js";
 import { modelPolicy, publicModelPolicy } from "./cognitive/model-policy.js";
 import { EphemeralRunStore } from "./cognitive/run-store.js";
+import { buildSourceIngestionManifest } from "./core/source-ingestion.js";
 
 const port = Number(process.env.PORT ?? 4174);
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
@@ -96,20 +97,28 @@ function publicRunView(run) {
 
 async function parsedAssessmentSources(payload) {
   const values = payload.sources ?? [];
-  if (!values.some((item) => item.mimeType)) return values;
+  if (!values.some((item) => item.mimeType)) {
+    return {
+      sources: values,
+      sourceIngestion: buildSourceIngestionManifest({ submitted: payload.sourceIngestion, parsedSources: values, selectionMode: "LEGACY_OR_SAMPLE" })
+    };
+  }
   const validated = validatePreflightInput({ sources: values }, { dossierOptional: true });
-  const screened = await parseAndScreenSources(validated.sources);
-  return screened.sourceUnits.map((unit) => ({
-    path: `${unit.path}#${unit.locator}`,
-    content: unit.media ? "[IMAGE REQUIRES APPROVED MULTIMODAL COGNITIVE DISCOVERY; NO DETERMINISTIC FACT EXTRACTED]" : unit.content,
-    kind: unit.evidenceKind,
-    metadata: {
-      artifactClass: screened.registeredSources.find((item) => item.id === unit.sourceId)?.artifactClass,
-      sourceUnitId: unit.id,
-      locator: unit.locator,
-      originalSource: screened.registeredSources.find((item) => item.id === unit.sourceId)
-    }
-  }));
+  const screened = await parseAndScreenSources(validated.sources, { continueOnError: true });
+  return {
+    sources: screened.sourceUnits.map((unit) => ({
+      path: `${unit.path}#${unit.locator}`,
+      content: unit.media ? "[IMAGE REQUIRES APPROVED MULTIMODAL COGNITIVE DISCOVERY; NO DETERMINISTIC FACT EXTRACTED]" : unit.content,
+      kind: unit.evidenceKind,
+      metadata: {
+        artifactClass: screened.registeredSources.find((item) => item.id === unit.sourceId)?.artifactClass,
+        sourceUnitId: unit.id,
+        locator: unit.locator,
+        originalSource: screened.registeredSources.find((item) => item.id === unit.sourceId)
+      }
+    })),
+    sourceIngestion: buildSourceIngestionManifest({ submitted: payload.sourceIngestion, parsedSources: screened.registeredSources, failedSources: screened.failedSources })
+  };
 }
 
 async function serveStatic(pathname, response) {
@@ -117,7 +126,8 @@ async function serveStatic(pathname, response) {
   if (!/^[a-zA-Z0-9._/-]+$/.test(relative) || relative.includes("..")) return false;
   try {
     const body = await readFile(join(publicDir, relative));
-    response.writeHead(200, { "Content-Type": contentTypes[extname(relative)] ?? "application/octet-stream", "Cache-Control": relative === "index.html" ? "no-cache" : "public, max-age=300" });
+    const cacheControl = [".html", ".js", ".css"].includes(extname(relative)) ? "no-cache" : "public, max-age=300";
+    response.writeHead(200, { "Content-Type": contentTypes[extname(relative)] ?? "application/octet-stream", "Cache-Control": cacheControl });
     response.end(body);
     return true;
   } catch { return false; }
@@ -144,16 +154,19 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/discover") {
       const payload = await readJson(request);
       const validated = validatePreflightInput({ sources: payload.sources ?? [] }, { dossierOptional: true });
-      const screened = await parseAndScreenSources(validated.sources);
+      const screened = await parseAndScreenSources(validated.sources, { continueOnError: true });
+      const sourceIngestion = buildSourceIngestionManifest({ submitted: payload.sourceIngestion, parsedSources: screened.registeredSources, failedSources: screened.failedSources });
       return sendJson(response, 200, {
         solutionProfile: discoverSolutionProfile(screened.sourceUnits),
         sourceManifest: screened.registeredSources,
-        dlpFindings: screened.dlpFindings
+        dlpFindings: screened.dlpFindings,
+        sourceIngestion
       });
     }
     if (request.method === "POST" && url.pathname === "/api/assess") {
       const payload = await readJson(request);
-      return sendJson(response, 200, await assessSolution({ ...payload, sources: await parsedAssessmentSources(payload) }, { knowledge }));
+      const parsed = await parsedAssessmentSources(payload);
+      return sendJson(response, 200, await assessSolution({ ...payload, ...parsed }, { knowledge }));
     }
     if (url.pathname.startsWith("/api/v2/") && !cognitiveGuard(request, response, ["POST", "DELETE"].includes(request.method))) return;
     if (request.method === "GET" && url.pathname === "/api/v2/models") {

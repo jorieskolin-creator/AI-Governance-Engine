@@ -1,5 +1,6 @@
 import { DOMAINS, SEVERITIES, invariant, validateDossier } from "../contracts.js";
 import { stableId } from "../core/hash.js";
+import { acceptedFormatsByMime } from "../../public/upload-types.js";
 
 export const FACT_CLASSES = Object.freeze(["DECLARED", "OBSERVED", "INFERRED"]);
 export const CLAIM_TYPES = Object.freeze(["FACT", "CONTROL_SUPPORT", "GAP", "RISK", "ANTIPATTERN", "CONTRADICTION", "UNKNOWN", "EVIDENCE_REQUEST"]);
@@ -7,23 +8,7 @@ export const VERIFICATION_STATES = Object.freeze(["SUPPORTED", "PARTIAL", "UNSUP
 export const TRANSMISSION_STATES = Object.freeze(["LOCAL_ONLY", "PENDING_APPROVAL", "APPROVED", "TRANSMITTED", "PURGED"]);
 export const NARRATIVE_SECTIONS = Object.freeze(["EXECUTIVE_DECISION", "DOMAIN_NARRATIVE", "CONFIRMED_STRENGTH", "BLOCKING_FINDING", "CONDITION", "HUMAN_QUESTION", "LIMITATION"]);
 
-export const ACCEPTED_FORMATS = Object.freeze({
-  "text/plain": "TEXT",
-  "text/markdown": "TEXT",
-  "text/csv": "CSV",
-  "text/html": "HTML",
-  "application/json": "TEXT",
-  "application/javascript": "CODE",
-  "text/javascript": "CODE",
-  "text/typescript": "CODE",
-  "text/css": "CODE",
-  "application/pdf": "PDF",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "DOCX",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "XLSX",
-  "image/png": "IMAGE",
-  "image/jpeg": "IMAGE",
-  "image/webp": "IMAGE"
-});
+export const ACCEPTED_FORMATS = acceptedFormatsByMime;
 
 const stringArray = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
 

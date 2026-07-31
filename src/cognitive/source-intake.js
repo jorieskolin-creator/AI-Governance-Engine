@@ -163,8 +163,8 @@ function assuranceCeiling(source) {
 function sourceKindForPath(path) {
   const extension = extname(path).toLowerCase();
   if (/test|spec|eval/.test(path)) return "TEST";
-  if ([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".py", ".java", ".go", ".rs", ".rb", ".cs"].includes(extension)) return "CODE";
-  if ([".json", ".yaml", ".yml", ".toml", ".ini", ".tf"].includes(extension) || /(?:^|[\\/])(?:\.env(?:\.[^\\/]+)?|dockerfile(?:\.[^\\/]+)?|makefile|procfile)$/i.test(path)) return "CONFIGURATION";
+  if ([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".py", ".java", ".go", ".rs", ".rb", ".cs", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".kt", ".swift", ".scala", ".groovy", ".graphql", ".gql", ".prisma", ".proto", ".vue", ".svelte", ".astro"].includes(extension)) return "CODE";
+  if ([".json", ".yaml", ".yml", ".toml", ".ini", ".xml", ".properties", ".conf", ".cfg", ".gradle", ".kts", ".tf"].includes(extension) || /(?:^|[\\/])(?:\.env(?:\.[^\\/]+)?|dockerfile(?:\.[^\\/]+)?|makefile|procfile)$/i.test(path)) return "CONFIGURATION";
   return "DOCUMENT";
 }
 
@@ -197,19 +197,35 @@ function chunkText(source, sourceId, segment, maxChars = 6000) {
   return chunks;
 }
 
-export async function parseAndScreenSources(sources) {
+function parseFailure(error, source) {
+  const message = String(error?.message ?? "Source parsing failed");
+  const unsafe = /macro|unsafe archive|suspicious compressed|does not match|invalid base64/i.test(message);
+  return {
+    path: source.path,
+    mimeType: source.mimeType,
+    format: source.format,
+    size: source.encoding === "base64" ? null : String(source.content ?? "").length,
+    disposition: unsafe ? "REJECTED_UNSAFE" : "PARSE_FAILED",
+    reasonCode: unsafe ? "UNSAFE_OR_MISMATCHED_SOURCE" : "SOURCE_PARSE_FAILED",
+    error: message.slice(0, 240)
+  };
+}
+
+export async function parseAndScreenSources(sources, options = {}) {
   const sourceUnits = [];
   const dlpFindings = [];
   const registeredSources = [];
+  const failedSources = [];
   for (const source of sources) {
-    const bytes = bytesFor(source);
-    if (bytes.length > MAX_SOURCE_BYTES) throw new Error(`${source.path} exceeds the 15 MB per-source intake limit`);
-    assertFileSignature(source, bytes);
-    const sourceHash = sha256(bytes);
-    const sourceId = stableId("src", { path: source.path, sourceHash });
-    const segments = await extractSegments(source, bytes);
-    registeredSources.push({ id: sourceId, path: source.path, mimeType: source.mimeType, format: source.format, artifactClass: classifyArtifact(source.path, source.metadata), sha256: sourceHash, size: bytes.length });
-    for (const segment of segments) {
+    try {
+      const bytes = bytesFor(source);
+      if (bytes.length > MAX_SOURCE_BYTES) throw new Error(`${source.path} exceeds the 15 MB per-source intake limit`);
+      assertFileSignature(source, bytes);
+      const sourceHash = sha256(bytes);
+      const sourceId = stableId("src", { path: source.path, sourceHash });
+      const segments = await extractSegments(source, bytes);
+      registeredSources.push({ id: sourceId, path: source.path, mimeType: source.mimeType, format: source.format, artifactClass: classifyArtifact(source.path, source.metadata), sha256: sourceHash, size: bytes.length, metadata: source.metadata });
+      for (const segment of segments) {
       if (source.format === "PDF" && !segment.text.trim()) {
         const unit = {
           id: stableId("unit", { sourceId, locator: segment.locator, sourceHash, emptyVisualPage: true }), sourceId, path: source.path,
@@ -232,16 +248,21 @@ export async function parseAndScreenSources(sources) {
         if (!sanitized) dlpFindings.push({ id: stableId("dlp", { unitId: unit.id, type: "UNSCREENED_IMAGE" }), sourceUnitId: unit.id, type: "UNSCREENED_IMAGE", count: 1, severity: "HIGH", blocking: true });
         continue;
       }
-      for (const item of chunkText(source, sourceId, segment)) {
-        sourceUnits.push(item.unit);
-        for (const finding of item.dlpFindings) dlpFindings.push({
-          id: stableId("dlp", { unitId: item.unit.id, type: finding.type }), sourceUnitId: item.unit.id,
-          ...finding, blocking: false
-        });
+        for (const item of chunkText(source, sourceId, segment)) {
+          sourceUnits.push(item.unit);
+          for (const finding of item.dlpFindings) dlpFindings.push({
+            id: stableId("dlp", { unitId: item.unit.id, type: finding.type }), sourceUnitId: item.unit.id,
+            ...finding, blocking: false
+          });
+        }
       }
+    } catch (error) {
+      if (!options.continueOnError) throw error;
+      failedSources.push(parseFailure(error, source));
     }
   }
-  return { registeredSources, sourceUnits, dlpFindings };
+  if (!sourceUnits.length && !registeredSources.length) throw new Error("No supported source could be parsed. Review the disclosed exclusions and provide at least one supported source.");
+  return { registeredSources, sourceUnits, dlpFindings, failedSources };
 }
 
 export function sourceKindForUnit(unit) {

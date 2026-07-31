@@ -5,7 +5,7 @@ export const SOLUTION_FACT_CLASSES = Object.freeze(["OBSERVED", "INFERRED", "USE
 export const SOLUTION_FACT_STATUSES = Object.freeze(["CANDIDATE", "CONFIRMED", "CONFLICTING", "UNKNOWN"]);
 export const SUPPORT_STRENGTHS = Object.freeze(["EXPLICIT", "DERIVED", "WEAK"]);
 
-const criticalFields = new Set(["name", "intendedPurpose", "accountableOwner", "jurisdictions", "currentStage"]);
+const criticalFields = new Set(["name", "intendedPurpose", "accountableOwner", "jurisdictions", "currentStage", "classification.prohibitedPractice"]);
 const deployRequiredFields = Object.freeze([
   "name", "accountableOwner", "intendedPurpose", "expectedValue", "currentStage", "targetStage", "jurisdictions", "roles", "users",
   "operatingBoundary.allowedUses", "operatingBoundary.excludedUses", "operatingBoundary.environment", "operatingBoundary.userScope",
@@ -15,7 +15,27 @@ const deployRequiredFields = Object.freeze([
   "agent.humanOverride", "classification.prohibitedPractice", "classification.highRiskCandidate"
 ]);
 
+export const FIELD_LABELS = Object.freeze({
+  name: "Solution name", accountableOwner: "Accountable owner", intendedPurpose: "Intended purpose", expectedValue: "Expected value / outcome",
+  currentStage: "Current lifecycle stage", targetStage: "Target lifecycle stage", jurisdictions: "Jurisdictions", roles: "Regulatory roles", users: "Users and affected groups",
+  "operatingBoundary.allowedUses": "Allowed uses", "operatingBoundary.excludedUses": "Excluded uses", "operatingBoundary.environment": "Environment",
+  "operatingBoundary.userScope": "User scope", "operatingBoundary.dataScope": "Data scope", "operatingBoundary.integrationScope": "Integration scope",
+  "operatingBoundary.permissionScope": "Permission scope", "operatingBoundary.autonomyScope": "Autonomy scope", "operatingBoundary.monitoringOwner": "Monitoring owner",
+  "operatingBoundary.expiresAt": "Boundary expiry", "data.personalData": "Personal data", "data.specialCategoryData": "Special-category data",
+  "data.productionData": "Production data", "exposure.externalUsers": "External users", "exposure.productionAccess": "Production access",
+  "exposure.consequentialDecisions": "Consequential decisions", "agent.usesAgents": "Uses agents", "agent.canTakeActions": "Can take actions",
+  "agent.irreversibleActions": "Irreversible actions", "agent.humanOverride": "Human override", "classification.prohibitedPractice": "Prohibited-practice candidate",
+  "classification.highRiskCandidate": "High-risk candidate"
+});
+
+export const fieldLabel = (field) => FIELD_LABELS[field] ?? String(field ?? "").split(".").map((part) => part.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())).join(" — ");
+
 const normalize = (value) => String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+function normalizedFieldValue(field, value) {
+  if (Array.isArray(value)) return value.map((item) => normalizedFieldValue(field, item)).sort().join("|");
+  if (field === "name") return normalize(value).replace(/^@[^/]+\//, "").replace(/[^a-z0-9]+/g, " ").trim();
+  return normalize(value);
+}
 const unique = (values) => [...new Set(values.filter((item) => item !== undefined && item !== null && item !== ""))];
 
 function artifactClass(path, metadata = {}) {
@@ -25,8 +45,8 @@ function artifactClass(path, metadata = {}) {
   if (/(^|\/)(?:fixtures?|mocks?|examples?|samples?)(\/|$)/.test(value)) return "FIXTURE_OR_EXAMPLE";
   if (/(^|\/)(?:test|tests|spec|specs|__tests__)(\/|$)/.test(value) || /(^|\/)(?:test|spec)[._-][^/]+$/.test(value) || /(?:^|[._-])(?:test|spec)\.[^.]+$/.test(value)) return "TEST";
   if (/\.(?:md|txt|html?|pdf|docx?|xlsx?|csv)$/.test(value)) return "DOCUMENTATION";
-  if (/\.(?:json|ya?ml|toml|ini|tf)$/.test(value) || /dockerfile|\.env/.test(value)) return "CONFIGURATION";
-  if (/\.(?:js|mjs|cjs|ts|tsx|jsx|py|java|go|rs|rb|php|cs|sql)$/.test(value)) return "PRODUCTION_CODE";
+  if (/\.(?:json|ya?ml|toml|ini|xml|properties|conf|cfg|gradle|kts|tf)$/.test(value) || /dockerfile|makefile|procfile|\.env/.test(value)) return "CONFIGURATION";
+  if (/\.(?:js|mjs|cjs|ts|tsx|jsx|py|java|go|rs|rb|php|cs|sql|sh|bash|zsh|fish|ps1|psm1|bat|cmd|c|cc|cpp|cxx|h|hh|hpp|kt|swift|scala|groovy|graphql|gql|prisma|proto|vue|svelte|astro)$/.test(value)) return "PRODUCTION_CODE";
   return "OTHER";
 }
 
@@ -126,6 +146,52 @@ function provisionalDossier(detected) {
   };
 }
 
+function addSemanticContradictions(dossier, facts, contradictions) {
+  const add = (ruleId, fields, severity, statement) => {
+    const sourceUnitIds = unique(fields.flatMap((field) => facts[field]?.sourceUnitIds ?? []));
+    const value = {
+      id: stableId("solution-contradiction", { ruleId, fields, values: fields.map((field) => facts[field]?.value), sourceUnitIds }),
+      ruleId, field: fields[0], fields, severity, statement, sourceUnitIds,
+      declaredValues: Object.fromEntries(fields.map((field) => [field, facts[field]?.value ?? null]))
+    };
+    contradictions.push(value);
+    for (const field of fields) {
+      if (!facts[field]) continue;
+      facts[field].status = "CONFLICTING";
+      facts[field].limitations = unique([...(facts[field].limitations ?? []), `Contradiction ${ruleId} must be resolved; confirmation cannot erase it.`]);
+    }
+  };
+  const sandbox = dossier.operatingBoundary.environment === "ISOLATED_SANDBOX";
+  const approvedScope = (value) => /approved|named|bounded|synthetic|non-production|test/i.test(String(value ?? ""));
+  if (dossier.data.specialCategoryData === true && dossier.data.personalData === false) {
+    add("RULE-CONTRADICTION-SPECIAL-CATEGORY-IS-PERSONAL", ["data.personalData", "data.specialCategoryData"], "CRITICAL", "Special-category data is declared while personal-data processing is denied.");
+  }
+  if (sandbox && dossier.exposure.productionAccess === true) {
+    add("RULE-CONTRADICTION-SANDBOX-PRODUCTION-ACCESS", ["operatingBoundary.environment", "exposure.productionAccess"], "CRITICAL", "An isolated sandbox is declared together with production access.");
+  }
+  if (sandbox && dossier.data.productionData === true && !approvedScope(dossier.operatingBoundary.dataScope)) {
+    add("RULE-CONTRADICTION-SANDBOX-PRODUCTION-DATA", ["operatingBoundary.environment", "data.productionData", "operatingBoundary.dataScope"], "HIGH", "Production data is declared in an isolated sandbox without an explicit approved data scope.");
+  }
+  if (sandbox && dossier.exposure.externalUsers === true && !approvedScope(dossier.operatingBoundary.userScope)) {
+    add("RULE-CONTRADICTION-SANDBOX-EXTERNAL-USERS", ["operatingBoundary.environment", "exposure.externalUsers", "operatingBoundary.userScope"], "HIGH", "External users are declared in an isolated sandbox without an explicit bounded user scope.");
+  }
+  if (sandbox && dossier.exposure.consequentialDecisions === true && !/(simulation|shadow|no operational effect|non-consequential)/i.test(dossier.operatingBoundary.allowedUses.join(" "))) {
+    add("RULE-CONTRADICTION-SANDBOX-CONSEQUENTIAL-DECISIONS", ["operatingBoundary.environment", "exposure.consequentialDecisions", "operatingBoundary.allowedUses"], "CRITICAL", "Consequential decisions are declared in an isolated sandbox without an explicit non-operational simulation boundary.");
+  }
+  if (dossier.agent.usesAgents === false && dossier.agent.canTakeActions === true) {
+    add("RULE-CONTRADICTION-ACTIONS-WITHOUT-AGENT", ["agent.usesAgents", "agent.canTakeActions"], "HIGH", "Action-taking capability is declared while agent use is denied.");
+  }
+  if (dossier.agent.canTakeActions === false && dossier.agent.irreversibleActions === true) {
+    add("RULE-CONTRADICTION-IRREVERSIBLE-WITHOUT-ACTIONS", ["agent.canTakeActions", "agent.irreversibleActions"], "CRITICAL", "Irreversible actions are declared while action-taking capability is denied.");
+  }
+  const allowed = new Map(dossier.operatingBoundary.allowedUses.map((item) => [normalize(item), item]));
+  const overlap = dossier.operatingBoundary.excludedUses.filter((item) => allowed.has(normalize(item)));
+  if (overlap.length) add("RULE-CONTRADICTION-ALLOWED-AND-EXCLUDED", ["operatingBoundary.allowedUses", "operatingBoundary.excludedUses"], "HIGH", `The same use is both allowed and excluded: ${overlap.join(", ")}.`);
+  if (dossier.operatingBoundary.expiresAt && Date.parse(dossier.operatingBoundary.expiresAt) < Date.now()) {
+    add("RULE-CONTRADICTION-BOUNDARY-EXPIRED", ["operatingBoundary.expiresAt"], "HIGH", "The declared operating boundary has expired.");
+  }
+}
+
 export function discoverSolutionProfile(rawSources, declaredDossier = null, confirmation = {}) {
   const sources = sourceText(rawSources);
   const discoveryTime = new Date().toISOString();
@@ -146,11 +212,11 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
   for (const [field, value] of Object.entries(flattened)) {
     const direct = explicitMatches(sources, value, field);
     const discovery = detected[field];
-    const discoveredIds = discovery && normalize(discovery.value) === normalize(value) ? discovery.sourceUnitIds : [];
+    const discoveredIds = discovery && normalizedFieldValue(field, discovery.value) === normalizedFieldValue(field, value) ? discovery.sourceUnitIds : [];
     const sourceUnitIds = unique([...direct, ...discoveredIds]);
     const userConfirmed = confirmation[field]?.confirmed === true;
     const hasValue = value !== undefined && value !== null && value !== "" && (!Array.isArray(value) || value.length > 0);
-    const conflictsWithDetected = Boolean(declaredDossier && discovery && normalize(discovery.value) && normalize(discovery.value) !== normalize(value));
+    const conflictsWithDetected = Boolean(declaredDossier && discovery && normalizedFieldValue(field, discovery.value) && normalizedFieldValue(field, discovery.value) !== normalizedFieldValue(field, value));
     const provisionalUnknown = !declaredDossier && provisionalDefaults.has(field) && !sourceUnitIds.length;
     if (conflictsWithDetected) contradictions.push({
       id: stableId("solution-contradiction", { field, declaredValue: value, observedValue: discovery.value, sourceUnitIds: discovery.sourceUnitIds }),
@@ -169,6 +235,7 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
     });
     if (conflictsWithDetected) facts[field].candidates = [{ value, factClass: "USER_DECLARED" }, { value: discovery.value, factClass: "OBSERVED", sourceUnitIds: discovery.sourceUnitIds }];
   }
+  addSemanticContradictions(dossier, facts, contradictions);
   const profile = {
     version: "solution-profile-1.0.0",
     fields: facts,
@@ -199,7 +266,7 @@ export function flattenDossier(dossier) {
   };
 }
 
-export function buildDocumentationReadiness(profile, targetStage) {
+export function buildDocumentationReadiness(profile, targetStage, sourceIngestion = null) {
   const statuses = {};
   for (const field of deployRequiredFields) {
     const item = profile.fields[field];
@@ -225,10 +292,12 @@ export function buildDocumentationReadiness(profile, targetStage) {
   const deploymentTarget = ["DEPLOYMENT", "OPERATION_AND_MONITORING", "REVIEW_AND_EVALUATION", "RETIREMENT"].includes(targetStage);
   const implementationSourceCount = (profile.artifactCounts?.PRODUCTION_CODE ?? 0) + (profile.artifactCounts?.CONFIGURATION ?? 0);
   const missingImplementationScope = deploymentTarget && implementationSourceCount === 0;
-  const incompleteForDeployment = values.some((value) => !["DOCUMENTED_AND_CONFIRMED", "NOT_APPLICABLE"].includes(value)) || missingImplementationScope;
-  const sandboxRequired = [...unknownFields, ...conflictingFields].some((field) => criticalFields.has(field));
+  const sourceCoverageReviewRequired = sourceIngestion?.coverageStatus === "INCOMPLETE_REVIEW_REQUIRED" && !sourceIngestion?.humanCoverageAcceptance;
+  const incompleteForDeployment = values.some((value) => !["DOCUMENTED_AND_CONFIRMED", "NOT_APPLICABLE"].includes(value)) || missingImplementationScope || sourceCoverageReviewRequired;
+  const materialContradictions = profile.contradictions.filter((item) => ["HIGH", "CRITICAL"].includes(item.severity));
+  const sandboxRequired = [...unknownFields, ...conflictingFields].some((field) => criticalFields.has(field)) || materialContradictions.length > 0 || sourceCoverageReviewRequired;
   const value = {
-    version: "documentation-readiness-1.0.0",
+    version: "documentation-readiness-1.1.0",
     fieldStatuses: statuses,
     mandatoryFieldCount: deployRequiredFields.length,
     documentedAndConfirmedCount: confirmedFields.length,
@@ -236,6 +305,10 @@ export function buildDocumentationReadiness(profile, targetStage) {
     sourceSupportedFields, confirmedFields, notApplicableFields, userDeclaredOnlyFields, unknownFields, conflictingFields,
     implementationSourceCount,
     missingImplementationScope,
+    contradictions: profile.contradictions,
+    materialContradictionCount: materialContradictions.length,
+    sourceCoverageStatus: sourceIngestion?.coverageStatus ?? "SUBMITTED_SCOPE_ONLY",
+    sourceCoverageReviewRequired,
     documentationToCodeAlignment: conflictingFields.length ? "CONFLICTING" : missingImplementationScope ? "NOT_ASSESSED" : incompleteForDeployment ? "INCOMPLETE" : "ALIGNED",
     sandboxRequired,
     deploymentReady: !incompleteForDeployment,
@@ -245,7 +318,7 @@ export function buildDocumentationReadiness(profile, targetStage) {
   return { ...value, hash: sha256(value) };
 }
 
-export function buildAssessmentIntake(dossier, profile, documentationReadiness, registeredSources) {
+export function buildAssessmentIntake(dossier, profile, documentationReadiness, registeredSources, sourceIngestion = null) {
   const provenance = [];
   const seenSources = new Set();
   for (const item of registeredSources) {
@@ -256,7 +329,7 @@ export function buildAssessmentIntake(dossier, profile, documentationReadiness, 
     if (!seenSources.has(key)) { seenSources.add(key); provenance.push(entry); }
   }
   const intake = {
-    version: "assessment-intake-1.0.0",
+    version: "assessment-intake-1.1.0",
     identity: { name: dossier.name, accountableOwner: dossier.accountableOwner },
     intendedUse: { intendedPurpose: dossier.intendedPurpose, expectedValue: dossier.expectedValue },
     lifecycle: { currentStage: dossier.currentStage, targetStage: dossier.targetStage },
@@ -266,6 +339,7 @@ export function buildAssessmentIntake(dossier, profile, documentationReadiness, 
     data: structuredClone(dossier.data), exposure: structuredClone(dossier.exposure),
     agentAuthority: structuredClone(dossier.agent), classification: structuredClone(dossier.classification),
     sourceProvenance: provenance,
+    sourceIngestion,
     sourceManifestHash: sha256(provenance.map(({ id, path, sha256: hash, artifactClass: classification }) => ({ id, path, hash, classification }))),
     fieldConfirmations: Object.values(profile.fields).filter((item) => item.confirmedBy).map((item) => ({ field: item.field, confirmedBy: item.confirmedBy, confirmedAt: item.confirmedAt, sourceUnitIds: item.sourceUnitIds })),
     documentationAlignment: documentationReadiness,
@@ -290,14 +364,15 @@ export function caseProfileView(assessmentIntake, profile) {
       { field: "roles", label: "Regulatory roles", value: assessmentIntake.jurisdictionsAndRoles.roles, status: statusFor("roles") },
       { field: "users", label: "Users and affected groups", value: assessmentIntake.usersAndAffectedGroups, status: statusFor("users") },
       { field: "sourceCount", label: "Assessed sources", value: assessmentIntake.sourceProvenance.length, status: "OBSERVED" },
-      { field: "sourceHash", label: "Source manifest hash", value: assessmentIntake.sourceManifestHash, status: "OBSERVED" }
+      { field: "sourceHash", label: "Source manifest hash", value: assessmentIntake.sourceManifestHash, status: "OBSERVED" },
+      { field: "sourceCoverage", label: "Source-ingestion coverage", value: assessmentIntake.sourceIngestion?.coverageStatus ?? "SUBMITTED_SCOPE_ONLY", status: assessmentIntake.sourceIngestion?.coverageStatus === "INCOMPLETE_REVIEW_REQUIRED" ? "CONFLICTING" : "OBSERVED" }
     ],
-    operatingBoundary: Object.entries(assessmentIntake.operatingBoundary).map(([field, value]) => ({ field: `operatingBoundary.${field}`, label: field, value, status: statusFor(`operatingBoundary.${field}`) })),
+    operatingBoundary: Object.entries(assessmentIntake.operatingBoundary).map(([field, value]) => ({ field: `operatingBoundary.${field}`, label: fieldLabel(`operatingBoundary.${field}`), value, status: statusFor(`operatingBoundary.${field}`) })),
     riskDeclarations: [
-      ...Object.entries(assessmentIntake.data).map(([field, value]) => ({ field: `data.${field}`, label: field, value, status: statusFor(`data.${field}`) })),
-      ...Object.entries(assessmentIntake.exposure).map(([field, value]) => ({ field: `exposure.${field}`, label: field, value, status: statusFor(`exposure.${field}`) })),
-      ...Object.entries(assessmentIntake.agentAuthority).map(([field, value]) => ({ field: `agent.${field}`, label: field, value, status: statusFor(`agent.${field}`) })),
-      ...Object.entries(assessmentIntake.classification).map(([field, value]) => ({ field: `classification.${field}`, label: field, value, status: statusFor(`classification.${field}`) }))
+      ...Object.entries(assessmentIntake.data).map(([field, value]) => ({ field: `data.${field}`, label: fieldLabel(`data.${field}`), value, status: statusFor(`data.${field}`) })),
+      ...Object.entries(assessmentIntake.exposure).map(([field, value]) => ({ field: `exposure.${field}`, label: fieldLabel(`exposure.${field}`), value, status: statusFor(`exposure.${field}`) })),
+      ...Object.entries(assessmentIntake.agentAuthority).map(([field, value]) => ({ field: `agent.${field}`, label: fieldLabel(`agent.${field}`), value, status: statusFor(`agent.${field}`) })),
+      ...Object.entries(assessmentIntake.classification).map(([field, value]) => ({ field: `classification.${field}`, label: fieldLabel(`classification.${field}`), value, status: statusFor(`classification.${field}`) }))
     ]
   };
 }

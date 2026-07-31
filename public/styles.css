@@ -111,11 +111,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .gate, .action { border: 1px solid var(--line); border-radius: 14px; padding: 17px; background: #fafbf7; }
 .gate-head, .action-head, .assessment-title { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .badge, .report-status { display: inline-flex; width: fit-content; border-radius: 999px; padding: 5px 9px; font-size: .62rem; font-weight: 900; letter-spacing: .05em; background: var(--green-soft); color: var(--green-ink); text-transform: uppercase; }
-.badge.BLOCK, .badge.CONFIRMED_PRESENT, .status-progression-blocked, .status-blocked { background: var(--red-soft); color: var(--red-ink); }
-.badge.REVIEW, .badge.HUMAN_REVIEW_REQUIRED, .status-human-decision-required, .status-human-review { background: var(--blue-soft); color: var(--blue-ink); }
+.badge.BLOCK, .badge.CONFIRMED_PRESENT, .status-progression-blocked, .status-hard-gate-blocked, .status-conflicting { background: var(--red-soft); color: var(--red-ink); }
+.badge.REVIEW, .badge.HUMAN_REVIEW_REQUIRED, .status-human-decision-required, .status-human-review-required { background: var(--blue-soft); color: var(--blue-ink); }
 .badge.UNKNOWN, .status-unknown { color: var(--muted); background: #e9eeea; }
 .badge.TESTED_ABSENT, .badge.FORMALLY_APPROVED, .badge.HUMAN_VALIDATED, .status-progression-allowed, .status-ready { background: var(--green-soft); color: var(--green-ink); }
-.status-current-stage-only, .status-conditionally-allowed, .status-remediate, .status-conditional, .status-no-approved-tactic-available { background: var(--amber-soft); color: var(--amber-ink); }
+.status-current-stage-only, .status-conditionally-allowed, .status-remediation-required, .status-insufficient-evidence, .status-conditional, .status-no-approved-tactic-available { background: var(--amber-soft); color: var(--amber-ink); }
 .domain-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; }
 .domain { border: 1px solid var(--line); border-radius: 16px; background: #fafbf7; overflow: hidden; }
 .domain-header { display: flex; align-items: center; gap: 13px; padding: 16px; border-bottom: 1px solid var(--line); }
@@ -146,10 +146,12 @@ footer { border-top: 1px solid var(--line); padding: 24px 4vw; color: var(--mute
 .hero-case-facts > div { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); border-radius: 11px; padding: 11px; }
 .hero-case-facts span { display: block; color: #c9dad4; font-size: .62rem; text-transform: uppercase; letter-spacing: .07em; }
 .hero-case-facts strong { display: block; margin-top: 5px; font-size: .78rem; overflow-wrap: anywhere; }
-.report-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 25px; }
+.report-metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 25px; }
 .report-metric { background: var(--forest-2); border: 1px solid rgba(255,255,255,.12); border-radius: 13px; padding: 14px; }
 .report-metric span { display: block; color: #c9dad4; font-size: .66rem; text-transform: uppercase; letter-spacing: .08em; }
 .report-metric strong { display: block; color: white; font-size: 1.35rem; margin-top: 6px; }
+.risk-driver-list { margin-top: 12px; padding: 13px 15px; border-radius: 12px; background: #244d43; }
+.risk-driver-list ul, .compact-list { margin: 6px 0 0; padding-left: 18px; }
 .report-authority-note { border-top: 1px solid rgba(255,255,255,.16); padding-top: 16px; margin: 20px 0 0; color: #dbe8e3; }
 .report-pilot-banner { margin-top: 16px; background: var(--lime); color: var(--forest); padding: 11px 14px; border-radius: 10px; font-size: .75rem; font-weight: 900; letter-spacing: .04em; }
 .report-section { min-width: 0; background: var(--paper); border: 1px solid var(--line); border-radius: 20px; padding: clamp(20px, 3vw, 30px); box-shadow: var(--shadow); }

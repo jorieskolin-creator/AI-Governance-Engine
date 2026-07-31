@@ -424,7 +424,7 @@ export async function executeCognitiveRun(run, options = {}) {
   const scanner = localScannerArtifacts(run, now);
   const lockedEvidence = [...evidenceFromLockedFindings(lockedFindings, sourceUnits, now), ...scanner.evidence];
   const provisional = await assessVerifiedSolution({
-    runId: run.id, dossier: run.dossier, registeredSources: run.registeredSources,
+    runId: run.id, dossier: run.dossier, registeredSources: run.registeredSources, sourceIngestion: run.sourceIngestion,
     registryFindings: scanner.registryFindings, solutionModel, solutionProfile: run.solutionProfile, lockedEvidence,
     cognitiveCoverage: { required: true, complete: true, failedStages: [] },
     cognitive: { solutionModel, claims, verificationRecords, lockedFindings }
@@ -475,7 +475,7 @@ export async function executeCognitiveRun(run, options = {}) {
     authorityBoundary: "The Engine recommends readiness and required actions. Authorized humans make formal decisions."
   };
   const result = await assessVerifiedSolution({
-    runId: run.id, dossier: run.dossier, registeredSources: run.registeredSources,
+    runId: run.id, dossier: run.dossier, registeredSources: run.registeredSources, sourceIngestion: run.sourceIngestion,
     registryFindings: scanner.registryFindings, solutionModel, solutionProfile: run.solutionProfile, lockedEvidence,
     cognitiveCoverage, cognitive
   }, { knowledge });

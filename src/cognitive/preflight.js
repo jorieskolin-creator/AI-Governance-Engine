@@ -3,6 +3,7 @@ import { validatePreflightInput } from "./contracts.js";
 import { parseAndScreenSources } from "./source-intake.js";
 import { validateDossier } from "../contracts.js";
 import { discoverSolutionProfile } from "../core/solution-profile.js";
+import { buildSourceIngestionManifest } from "../core/source-ingestion.js";
 
 const DEFAULT_PACKET_CHARS = 18_000;
 
@@ -38,7 +39,8 @@ export function publicPreflightView(run) {
       preview: packet.sourceUnits.map((unit) => ({ id: unit.id, path: unit.path, locator: unit.locator, sensitivity: unit.sensitivity, excerpt: unit.content.slice(0, 280) }))
     })),
     transmissionPolicy: "Only these redacted packets may be sent, and only to explicitly approved providers. Raw files remain memory-only.",
-    solutionProfile: run.solutionProfile
+    solutionProfile: run.solutionProfile,
+    sourceIngestion: run.sourceIngestion
   };
 }
 
@@ -49,14 +51,15 @@ export async function createPreflight(input, options = {}) {
     path: "intended-use-dossier.json", mimeType: "application/json", format: "TEXT", encoding: "utf8",
     content: JSON.stringify(validated.dossier), metadata: { kind: "DECLARATION" }
   });
-  const screened = await parseAndScreenSources(inputs);
+  const screened = await parseAndScreenSources(inputs, { continueOnError: true });
   const now = options.now ?? new Date();
   const ttlMs = options.ttlMs ?? 60 * 60 * 1000;
   const run = {
     id: stableId("run", { dossier: validated.dossier, manifest: screened.registeredSources, createdAt: now.toISOString() }),
-    schemaVersion: "2.2.0", status: validated.dossier ? "AWAITING_TRANSMISSION_APPROVAL" : "AWAITING_INTAKE_CONFIRMATION", stage: validated.dossier ? "PREFLIGHT" : "DISCOVERY",
+    schemaVersion: "2.3.0", status: validated.dossier ? "AWAITING_TRANSMISSION_APPROVAL" : "AWAITING_INTAKE_CONFIRMATION", stage: validated.dossier ? "PREFLIGHT" : "DISCOVERY",
     createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + ttlMs).toISOString(), dossier: validated.dossier,
     registeredSources: screened.registeredSources, dlpFindings: screened.dlpFindings,
+    sourceIngestion: buildSourceIngestionManifest({ submitted: input.sourceIngestion, parsedSources: screened.registeredSources.filter((item) => item.path !== "intended-use-dossier.json"), failedSources: screened.failedSources }),
     packets: packetize(screened.sourceUnits, options.maxPacketChars), trace: [], result: null, error: null
   };
   run.solutionProfile = discoverSolutionProfile(screened.sourceUnits.filter((item) => item.path !== "intended-use-dossier.json"), validated.dossier);
@@ -71,7 +74,8 @@ export function publicDiscoveryView(run) {
     stage: run.stage,
     solutionProfile: run.solutionProfile,
     dlpFindings: run.dlpFindings,
-    sourceManifest: run.registeredSources
+    sourceManifest: run.registeredSources,
+    sourceIngestion: run.sourceIngestion
   };
 }
 

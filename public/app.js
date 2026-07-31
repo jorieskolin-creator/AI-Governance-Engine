@@ -1,5 +1,5 @@
 import { renderAssuranceSummary, standaloneReportHtml } from "/report.js";
-import { binaryMimeTypes, resolveUploadMimeType } from "/upload-types.js";
+import { binaryMimeTypes, classifyUploadPath, provisionalIngestionManifest } from "/upload-types.js";
 
 const STAGES = [
   "QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION",
@@ -85,18 +85,39 @@ function bytesToBase64(buffer) {
 
 async function browserFileSource(file) {
   if (file.size > 15 * 1024 * 1024) throw new Error(`${file.name} exceeds the 15 MB source limit.`);
-  const mimeType = resolveUploadMimeType(file.name, file.type);
-  if (!mimeType) throw new Error(`${file.name} has an unsupported file type.`);
+  const path = file.webkitRelativePath || file.name;
+  const mimeType = classifyUploadPath(path, file.type).mimeType;
   const encoding = binaryMimeTypes.has(mimeType) ? "base64" : "utf8";
   const content = encoding === "base64" ? bytesToBase64(await file.arrayBuffer()) : await file.text();
-  return { path: file.webkitRelativePath || file.name, mimeType, encoding, content };
+  return { path, mimeType, encoding, content };
 }
 
 async function selectedSources() {
   const files = [...$("source-folder").files, ...$("source-files").files];
-  if (!files.length) return sampleSources;
+  if (!files.length) return { sources: sampleSources, sourceIngestion: null };
   if (preparedSources) return preparedSources;
-  preparedSources = await Promise.all(files.map(browserFileSource));
+  const sources = [];
+  const items = [];
+  for (const file of files) {
+    const path = file.webkitRelativePath || file.name;
+    const classification = classifyUploadPath(path, file.type);
+    if (classification.disposition !== "ACCEPTED") {
+      items.push({ ...classification, size: file.size });
+      continue;
+    }
+    try {
+      sources.push(await browserFileSource(file));
+      items.push({ ...classification, size: file.size });
+    } catch (error) {
+      items.push({ ...classification, size: file.size, disposition: "PARSE_FAILED", reasonCode: /15 MB/.test(error.message) ? "SOURCE_SIZE_LIMIT" : "BROWSER_READ_FAILED", riskClass: "REVIEW_REQUIRED" });
+    }
+  }
+  const selectionMode = $("source-folder").files.length && $("source-files").files.length ? "FOLDER_AND_FILES"
+    : $("source-folder").files.length ? "FOLDER_SELECTION" : "INDIVIDUAL_FILES";
+  const sourceIngestion = provisionalIngestionManifest(items, selectionMode);
+  if (!sources.length) throw new Error(`No supported source could be prepared. ${sourceIngestion.excludedCount} file(s) were excluded and ${sourceIngestion.failedCount + sourceIngestion.unsafeCount} require review.`);
+  preparedSources = { sources, sourceIngestion };
+  $("discovery-status").textContent = `${sourceIngestion.acceptedCount} supported file(s) prepared · ${sourceIngestion.excludedCount} disclosed exclusion(s) · ${sourceIngestion.failedCount + sourceIngestion.unsafeCount} file(s) require review.`;
   return preparedSources;
 }
 
@@ -119,13 +140,13 @@ function renderDiscovery(profile, dlpFindings = []) {
 async function discoverCaseInformation() {
   $("error").classList.add("hidden"); $("discover-button").disabled = true; $("discovery-status").textContent = "Parsing sources locally on the Engine and building cited facts…";
   try {
-    const sources = await selectedSources();
-    if (!sources.length) throw new Error("Select a folder or one or more supported files first.");
-    if (!sources.some((item) => item.mimeType)) {
+    const prepared = await selectedSources();
+    if (!prepared.sources.length) throw new Error("Select a folder or one or more supported files first.");
+    if (!prepared.sources.some((item) => item.mimeType)) {
       const sample = await fetch("/api/sample").then((response) => response.json());
       fillDossier(sample.dossier); $("discovery-status").textContent = "Controlled sample dossier loaded for deterministic calibration."; return;
     }
-    const response = await fetch("/api/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sources }) });
+    const response = await fetch("/api/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(prepared) });
     const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Source discovery failed");
     fillDossier(body.solutionProfile.suggestedDossier); renderDiscovery(body.solutionProfile, body.dlpFindings);
     $("discovery-status").textContent = "Draft ready. Confirm or correct each field before assessment; corrections remain user declarations.";
@@ -142,7 +163,7 @@ function renderRecommendation(pkg) {
 }
 
 function renderMetrics(pkg) {
-  const values = [["Indicator coverage", `${pkg.dimensions.indicatorCoverage ?? pkg.dimensions.evidenceCoverage}%`], ["Control assurance", `${pkg.dimensions.controlAssurance}%`], ["Residual risk", pkg.dimensions.residualRisk], ["Gate status", pkg.dimensions.gateStatus]];
+  const values = [["Assessment coverage", `${pkg.dimensions.assessmentCoverage ?? pkg.dimensions.indicatorCoverage ?? pkg.dimensions.evidenceCoverage}%`], ["Verified evidence", `${pkg.dimensions.verifiedEvidenceCoverage ?? 0}%`], ["Control assurance", `${pkg.dimensions.controlAssurance}%`], ["Residual risk", pkg.dimensions.residualRisk], ["Gate status", pkg.dimensions.gateStatus]];
   $("metric-grid").replaceChildren(...values.map(([name, value]) => { const card = el("div", "metric"); card.append(el("span", "", name), el("strong", "", label(value))); return card; }));
 }
 
@@ -240,7 +261,8 @@ async function loadSample() {
 async function runAssessment(event) {
   event.preventDefault(); $("error").classList.add("hidden"); $("progress").classList.remove("hidden"); $("assess-button").disabled = true;
   try {
-    const response = await fetch("/api/assess", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dossier: dossierFromForm(), sources: await selectedSources() }) });
+    const prepared = await selectedSources();
+    const response = await fetch("/api/assess", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dossier: dossierFromForm(), ...prepared }) });
     const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Assessment failed"); renderPackage(body);
   } catch (error) { $("error").textContent = error.message; $("error").classList.remove("hidden"); }
   finally { $("progress").classList.add("hidden"); $("assess-button").disabled = false; }

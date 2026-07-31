@@ -10,11 +10,27 @@ export function calculateReadiness(controlAssessments, antiPatternAssessments, g
   const verifiedControls = new Set(evidence.filter((item) => !item.stale && item.metadata?.lockedFindingId).flatMap((item) => item.controlIds ?? []));
   const indicatorCoverage = Math.round((applicable.filter((item) => indicatorControls.has(item.controlId)).length / Math.max(1, applicable.length)) * 100);
   const verifiedEvidenceCoverage = Math.round((applicable.filter((item) => verifiedControls.has(item.controlId)).length / Math.max(1, applicable.length)) * 100);
+  const assessmentCoverage = Math.round((applicable.length / Math.max(1, applicable.length)) * 100);
   const assurance = Math.round((applicable.reduce((sum, item) => sum + (STATE_WEIGHT[item.state] ?? 0), 0) / Math.max(1, applicable.length)) * 100);
   const activeRisks = antiPatternAssessments.filter((item) => ["CONFIRMED_PRESENT", "DECLARED_RISK", "DETECTED_CANDIDATE", "VERIFICATION_REQUIRED", "PARTIALLY_PRESENT"].includes(item.state));
   const gaps = applicable.map((item) => item.gap).filter(Boolean);
   const maxSeverity = Math.max(0, ...activeRisks.map((item) => severityRank[item.severity]), ...gaps.map((item) => severityRank[item.severity]));
   const residualRisk = ["LOW", "LOW", "MEDIUM", "HIGH", "CRITICAL"][maxSeverity];
+  const riskDrivers = [
+    ...(documentationReadiness?.contradictions ?? []).map((item) => ({
+      id: item.id,
+      type: "DOCUMENTATION_CONTRADICTION",
+      title: item.statement,
+      severity: item.severity ?? "HIGH",
+      basisStatus: "CONFLICTING",
+      domain: null,
+      controlIds: [],
+      findingIds: [item.id],
+      ruleIds: item.ruleId ? [item.ruleId] : []
+    })),
+    ...activeRisks.map((item) => ({ id: item.id, type: "ANTIPATTERN", title: item.title, severity: item.severity, basisStatus: item.state, domain: item.domain, findingIds: [item.id], controlIds: [] })),
+    ...gaps.map((item) => ({ id: item.id, type: "CONTROL_GAP", title: item.title, severity: item.severity, basisStatus: item.currentState === "UNKNOWN" ? "UNKNOWN" : "DECLARED_OR_OBSERVED_BELOW_TARGET", domain: item.domain, findingIds: [item.id], controlIds: [item.controlId] }))
+  ].sort((a, b) => severityRank[b.severity] - severityRank[a.severity] || a.title.localeCompare(b.title)).slice(0, 3);
   const gateStatus = gates.some((item) => item.outcome === "BLOCK") ? "BLOCK" : gates.some((item) => item.outcome === "REVIEW") ? "HUMAN_REVIEW" : gates.length ? "WARN" : "CLEAR";
 
   let outcome;
@@ -28,11 +44,13 @@ export function calculateReadiness(controlAssessments, antiPatternAssessments, g
     outcome,
     dimensions: {
       indicatorCoverage,
+      assessmentCoverage,
       verifiedEvidenceCoverage,
       evidenceCoverage: coverage,
       controlAssurance: assurance,
       documentationAlignment: documentationReadiness?.status ?? "UNKNOWN",
       residualRisk,
+      riskDrivers,
       gateStatus,
       explanation: "Indicator, accepted-evidence, verified-evidence and assurance measures are diagnostic only. Documentation alignment, gate status and unresolved risk determine progression; scores cannot override a blocker."
     }

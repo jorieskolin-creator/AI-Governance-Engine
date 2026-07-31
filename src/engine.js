@@ -9,6 +9,7 @@ import { calculateReadiness, humanDecisionRequirements } from "./core/readiness.
 import { buildAssuranceSummary, buildTransitionBoundary } from "./core/assurance-summary.js";
 import { loadKnowledgeSnapshot, knowledgeManifestView } from "./knowledge/provider.js";
 import { buildAssessmentIntake, buildDocumentationReadiness, discoverSolutionProfile } from "./core/solution-profile.js";
+import { buildSourceIngestionManifest } from "./core/source-ingestion.js";
 
 const ENGINE_VERSION = "governance-engine-0.2.0";
 const RULESET_VERSION = "readiness-rules-2.0.0";
@@ -21,7 +22,7 @@ function timed(trace, id, fn) {
   });
 }
 
-function solutionUnderstanding(dossier, registry, evidence) {
+function solutionUnderstanding(dossier, registry, evidence, sourceIngestion) {
   const providers = evidence.filter((item) => item.signal === "model-inventory").map((item) => ({ source: item.path, excerpt: item.excerpt }));
   const signals = [...new Set(evidence.map((item) => item.signal))].sort();
   return {
@@ -41,6 +42,7 @@ function solutionUnderstanding(dossier, registry, evidence) {
     operatingBoundary: dossier.operatingBoundary,
     sourceCount: registry.registeredSources.length,
     sourceManifestHash: registry.registryHash,
+    sourceIngestion,
     detectedProvidersAndModels: providers,
     detectedGovernanceSignals: signals,
     limitations: [
@@ -51,14 +53,14 @@ function solutionUnderstanding(dossier, registry, evidence) {
   };
 }
 
-async function buildPackage({ dossier, knowledge, registry, evidence, registryFindings, solution, solutionProfile, trace, startedAt, runId, schemaVersion, cognitiveCoverage, cognitive }) {
-  const documentationReadiness = buildDocumentationReadiness(solutionProfile, dossier.targetStage);
-  const assessmentIntake = buildAssessmentIntake(dossier, solutionProfile, documentationReadiness, registry.registeredSources);
+async function buildPackage({ dossier, knowledge, registry, evidence, registryFindings, solution, solutionProfile, sourceIngestion, trace, startedAt, runId, schemaVersion, cognitiveCoverage, cognitive }) {
+  const documentationReadiness = buildDocumentationReadiness(solutionProfile, dossier.targetStage, sourceIngestion);
+  const assessmentIntake = buildAssessmentIntake(dossier, solutionProfile, documentationReadiness, registry.registeredSources, sourceIngestion);
   const applicability = await timed(trace, "applicability", () => evaluateApplicability(knowledge.requirements, dossier, startedAt));
   const controls = await timed(trace, "control-assessment", () => assessControls(knowledge.controls, applicability, evidence, dossier, knowledge.antipatterns));
   const antiPatterns = await timed(trace, "antipattern-assessment", () => assessAntiPatterns(knowledge.antipatterns, evidence, controls));
   const domains = groupDomainResults(controls, antiPatterns);
-  const gates = await timed(trace, "hard-gates", () => evaluateHardGates({ dossier, registryFindings, controlAssessments: controls, applicability, evidence, documentationReadiness, cognitiveCoverage }));
+  const gates = await timed(trace, "hard-gates", () => evaluateHardGates({ dossier, registryFindings, controlAssessments: controls, applicability, evidence, documentationReadiness, sourceIngestion, cognitiveCoverage }));
   const actions = await timed(trace, "playbook", () => selectPlaybookActions(knowledge.tactics, domains, antiPatterns, dossier));
   const readiness = calculateReadiness(controls, antiPatterns, gates, evidence, documentationReadiness);
   const humanDecisions = humanDecisionRequirements(gates, applicability, dossier);
@@ -89,6 +91,7 @@ async function buildPackage({ dossier, knowledge, registry, evidence, registryFi
     assessmentIntake,
     solutionProfile,
     documentationReadiness,
+    sourceIngestion,
     documentationContradictions: solutionProfile.contradictions,
     documentationGate: gates.find((item) => item.code === "DOCUMENTATION_ALIGNMENT_REQUIRED") ?? null,
     recommendation,
@@ -122,12 +125,13 @@ export async function assessSolution(input, options = {}) {
   const sources = await timed(trace, "validate-sources", () => validateSources(input.sources ?? []));
   const knowledge = options.knowledge ?? await timed(trace, "load-knowledge", () => loadKnowledgeSnapshot(options.knowledgeOptions));
   const registry = await timed(trace, "source-registry", () => buildSourceRegistry(sources, startedAt));
+  const sourceIngestion = input.sourceIngestion?.manifestHash ? input.sourceIngestion : buildSourceIngestionManifest({ submitted: input.sourceIngestion, parsedSources: sources });
   const solutionProfile = await timed(trace, "solution-profile", () => discoverSolutionProfile(sources, dossier));
   const evidence = [...registry.evidence, ...dossierEvidence(dossier, startedAt), ...dossierRiskEvidence(dossier, startedAt)];
   return buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
-    solution: solutionUnderstanding(dossier, registry, evidence), solutionProfile, trace, startedAt, runId,
-    schemaVersion: "1.1.0", cognitiveCoverage: null, cognitive: null
+    solution: solutionUnderstanding(dossier, registry, evidence, sourceIngestion), solutionProfile, sourceIngestion, trace, startedAt, runId,
+    schemaVersion: "1.2.0", cognitiveCoverage: null, cognitive: null
   });
 }
 
@@ -143,10 +147,11 @@ export async function assessVerifiedSolution(input, options = {}) {
   };
   const evidence = [...dossierEvidence(dossier, startedAt), ...dossierRiskEvidence(dossier, startedAt), ...(input.lockedEvidence ?? [])];
   const solutionProfile = input.solutionProfile ?? discoverSolutionProfile([], dossier, input.fieldConfirmations ?? {});
+  const sourceIngestion = input.sourceIngestion?.manifestHash ? input.sourceIngestion : buildSourceIngestionManifest({ submitted: input.sourceIngestion, parsedSources: input.registeredSources ?? [] });
   return buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
-    solution: input.solutionModel, solutionProfile, trace, startedAt, runId: input.runId,
-    schemaVersion: "2.2.0", cognitiveCoverage: input.cognitiveCoverage,
+    solution: { ...input.solutionModel, sourceIngestion }, solutionProfile, sourceIngestion, trace, startedAt, runId: input.runId,
+    schemaVersion: "2.3.0", cognitiveCoverage: input.cognitiveCoverage,
     cognitive: input.cognitive
   });
 }

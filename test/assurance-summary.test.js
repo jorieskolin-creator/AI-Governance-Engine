@@ -13,8 +13,8 @@ function request(overrides = {}) {
 
 test("v1 includes complete case context and a deterministic lifecycle boundary", async () => {
   const result = await assessSolution(request());
-  assert.equal(result.schemaVersion, "1.1.0");
-  assert.equal(result.assuranceSummary.version, "assurance-summary-1.1.0");
+  assert.equal(result.schemaVersion, "1.2.0");
+  assert.equal(result.assuranceSummary.version, "assurance-summary-1.2.0");
   assert.equal(result.transitionBoundary.immutable, true);
   assert.equal(result.transitionBoundary.currentStage, result.solution.currentStage);
   assert.equal(result.transitionBoundary.targetStage, result.solution.targetStage);
@@ -26,6 +26,8 @@ test("v1 includes complete case context and a deterministic lifecycle boundary",
   assert.equal(Object.hasOwn(result.assuranceSummary, "evidenceDigest"), false);
   assert.deepEqual(result.assuranceSummary.strengths, []);
   assert.ok(result.assuranceSummary.blockingFindings.every((item) => item.supportStatus === "COGNITIVE_VERIFICATION_NOT_RUN"));
+  assert.ok(result.assuranceSummary.executiveGapGroups.length <= 8);
+  assert.equal(result.assessmentIntake.version, "assessment-intake-1.1.0");
 });
 
 test("deployment targets use the production boundary label", async () => {
@@ -59,6 +61,11 @@ test("standalone report is escaped, offline, lean and case-identifiable", async 
   assert.match(html, new RegExp(REPORT_VERSION));
   assert.match(html, new RegExp(result.packageHash));
   assert.doesNotMatch(html, /Evidence Digest|raw evidence excerpt/i);
+  assert.doesNotMatch(html, /allowedUses|userScope|monitoringOwner|Userscope|Datascope/);
+  assert.match(html, /Assessment coverage/);
+  assert.match(html, /Verified evidence/);
+  assert.match(html, /Leading residual-risk drivers/);
+  assert.match(html, /Trace:/);
   const ordered = ["01 · Decision", "Case Profile and Assessment Scope", "Documentation Alignment", "Deterministic Lifecycle Transition Boundary", "Evidence Interpretation", "Hard-Gate Matrix", "A–F Domain Overview", "Confirmed Strengths", "Blocking Gaps and Unknowns", "Governance Action Playbook", "Human Authority", "Audit Identity", "Limitations"];
   let cursor = -1;
   for (const heading of ordered) {
@@ -66,4 +73,22 @@ test("standalone report is escaped, offline, lean and case-identifiable", async 
     assert.ok(next > cursor, `${heading} must appear in report order`);
     cursor = next;
   }
+});
+
+test("standalone report preserves UTF-8 punctuation without mojibake", async () => {
+  const html = standaloneReportHtml(await assessSolution(request()));
+  const roundTrip = Buffer.from(html, "utf8").toString("utf8");
+  assert.match(roundTrip, /— Assurance Summary/);
+  assert.match(roundTrip, /01 · Decision/);
+  assert.match(roundTrip, /Design And Development → Verification And Validation/);
+  assert.doesNotMatch(roundTrip, /â€”|Â·|â†’|Aâ€“F/);
+});
+
+test("executive report consolidates detailed gaps while JSON retains them", async () => {
+  const result = await assessSolution(request({ sources: [] }));
+  const detailed = result.assuranceSummary.blockingFindings.length;
+  assert.ok(detailed > result.assuranceSummary.executiveGapGroups.length);
+  const html = standaloneReportHtml(result);
+  assert.equal((html.match(/No acceptable evidence establishes this control/g) ?? []).length, 0);
+  assert.ok(result.domains.flatMap((domain) => domain.gaps).length > 0);
 });

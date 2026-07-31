@@ -19,7 +19,7 @@ function gate({ code, outcome, title, rationale, targetStage, evidenceIds = [], 
   return { id: stableId("gate", normalized), ...normalized };
 }
 
-export function evaluateHardGates({ dossier, registryFindings, controlAssessments, applicability, evidence, cognitiveCoverage = null }) {
+export function evaluateHardGates({ dossier, registryFindings, controlAssessments, applicability, evidence, documentationReadiness = null, cognitiveCoverage = null }) {
   const gates = [];
   const control = (id) => controlAssessments.find((item) => item.controlId === id);
   const add = (value) => gates.push(gate({ ...value, targetStage: dossier.targetStage }));
@@ -33,13 +33,13 @@ export function evaluateHardGates({ dossier, registryFindings, controlAssessment
       requiredEvidenceKinds: ["HUMAN_REVIEW"]
     });
   }
-  const secretEvidence = registryFindings.filter((item) => item.code === "SECRET_MATERIAL");
+  const secretEvidence = registryFindings.filter((item) => ["SECRET_CANDIDATE", "SECRET_MATERIAL"].includes(item.code));
   if (secretEvidence.length) {
     add({
-      code: "SECRET_MATERIAL", outcome: "BLOCK", title: "Secret material detected",
-      rationale: "Remove and rotate exposed credentials before the source packet can be relied upon.",
+      code: "SECRET_CANDIDATE", outcome: "BLOCK", title: "Potential secret requires verification",
+      rationale: "A deterministic scanner detected a credential-shaped value. Progression fails safe until Security verifies whether it is real or a synthetic fixture.",
       evidenceIds: secretEvidence.map((item) => item.evidenceId), authorities: ["SECURITY"], controlIds: ["CTRL-D-01"],
-      clearanceCriteria: ["Remove the exposed value from every submitted and deployed location", "Rotate or revoke the affected credential", "Supply a passed follow-up secret scan"],
+      clearanceCriteria: ["Classify the candidate as a verified secret or documented synthetic fixture", "If verified, remove the value and rotate or revoke the affected credential", "Supply a passed follow-up secret scan"],
       requiredEvidenceKinds: ["SCAN_RESULT", "HUMAN_REVIEW"]
     });
   }
@@ -84,6 +84,15 @@ export function evaluateHardGates({ dossier, registryFindings, controlAssessment
       code: `APPLICABILITY_${item.requirementId}`, outcome: "REVIEW", title: "Binding requirement applicability is unresolved", rationale: item.reason,
       authorities: [item.humanAuthority], requirementIds: [item.requirementId],
       clearanceCriteria: ["Record an authorized applicability interpretation and its effective scope"], requiredEvidenceKinds: ["HUMAN_REVIEW"]
+    });
+  }
+  if (documentationReadiness?.gateRequired) {
+    add({
+      code: "DOCUMENTATION_ALIGNMENT_REQUIRED", outcome: "BLOCK", title: "Assessment intake is not documented and aligned",
+      rationale: "Deployment requires the complete applicable assessment intake to be documented, confirmed, and consistent with the assessed implementation.",
+      authorities: ["SOLUTION_OWNER", "GOVERNANCE"],
+      clearanceCriteria: ["Document every applicable assessment-intake field", "Include the deployment implementation code or configuration in the assessed source scope", "Resolve documentation-to-code contradictions", "Confirm the updated case profile and reassess the deployment candidate"],
+      requiredEvidenceKinds: ["DOCUMENT", "CONFIGURATION", "HUMAN_REVIEW"]
     });
   }
   if (dossier.targetStage === "DEPLOYMENT") {

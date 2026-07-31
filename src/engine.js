@@ -8,6 +8,7 @@ import { selectPlaybookActions } from "./core/playbook-engine.js";
 import { calculateReadiness, humanDecisionRequirements } from "./core/readiness.js";
 import { buildAssuranceSummary, buildTransitionBoundary } from "./core/assurance-summary.js";
 import { loadKnowledgeSnapshot, knowledgeManifestView } from "./knowledge/provider.js";
+import { buildAssessmentIntake, buildDocumentationReadiness, discoverSolutionProfile } from "./core/solution-profile.js";
 
 const ENGINE_VERSION = "governance-engine-0.2.0";
 const RULESET_VERSION = "readiness-rules-2.0.0";
@@ -33,6 +34,10 @@ function solutionUnderstanding(dossier, registry, evidence) {
     jurisdictions: dossier.jurisdictions,
     roles: dossier.roles,
     users: dossier.users,
+    data: dossier.data,
+    exposure: dossier.exposure,
+    agent: dossier.agent,
+    classification: dossier.classification,
     operatingBoundary: dossier.operatingBoundary,
     sourceCount: registry.registeredSources.length,
     sourceManifestHash: registry.registryHash,
@@ -46,28 +51,30 @@ function solutionUnderstanding(dossier, registry, evidence) {
   };
 }
 
-async function buildPackage({ dossier, knowledge, registry, evidence, registryFindings, solution, trace, startedAt, runId, schemaVersion, cognitiveCoverage, cognitive }) {
+async function buildPackage({ dossier, knowledge, registry, evidence, registryFindings, solution, solutionProfile, trace, startedAt, runId, schemaVersion, cognitiveCoverage, cognitive }) {
+  const documentationReadiness = buildDocumentationReadiness(solutionProfile, dossier.targetStage);
+  const assessmentIntake = buildAssessmentIntake(dossier, solutionProfile, documentationReadiness, registry.registeredSources);
   const applicability = await timed(trace, "applicability", () => evaluateApplicability(knowledge.requirements, dossier, startedAt));
   const controls = await timed(trace, "control-assessment", () => assessControls(knowledge.controls, applicability, evidence, dossier, knowledge.antipatterns));
   const antiPatterns = await timed(trace, "antipattern-assessment", () => assessAntiPatterns(knowledge.antipatterns, evidence, controls));
   const domains = groupDomainResults(controls, antiPatterns);
-  const gates = await timed(trace, "hard-gates", () => evaluateHardGates({ dossier, registryFindings, controlAssessments: controls, applicability, evidence, cognitiveCoverage }));
+  const gates = await timed(trace, "hard-gates", () => evaluateHardGates({ dossier, registryFindings, controlAssessments: controls, applicability, evidence, documentationReadiness, cognitiveCoverage }));
   const actions = await timed(trace, "playbook", () => selectPlaybookActions(knowledge.tactics, domains, antiPatterns, dossier));
-  const readiness = calculateReadiness(controls, antiPatterns, gates);
+  const readiness = calculateReadiness(controls, antiPatterns, gates, evidence, documentationReadiness);
   const humanDecisions = humanDecisionRequirements(gates, applicability, dossier);
-  const transitionBoundary = buildTransitionBoundary({ dossier, gates, domains, readiness, humanDecisions });
+  const transitionBoundary = buildTransitionBoundary({ dossier, gates, domains, readiness, humanDecisions, documentationReadiness });
   const knowledgeView = knowledgeManifestView(knowledge);
   const recommendation = {
     outcome: readiness.outcome,
     rationale: readiness.outcome === "READY_FOR_NEXT_STAGE"
       ? "No applicable control gap, confirmed anti-pattern, unresolved authority question, or hard gate prevents the declared transition."
-      : `${gates.length} gate(s), ${domains.flatMap((item) => item.gaps).length} control gap(s), and ${antiPatterns.filter((item) => item.state === "CONFIRMED_PRESENT").length} confirmed anti-pattern(s) determine this recommendation.`,
+      : `${gates.length} gate(s), ${domains.flatMap((item) => item.gaps).length} control gap(s), and ${antiPatterns.filter((item) => !["UNKNOWN", "TESTED_ABSENT"].includes(item.state)).length} risk indicator(s) determine this recommendation.`,
     formalApproval: false,
     boundary: "This is decision support. The engine cannot issue legal, privacy, security, governance, AI Forum, or AI Board approval."
   };
   const assuranceSummary = buildAssuranceSummary({
     schemaVersion, recommendation, dimensions: readiness.dimensions, transitionBoundary, gates, domains, actions,
-    humanDecisions, evidence, solution, knowledge: knowledgeView, cognitive
+    humanDecisions, evidence, solution, assessmentIntake, solutionProfile, documentationReadiness, knowledge: knowledgeView, cognitive
   });
   const completedAt = new Date();
   const draft = {
@@ -79,6 +86,11 @@ async function buildPackage({ dossier, knowledge, registry, evidence, registryFi
     generatedAt: completedAt.toISOString(),
     knowledge: knowledgeView,
     solution,
+    assessmentIntake,
+    solutionProfile,
+    documentationReadiness,
+    documentationContradictions: solutionProfile.contradictions,
+    documentationGate: gates.find((item) => item.code === "DOCUMENTATION_ALIGNMENT_REQUIRED") ?? null,
     recommendation,
     dimensions: readiness.dimensions,
     transitionBoundary,
@@ -110,11 +122,12 @@ export async function assessSolution(input, options = {}) {
   const sources = await timed(trace, "validate-sources", () => validateSources(input.sources ?? []));
   const knowledge = options.knowledge ?? await timed(trace, "load-knowledge", () => loadKnowledgeSnapshot(options.knowledgeOptions));
   const registry = await timed(trace, "source-registry", () => buildSourceRegistry(sources, startedAt));
+  const solutionProfile = await timed(trace, "solution-profile", () => discoverSolutionProfile(sources, dossier));
   const evidence = [...registry.evidence, ...dossierEvidence(dossier, startedAt), ...dossierRiskEvidence(dossier, startedAt)];
   return buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
-    solution: solutionUnderstanding(dossier, registry, evidence), trace, startedAt, runId,
-    schemaVersion: "1.0.0", cognitiveCoverage: null, cognitive: null
+    solution: solutionUnderstanding(dossier, registry, evidence), solutionProfile, trace, startedAt, runId,
+    schemaVersion: "1.1.0", cognitiveCoverage: null, cognitive: null
   });
 }
 
@@ -129,10 +142,11 @@ export async function assessVerifiedSolution(input, options = {}) {
     evidence: [], findings: input.registryFindings ?? []
   };
   const evidence = [...dossierEvidence(dossier, startedAt), ...dossierRiskEvidence(dossier, startedAt), ...(input.lockedEvidence ?? [])];
+  const solutionProfile = input.solutionProfile ?? discoverSolutionProfile([], dossier, input.fieldConfirmations ?? {});
   return buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
-    solution: input.solutionModel, trace, startedAt, runId: input.runId,
-    schemaVersion: "2.1.0", cognitiveCoverage: input.cognitiveCoverage,
+    solution: input.solutionModel, solutionProfile, trace, startedAt, runId: input.runId,
+    schemaVersion: "2.2.0", cognitiveCoverage: input.cognitiveCoverage,
     cognitive: input.cognitive
   });
 }

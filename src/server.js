@@ -6,8 +6,10 @@ import { fileURLToPath } from "node:url";
 import { assessSolution } from "./engine.js";
 import { loadKnowledgeSnapshot, knowledgeManifestView } from "./knowledge/provider.js";
 import { SAMPLE_REQUEST } from "./sample.js";
-import { validateExecutionApproval } from "./cognitive/contracts.js";
-import { createPreflight, publicPreflightView } from "./cognitive/preflight.js";
+import { validateExecutionApproval, validatePreflightInput } from "./cognitive/contracts.js";
+import { confirmPreflightDossier, createPreflight, publicDiscoveryView, publicPreflightView } from "./cognitive/preflight.js";
+import { parseAndScreenSources } from "./cognitive/source-intake.js";
+import { discoverSolutionProfile } from "./core/solution-profile.js";
 import { executeCognitiveRun } from "./cognitive/pipeline.js";
 import { modelPolicy, publicModelPolicy } from "./cognitive/model-policy.js";
 import { EphemeralRunStore } from "./cognitive/run-store.js";
@@ -87,8 +89,27 @@ function publicRunView(run) {
   return {
     runId: run.id, status: run.status, stage: run.stage, createdAt: run.createdAt, expiresAt: run.expiresAt,
     completedAt: run.completedAt ?? null, resultAvailable: Boolean(run.result), error: run.error,
+    solutionProfile: run.solutionProfile,
     progress: run.trace.map(({ stage, status, at, claimCount, verificationCount, lockedFindingCount }) => ({ stage, status, at, claimCount, verificationCount, lockedFindingCount }))
   };
+}
+
+async function parsedAssessmentSources(payload) {
+  const values = payload.sources ?? [];
+  if (!values.some((item) => item.mimeType)) return values;
+  const validated = validatePreflightInput({ sources: values }, { dossierOptional: true });
+  const screened = await parseAndScreenSources(validated.sources);
+  return screened.sourceUnits.map((unit) => ({
+    path: `${unit.path}#${unit.locator}`,
+    content: unit.media ? "[IMAGE REQUIRES APPROVED MULTIMODAL COGNITIVE DISCOVERY; NO DETERMINISTIC FACT EXTRACTED]" : unit.content,
+    kind: unit.evidenceKind,
+    metadata: {
+      artifactClass: screened.registeredSources.find((item) => item.id === unit.sourceId)?.artifactClass,
+      sourceUnitId: unit.id,
+      locator: unit.locator,
+      originalSource: screened.registeredSources.find((item) => item.id === unit.sourceId)
+    }
+  }));
 }
 
 async function serveStatic(pathname, response) {
@@ -120,9 +141,19 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/sample") return sendJson(response, 200, SAMPLE_REQUEST);
     if (request.method === "GET" && url.pathname === "/api/config") return sendJson(response, 200, { assuranceSummaryEnabled });
     if (request.method === "GET" && url.pathname === "/api/knowledge") return sendJson(response, 200, knowledgeManifestView(knowledge));
+    if (request.method === "POST" && url.pathname === "/api/discover") {
+      const payload = await readJson(request);
+      const validated = validatePreflightInput({ sources: payload.sources ?? [] }, { dossierOptional: true });
+      const screened = await parseAndScreenSources(validated.sources);
+      return sendJson(response, 200, {
+        solutionProfile: discoverSolutionProfile(screened.sourceUnits),
+        sourceManifest: screened.registeredSources,
+        dlpFindings: screened.dlpFindings
+      });
+    }
     if (request.method === "POST" && url.pathname === "/api/assess") {
       const payload = await readJson(request);
-      return sendJson(response, 200, await assessSolution(payload, { knowledge }));
+      return sendJson(response, 200, await assessSolution({ ...payload, sources: await parsedAssessmentSources(payload) }, { knowledge }));
     }
     if (url.pathname.startsWith("/api/v2/") && !cognitiveGuard(request, response, ["POST", "DELETE"].includes(request.method))) return;
     if (request.method === "GET" && url.pathname === "/api/v2/models") {
@@ -132,6 +163,18 @@ const server = http.createServer(async (request, response) => {
       const run = await createPreflight(await readJson(request));
       runStore.create(run);
       return sendJson(response, 201, publicPreflightView(run));
+    }
+    const discoverMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/discover$/);
+    if (request.method === "POST" && discoverMatch) {
+      const run = runStore.get(discoverMatch[1]);
+      return run ? sendJson(response, 200, publicDiscoveryView(run)) : sendJson(response, 404, { error: "Run not found or expired" });
+    }
+    const confirmMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/confirm$/);
+    if (request.method === "POST" && confirmMatch) {
+      const run = runStore.get(confirmMatch[1]);
+      if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
+      await confirmPreflightDossier(run, await readJson(request));
+      return sendJson(response, 200, publicPreflightView(run));
     }
     const executeMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/execute$/);
     if (request.method === "POST" && executeMatch) {

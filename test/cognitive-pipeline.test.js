@@ -66,7 +66,7 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: mockTransport });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
-  assert.equal(result.schemaVersion, "2.1.0");
+  assert.equal(result.schemaVersion, "2.2.0");
   assert.equal(result.recommendation.formalApproval, false);
   assert.deepEqual(result.cognitive.coverage.failedStages, [], JSON.stringify(run.trace));
   assert.equal(result.cognitive.lockedFindings.length, 6);

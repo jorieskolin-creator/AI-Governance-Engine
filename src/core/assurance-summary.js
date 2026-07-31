@@ -1,5 +1,6 @@
 import { DOMAINS } from "../contracts.js";
 import { stableId } from "./hash.js";
+import { caseProfileView } from "./solution-profile.js";
 
 const HIGH = new Set(["HIGH", "CRITICAL"]);
 const BLOCKING_FINDING_TYPES = new Set(["GAP", "RISK", "ANTIPATTERN", "CONTRADICTION", "UNKNOWN", "EVIDENCE_REQUEST"]);
@@ -36,15 +37,16 @@ function boundaryHeadline(status, dossier) {
   return `No deterministic blocker prevents progression from ${current} to ${target}.`;
 }
 
-export function buildTransitionBoundary({ dossier, gates, domains, readiness, humanDecisions }) {
+export function buildTransitionBoundary({ dossier, gates, domains, readiness, humanDecisions, documentationReadiness = null }) {
   const status = boundaryStatus(readiness, gates);
   const configured = dossier.operatingBoundary;
+  const effectiveEnvironment = documentationReadiness?.sandboxRequired ? "ISOLATED_SANDBOX" : configured.environment;
   const permittedUses = (configured.allowedUses.length ? configured.allowedUses : [
     "Continue only within the declared intended purpose and current lifecycle-stage boundary."
   ]).map((statement) => boundaryItem(statement, basis({ ruleIds: ["RULE-BOUNDARY-DECLARED-PURPOSE"] })));
 
-  if (configured.environment !== "UNKNOWN") {
-    permittedUses.push(boundaryItem(`Operating environment: ${label(configured.environment)}.`, basis({ ruleIds: ["RULE-BOUNDARY-ENVIRONMENT"] })));
+  if (effectiveEnvironment !== "UNKNOWN") {
+    permittedUses.push(boundaryItem(`Operating environment: ${label(effectiveEnvironment)}.`, basis({ ruleIds: [documentationReadiness?.sandboxRequired ? "RULE-BOUNDARY-DOCUMENTATION-SANDBOX" : "RULE-BOUNDARY-ENVIRONMENT"] })));
   }
   for (const [key, title] of [
     ["userScope", "User scope"], ["dataScope", "Data scope"], ["integrationScope", "Integration scope"],
@@ -54,8 +56,11 @@ export function buildTransitionBoundary({ dossier, gates, domains, readiness, hu
   }
 
   const prohibitedUses = configured.excludedUses.map((statement) => boundaryItem(statement, basis({ ruleIds: ["RULE-BOUNDARY-DECLARED-EXCLUSION"] })));
+  if (documentationReadiness?.sandboxRequired) {
+    prohibitedUses.push(boundaryItem("Do not use production access, uncontrolled external users, consequential decisions, or unapproved sensitive data while documentation remains incomplete.", basis({ ruleIds: ["RULE-BOUNDARY-DOCUMENTATION-SANDBOX"] })));
+  }
   for (const gate of gates.filter((item) => item.outcome === "BLOCK")) {
-    prohibitedUses.push(boundaryItem(`Do not progress while ${gate.title.toLowerCase()} remains unresolved.`, basis({
+    prohibitedUses.push(boundaryItem(`Do not progress until “${gate.title}” is resolved.`, basis({
       gateIds: [gate.id], evidenceIds: gate.evidenceIds, controlIds: gate.controlIds, ruleIds: gate.ruleIds
     })));
   }
@@ -96,7 +101,8 @@ export function buildTransitionBoundary({ dossier, gates, domains, readiness, hu
     reviewGateIds: gates.filter((item) => item.outcome === "REVIEW").map((item) => item.id),
     requiredAuthorityIds: unique(humanDecisions.map((item) => item.authority)),
     declaredParameters: {
-      environment: configured.environment,
+      environment: effectiveEnvironment,
+      declaredEnvironment: configured.environment,
       userScope: configured.userScope || null,
       dataScope: configured.dataScope || null,
       integrationScope: configured.integrationScope || null,
@@ -112,7 +118,7 @@ export function buildTransitionBoundary({ dossier, gates, domains, readiness, hu
 }
 
 function domainStatus(domain) {
-  const confirmed = domain.antiPatterns.filter((item) => ["CONFIRMED_PRESENT", "PARTIALLY_PRESENT"].includes(item.state));
+  const confirmed = domain.antiPatterns.filter((item) => ["CONFIRMED_PRESENT", "DECLARED_RISK", "DETECTED_CANDIDATE", "VERIFICATION_REQUIRED", "PARTIALLY_PRESENT"].includes(item.state));
   if (confirmed.some((item) => item.severity === "CRITICAL") || domain.gaps.some((item) => item.severity === "CRITICAL")) return "BLOCKED";
   if (domain.gaps.some((item) => item.humanReviewRequired)) return "HUMAN_REVIEW";
   if (domain.gaps.some((item) => item.severity === "HIGH")) return "REMEDIATE";
@@ -128,20 +134,6 @@ function evidenceClass(item, mode) {
   return "AUTOMATED_INDICATOR";
 }
 
-function evidenceDigest(evidence, mode) {
-  return evidence.slice(0, 24).map((item) => ({
-    id: item.id,
-    evidenceClass: evidenceClass(item, mode),
-    path: item.path,
-    kind: item.kind,
-    assuranceState: item.assuranceState,
-    polarity: item.polarity,
-    controlIds: item.controlIds,
-    domainIds: item.domainIds,
-    summary: item.excerpt?.slice(0, 220) ?? "Evidence reference available."
-  }));
-}
-
 function narrativeItem(section, text, references = {}, supportStatus = "DETERMINISTIC") {
   const value = {
     section,
@@ -155,7 +147,7 @@ function narrativeItem(section, text, references = {}, supportStatus = "DETERMIN
   return { id: stableId("narrative", value), ...value };
 }
 
-export function buildAssuranceSummary({ schemaVersion, recommendation, dimensions, transitionBoundary, gates, domains, actions, humanDecisions, evidence, solution, knowledge, cognitive }) {
+export function buildAssuranceSummary({ schemaVersion, recommendation, dimensions, transitionBoundary, gates, domains, actions, humanDecisions, evidence, solution, assessmentIntake, solutionProfile, documentationReadiness, knowledge, cognitive }) {
   const mode = schemaVersion.startsWith("2.") && cognitive?.coverage?.complete ? "COGNITIVE_VERIFIED" : cognitive?.assessmentMode === "DEMO" ? "DEMO" : "DETERMINISTIC_ONLY";
   const evidenceById = new Map(evidence.map((item) => [item.id, item]));
   const locked = cognitive?.lockedFindings ?? [];
@@ -205,15 +197,17 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
   const limitations = unique([
     ...(solution.limitations ?? []),
     ...(mode === "DETERMINISTIC_ONLY" ? ["Automated indicators have not passed the cognitive claim-verification pipeline and are not confirmed findings."] : []),
-    ...(knowledge.source === "LOCAL_BOOTSTRAP" ? ["The assessment uses pilot bootstrap knowledge rather than an approved production knowledge manifest."] : []),
+    ...(knowledge.releaseStatus !== "APPROVED" ? [`The assessment uses ${knowledge.releaseStatus ?? "UNSPECIFIED"} knowledge rather than an approved production normative mapping.`] : []),
     ...(cognitive?.coverage && !cognitive.coverage.complete ? [`Cognitive assessment incomplete: ${cognitive.coverage.failedStages.join(", ")}.`] : [])
   ]);
 
   return {
-    version: "assurance-summary-1.0.0",
+    version: "assurance-summary-1.1.0",
     assessmentMode: mode,
     decision: recommendation,
     dimensions,
+    caseProfile: caseProfileView(assessmentIntake, solutionProfile),
+    documentationAlignment: documentationReadiness,
     transitionBoundary,
     evidenceInterpretation: [
       { evidenceClass: "DECLARED", title: "Declared", description: "A dossier assertion that still requires corroboration where the control demands it." },
@@ -237,9 +231,8 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
       requirements: humanDecisions
     },
     narrativeItems,
-    evidenceDigest: evidenceDigest(evidence, mode),
-    evidenceTotal: evidence.length,
+    auditReference: { evidenceCount: evidence.length, canonicalJsonPath: "$.evidence", evidenceIncludedInExecutiveExports: false },
     limitations,
-    knowledgeNotice: knowledge.source === "LOCAL_BOOTSTRAP" ? "PILOT KNOWLEDGE — NOT AN APPROVED PRODUCTION NORMATIVE MAPPING" : null
+    knowledgeNotice: knowledge.releaseStatus !== "APPROVED" ? `${knowledge.releaseStatus ?? "UNSPECIFIED"} KNOWLEDGE — NOT AN APPROVED PRODUCTION NORMATIVE MAPPING` : null
   };
 }

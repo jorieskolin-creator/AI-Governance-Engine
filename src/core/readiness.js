@@ -2,12 +2,16 @@ import { STATE_WEIGHT } from "../contracts.js";
 
 const severityRank = { INFO: 0, LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
 
-export function calculateReadiness(controlAssessments, antiPatternAssessments, gates) {
+export function calculateReadiness(controlAssessments, antiPatternAssessments, gates, evidence = [], documentationReadiness = null) {
   const applicable = controlAssessments.filter((item) => item.state !== "NOT_APPLICABLE");
   const evidenced = applicable.filter((item) => item.state !== "UNKNOWN");
   const coverage = Math.round((evidenced.length / Math.max(1, applicable.length)) * 100);
+  const indicatorControls = new Set(evidence.filter((item) => !item.stale).flatMap((item) => item.controlIds ?? []));
+  const verifiedControls = new Set(evidence.filter((item) => !item.stale && item.metadata?.lockedFindingId).flatMap((item) => item.controlIds ?? []));
+  const indicatorCoverage = Math.round((applicable.filter((item) => indicatorControls.has(item.controlId)).length / Math.max(1, applicable.length)) * 100);
+  const verifiedEvidenceCoverage = Math.round((applicable.filter((item) => verifiedControls.has(item.controlId)).length / Math.max(1, applicable.length)) * 100);
   const assurance = Math.round((applicable.reduce((sum, item) => sum + (STATE_WEIGHT[item.state] ?? 0), 0) / Math.max(1, applicable.length)) * 100);
-  const activeRisks = antiPatternAssessments.filter((item) => item.state === "CONFIRMED_PRESENT" || item.state === "PARTIALLY_PRESENT");
+  const activeRisks = antiPatternAssessments.filter((item) => ["CONFIRMED_PRESENT", "DECLARED_RISK", "DETECTED_CANDIDATE", "VERIFICATION_REQUIRED", "PARTIALLY_PRESENT"].includes(item.state));
   const gaps = applicable.map((item) => item.gap).filter(Boolean);
   const maxSeverity = Math.max(0, ...activeRisks.map((item) => severityRank[item.severity]), ...gaps.map((item) => severityRank[item.severity]));
   const residualRisk = ["LOW", "LOW", "MEDIUM", "HIGH", "CRITICAL"][maxSeverity];
@@ -23,11 +27,14 @@ export function calculateReadiness(controlAssessments, antiPatternAssessments, g
   return {
     outcome,
     dimensions: {
+      indicatorCoverage,
+      verifiedEvidenceCoverage,
       evidenceCoverage: coverage,
       controlAssurance: assurance,
+      documentationAlignment: documentationReadiness?.status ?? "UNKNOWN",
       residualRisk,
       gateStatus,
-      explanation: "Coverage and assurance are diagnostic measures only. Gate status and unresolved risk determine progression; scores cannot override a blocker."
+      explanation: "Indicator, accepted-evidence, verified-evidence and assurance measures are diagnostic only. Documentation alignment, gate status and unresolved risk determine progression; scores cannot override a blocker."
     }
   };
 }
@@ -51,4 +58,3 @@ export function humanDecisionRequirements(gates, applicability, dossier) {
   }
   return [...map.values()].map((item) => ({ ...item, reasons: [...new Set(item.reasons)] }));
 }
-

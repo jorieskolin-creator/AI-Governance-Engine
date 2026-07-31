@@ -6,11 +6,13 @@ import { ANTIPATTERNS } from "./antipatterns.js";
 import { TACTICS } from "./playbook.js";
 
 const DOCUMENT_TYPES = new Set(["normativeSources", "requirements", "controls", "antipatterns", "tactics"]);
+const RELEASE_STATUSES = new Set(["APPROVED", "CALIBRATION_TEST_ONLY", "PILOT", "DRAFT", "UNSPECIFIED"]);
 
 function localSnapshot() {
   const snapshot = {
     version: KNOWLEDGE_VERSION,
     source: "LOCAL_BOOTSTRAP",
+    releaseStatus: "CALIBRATION_TEST_ONLY",
     manifestUrl: null,
     normativeSources: [...NORMATIVE_SOURCES],
     requirements: [...REQUIREMENTS],
@@ -45,6 +47,7 @@ function validateManifest(manifest) {
   if (!Array.isArray(manifest.documents) || manifest.documents.length === 0) {
     throw new Error("Knowledge manifest has no documents");
   }
+  if (manifest.releaseStatus !== undefined && !RELEASE_STATUSES.has(manifest.releaseStatus)) throw new Error("Unsupported knowledge release status");
   for (const item of manifest.documents) {
     if (!DOCUMENT_TYPES.has(item.type) || typeof item.url !== "string" || !/^[a-f0-9]{64}$/.test(item.sha256 ?? "")) {
       throw new Error(`Invalid knowledge manifest entry: ${item?.id ?? "unknown"}`);
@@ -82,6 +85,7 @@ export async function loadKnowledgeSnapshot(options = {}) {
   return {
     version: manifest.version,
     source: "VERCEL_BLOB",
+    releaseStatus: manifest.releaseStatus ?? "UNSPECIFIED",
     manifestUrl,
     manifestHash: sha256(manifestBytes),
     ...loaded
@@ -89,11 +93,17 @@ export async function loadKnowledgeSnapshot(options = {}) {
 }
 
 export function knowledgeManifestView(snapshot) {
+  let manifestUrl = snapshot.manifestUrl;
+  if (manifestUrl) {
+    try { const parsed = new URL(manifestUrl); parsed.search = ""; parsed.hash = ""; manifestUrl = parsed.toString(); }
+    catch { manifestUrl = null; }
+  }
   return {
     version: snapshot.version,
     source: snapshot.source,
+    releaseStatus: snapshot.releaseStatus ?? "UNSPECIFIED",
     manifestHash: snapshot.manifestHash,
-    manifestUrl: snapshot.manifestUrl,
+    manifestUrl,
     counts: {
       normativeSources: snapshot.normativeSources.length,
       requirements: snapshot.requirements.length,
@@ -103,4 +113,3 @@ export function knowledgeManifestView(snapshot) {
     }
   };
 }
-

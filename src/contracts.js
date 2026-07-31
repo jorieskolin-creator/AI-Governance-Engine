@@ -30,6 +30,9 @@ export const ASSURANCE_STATES = Object.freeze([
 
 export const ANTIPATTERN_STATES = Object.freeze([
   "UNKNOWN",
+  "DECLARED_RISK",
+  "DETECTED_CANDIDATE",
+  "VERIFICATION_REQUIRED",
   "CONFIRMED_PRESENT",
   "PARTIALLY_PRESENT",
   "TESTED_ABSENT"
@@ -97,7 +100,7 @@ function enumValue(value, allowed, field) {
 }
 
 function booleanValue(value, field) {
-  invariant(typeof value === "boolean", `${field} must be boolean`);
+  invariant(value === null || typeof value === "boolean", `${field} must be boolean or null when unknown`);
   return value;
 }
 
@@ -114,22 +117,24 @@ function optionalStringArray(value, field) {
 export function validateDossier(input) {
   invariant(input && typeof input === "object", "dossier is required");
   for (const field of ["name", "intendedPurpose", "expectedValue", "accountableOwner"]) {
-    invariant(typeof input[field] === "string" && input[field].trim(), `dossier.${field} is required`);
+    invariant(input[field] === undefined || typeof input[field] === "string", `dossier.${field} must be a string`);
   }
-  enumValue(input.currentStage, LIFECYCLE_STAGES, "dossier.currentStage");
-  enumValue(input.targetStage, LIFECYCLE_STAGES, "dossier.targetStage");
-  invariant(LIFECYCLE_STAGES.indexOf(input.targetStage) >= LIFECYCLE_STAGES.indexOf(input.currentStage), "targetStage cannot precede currentStage");
-  invariant(Array.isArray(input.jurisdictions) && input.jurisdictions.length, "dossier.jurisdictions is required");
-  invariant(Array.isArray(input.roles) && input.roles.length, "dossier.roles is required");
-  invariant(Array.isArray(input.users) && input.users.length, "dossier.users is required");
+  const currentStage = input.currentStage ?? "QUALIFICATION_AND_REGISTRATION";
+  const targetStage = input.targetStage ?? "DESIGN_AND_DEVELOPMENT";
+  enumValue(currentStage, LIFECYCLE_STAGES, "dossier.currentStage");
+  enumValue(targetStage, LIFECYCLE_STAGES, "dossier.targetStage");
+  invariant(LIFECYCLE_STAGES.indexOf(targetStage) >= LIFECYCLE_STAGES.indexOf(currentStage), "targetStage cannot precede currentStage");
+  invariant(input.jurisdictions === undefined || Array.isArray(input.jurisdictions), "dossier.jurisdictions must be an array");
+  invariant(input.roles === undefined || Array.isArray(input.roles), "dossier.roles must be an array");
+  invariant(input.users === undefined || Array.isArray(input.users), "dossier.users must be an array");
   for (const [group, fields] of Object.entries({
     data: ["personalData", "specialCategoryData", "productionData"],
     exposure: ["externalUsers", "productionAccess", "consequentialDecisions"],
     agent: ["usesAgents", "canTakeActions", "irreversibleActions", "humanOverride"],
     classification: ["prohibitedPractice", "highRiskCandidate"]
   })) {
-    invariant(input[group] && typeof input[group] === "object", `dossier.${group} is required`);
-    for (const field of fields) booleanValue(input[group][field], `dossier.${group}.${field}`);
+    invariant(input[group] === undefined || (input[group] && typeof input[group] === "object"), `dossier.${group} must be an object`);
+    for (const field of fields) booleanValue(input[group]?.[field] ?? null, `dossier.${group}.${field}`);
   }
   const rawBoundary = input.operatingBoundary ?? {};
   invariant(rawBoundary && typeof rawBoundary === "object", "dossier.operatingBoundary must be an object");
@@ -140,6 +145,19 @@ export function validateDossier(input) {
 
   return {
     ...structuredClone(input),
+    name: optionalString(input.name, "dossier.name"),
+    intendedPurpose: optionalString(input.intendedPurpose, "dossier.intendedPurpose"),
+    expectedValue: optionalString(input.expectedValue, "dossier.expectedValue"),
+    accountableOwner: optionalString(input.accountableOwner, "dossier.accountableOwner"),
+    currentStage,
+    targetStage,
+    jurisdictions: optionalStringArray(input.jurisdictions, "dossier.jurisdictions"),
+    roles: optionalStringArray(input.roles, "dossier.roles"),
+    users: optionalStringArray(input.users, "dossier.users"),
+    data: Object.fromEntries(["personalData", "specialCategoryData", "productionData"].map((field) => [field, input.data?.[field] ?? null])),
+    exposure: Object.fromEntries(["externalUsers", "productionAccess", "consequentialDecisions"].map((field) => [field, input.exposure?.[field] ?? null])),
+    agent: Object.fromEntries(["usesAgents", "canTakeActions", "irreversibleActions", "humanOverride"].map((field) => [field, input.agent?.[field] ?? null])),
+    classification: Object.fromEntries(["prohibitedPractice", "highRiskCandidate"].map((field) => [field, input.classification?.[field] ?? null])),
     operatingBoundary: {
       allowedUses: optionalStringArray(rawBoundary.allowedUses, "dossier.operatingBoundary.allowedUses"),
       excludedUses: optionalStringArray(rawBoundary.excludedUses, "dossier.operatingBoundary.excludedUses"),
@@ -177,6 +195,18 @@ export function inferEvidenceKind(path) {
   if (/\.env|\.ya?ml$|\.json$|\.toml$|\.ini$|docker|terraform|\.tf$/.test(lower)) return "CONFIGURATION";
   if (/\.(js|mjs|cjs|ts|tsx|jsx|py|java|go|rs|rb|php|cs|sql)$/.test(lower)) return "CODE";
   return "DOCUMENT";
+}
+
+export function classifyArtifact(path, metadata = {}) {
+  if (metadata.artifactClass) return metadata.artifactClass;
+  const lower = normalizePath(path).toLowerCase();
+  if (/(^|\/)(?:node_modules|vendor|third_party|dist|build|coverage|generated|outputs?|out|\.next|target)(\/|$)/.test(lower) || /(?:package-lock|pnpm-lock|yarn\.lock)$/.test(lower)) return "DEPENDENCY_OR_GENERATED";
+  if (/(^|\/)(?:fixtures?|mocks?|examples?|samples?)(\/|$)/.test(lower)) return "FIXTURE_OR_EXAMPLE";
+  if (/(^|\/)(?:test|tests|spec|specs|__tests__)(\/|$)/.test(lower) || /(^|\/)(?:test|spec)[._-][^/]+$/.test(lower) || /(?:^|[._-])(?:test|spec)\.[^.]+$/.test(lower)) return "TEST";
+  if (/\.(?:md|txt|html?|pdf|docx?|xlsx?|csv)$/.test(lower)) return "DOCUMENTATION";
+  if (/\.(?:json|ya?ml|toml|ini|tf)$/.test(lower) || /dockerfile|\.env/.test(lower)) return "CONFIGURATION";
+  if (/\.(?:js|mjs|cjs|ts|tsx|jsx|py|java|go|rs|rb|php|cs|sql)$/.test(lower)) return "PRODUCTION_CODE";
+  return "OTHER";
 }
 
 export function normalizePath(path) {

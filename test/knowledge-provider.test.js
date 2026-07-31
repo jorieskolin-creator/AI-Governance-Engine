@@ -27,11 +27,13 @@ test("complete hash-pinned Vercel snapshot is accepted", async (t) => {
   const manifest = {
     schemaVersion: "1.0.0",
     version: "approved-2026-08",
+    releaseStatus: "CALIBRATION_TEST_ONLY",
     documents: types.map((type) => ({ id: type, type, url: `https://blob.example/${type}.json`, sha256: sha256(documents[`https://blob.example/${type}.json`]) }))
   };
   globalThis.fetch = async (url) => new Response(url.endsWith("manifest.json") ? JSON.stringify(manifest) : documents[url], { status: 200 });
   const snapshot = await loadKnowledgeSnapshot({ production: true, manifestUrl: "https://blob.example/manifest.json" });
   assert.equal(snapshot.source, "VERCEL_BLOB");
   assert.equal(snapshot.version, "approved-2026-08");
+  assert.equal(snapshot.releaseStatus, "CALIBRATION_TEST_ONLY");
   for (const type of types) assert.equal(snapshot[type].length, 1);
 });

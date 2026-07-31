@@ -195,7 +195,7 @@ function localScannerArtifacts(run, now) {
   const secretTypes = new Set(["PRIVATE_KEY", "CREDENTIAL", "AWS_ACCESS_KEY", "ASSIGNED_SECRET"]);
   const findings = run.dlpFindings.filter((item) => secretTypes.has(item.type));
   return {
-    registryFindings: findings.map((item) => ({ code: "SECRET_MATERIAL", severity: "CRITICAL", evidenceId: stableId("evd", { dlp: item.id }), message: "Potential secret detected and redacted during preflight" })),
+    registryFindings: findings.map((item) => ({ code: "SECRET_CANDIDATE", severity: "CRITICAL", evidenceId: stableId("evd", { dlp: item.id }), message: "Potential secret candidate detected and redacted during preflight" })),
     evidence: findings.map((item) => ({
       id: stableId("evd", { dlp: item.id }), sourceId: item.sourceUnitId, path: "preflight-redaction", kind: "SCAN_RESULT", sha256: sha256(item),
       excerpt: "Potential secret material detected; value redacted.", signal: "hardcoded-secret", domainIds: ["D"], controlIds: ["CTRL-D-01"], antiPatternIds: ["AP-D-01"],
@@ -425,7 +425,7 @@ export async function executeCognitiveRun(run, options = {}) {
   const lockedEvidence = [...evidenceFromLockedFindings(lockedFindings, sourceUnits, now), ...scanner.evidence];
   const provisional = await assessVerifiedSolution({
     runId: run.id, dossier: run.dossier, registeredSources: run.registeredSources,
-    registryFindings: scanner.registryFindings, solutionModel, lockedEvidence,
+    registryFindings: scanner.registryFindings, solutionModel, solutionProfile: run.solutionProfile, lockedEvidence,
     cognitiveCoverage: { required: true, complete: true, failedStages: [] },
     cognitive: { solutionModel, claims, verificationRecords, lockedFindings }
   }, { knowledge });
@@ -476,7 +476,7 @@ export async function executeCognitiveRun(run, options = {}) {
   };
   const result = await assessVerifiedSolution({
     runId: run.id, dossier: run.dossier, registeredSources: run.registeredSources,
-    registryFindings: scanner.registryFindings, solutionModel, lockedEvidence,
+    registryFindings: scanner.registryFindings, solutionModel, solutionProfile: run.solutionProfile, lockedEvidence,
     cognitiveCoverage, cognitive
   }, { knowledge });
   run.result = result;

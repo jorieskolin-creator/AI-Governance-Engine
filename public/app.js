@@ -7,11 +7,13 @@ const STAGES = [
 let lastPackage = null;
 let sampleSources = [];
 let summaryEnabled = true;
+let preparedSources = null;
 
 const $ = (id) => document.getElementById(id);
 const label = (value) => String(value ?? "").replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
 const commaList = (value) => value.split(",").map((entry) => entry.trim()).filter(Boolean);
 const lineList = (value) => value.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
+const triState = (id) => $(id).value === "UNKNOWN" ? null : $(id).value === "YES";
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -31,22 +33,29 @@ function stageOptions() {
   }
   $("current-stage").value = "DESIGN_AND_DEVELOPMENT";
   $("target-stage").value = "VERIFICATION_AND_VALIDATION";
+  for (const select of document.querySelectorAll("select.tri-state")) {
+    for (const [value, text] of [["UNKNOWN", "Unknown"], ["NO", "No"], ["YES", "Yes"]]) {
+      const option = el("option", "", text); option.value = value; select.append(option);
+    }
+    select.value = "UNKNOWN";
+  }
 }
 
 function fillDossier(dossier) {
   const boundary = dossier.operatingBoundary ?? {};
-  $("name").value = dossier.name; $("owner").value = dossier.accountableOwner;
-  $("purpose").value = dossier.intendedPurpose; $("value").value = dossier.expectedValue;
-  $("current-stage").value = dossier.currentStage; $("target-stage").value = dossier.targetStage;
-  $("jurisdictions").value = dossier.jurisdictions.join(", "); $("roles").value = dossier.roles.join(", "); $("users").value = dossier.users.join(", ");
+  $("name").value = dossier.name ?? ""; $("owner").value = dossier.accountableOwner ?? "";
+  $("purpose").value = dossier.intendedPurpose ?? ""; $("value").value = dossier.expectedValue ?? "";
+  $("current-stage").value = dossier.currentStage ?? "QUALIFICATION_AND_REGISTRATION"; $("target-stage").value = dossier.targetStage ?? "DESIGN_AND_DEVELOPMENT";
+  $("jurisdictions").value = (dossier.jurisdictions ?? []).join(", "); $("roles").value = (dossier.roles ?? []).join(", "); $("users").value = (dossier.users ?? []).join(", ");
   $("allowed-uses").value = (boundary.allowedUses ?? []).join("\n"); $("excluded-uses").value = (boundary.excludedUses ?? []).join("\n");
   $("boundary-environment").value = boundary.environment ?? "UNKNOWN"; $("boundary-users").value = boundary.userScope ?? ""; $("boundary-data").value = boundary.dataScope ?? "";
   $("boundary-integrations").value = boundary.integrationScope ?? ""; $("boundary-permissions").value = boundary.permissionScope ?? ""; $("boundary-autonomy").value = boundary.autonomyScope ?? "";
   $("boundary-monitoring").value = boundary.monitoringOwner ?? ""; $("boundary-expiry").value = boundary.expiresAt?.slice(0, 10) ?? "";
-  $("personal-data").checked = dossier.data.personalData; $("special-data").checked = dossier.data.specialCategoryData; $("production-data").checked = dossier.data.productionData;
-  $("external-users").checked = dossier.exposure.externalUsers; $("production-access").checked = dossier.exposure.productionAccess; $("consequential").checked = dossier.exposure.consequentialDecisions;
-  $("uses-agents").checked = dossier.agent.usesAgents; $("takes-actions").checked = dossier.agent.canTakeActions; $("irreversible").checked = dossier.agent.irreversibleActions; $("human-override").checked = dossier.agent.humanOverride;
-  $("prohibited").checked = dossier.classification.prohibitedPractice; $("high-risk").checked = dossier.classification.highRiskCandidate;
+  const setTri = (id, value) => { $(id).value = value === null || value === undefined ? "UNKNOWN" : value ? "YES" : "NO"; };
+  setTri("personal-data", dossier.data?.personalData); setTri("special-data", dossier.data?.specialCategoryData); setTri("production-data", dossier.data?.productionData);
+  setTri("external-users", dossier.exposure?.externalUsers); setTri("production-access", dossier.exposure?.productionAccess); setTri("consequential", dossier.exposure?.consequentialDecisions);
+  setTri("uses-agents", dossier.agent?.usesAgents); setTri("takes-actions", dossier.agent?.canTakeActions); setTri("irreversible", dossier.agent?.irreversibleActions); setTri("human-override", dossier.agent?.humanOverride);
+  setTri("prohibited", dossier.classification?.prohibitedPractice); setTri("high-risk", dossier.classification?.highRiskCandidate);
 }
 
 function dossierFromForm() {
@@ -54,10 +63,10 @@ function dossierFromForm() {
     name: $("name").value, intendedPurpose: $("purpose").value, expectedValue: $("value").value,
     currentStage: $("current-stage").value, targetStage: $("target-stage").value,
     jurisdictions: commaList($("jurisdictions").value), roles: commaList($("roles").value), users: commaList($("users").value), accountableOwner: $("owner").value,
-    data: { personalData: $("personal-data").checked, specialCategoryData: $("special-data").checked, productionData: $("production-data").checked },
-    exposure: { externalUsers: $("external-users").checked, productionAccess: $("production-access").checked, consequentialDecisions: $("consequential").checked },
-    agent: { usesAgents: $("uses-agents").checked, canTakeActions: $("takes-actions").checked, irreversibleActions: $("irreversible").checked, humanOverride: $("human-override").checked },
-    classification: { prohibitedPractice: $("prohibited").checked, highRiskCandidate: $("high-risk").checked },
+    data: { personalData: triState("personal-data"), specialCategoryData: triState("special-data"), productionData: triState("production-data") },
+    exposure: { externalUsers: triState("external-users"), productionAccess: triState("production-access"), consequentialDecisions: triState("consequential") },
+    agent: { usesAgents: triState("uses-agents"), canTakeActions: triState("takes-actions"), irreversibleActions: triState("irreversible"), humanOverride: triState("human-override") },
+    classification: { prohibitedPractice: triState("prohibited"), highRiskCandidate: triState("high-risk") },
     operatingBoundary: {
       allowedUses: lineList($("allowed-uses").value), excludedUses: lineList($("excluded-uses").value), environment: $("boundary-environment").value,
       userScope: $("boundary-users").value, dataScope: $("boundary-data").value, integrationScope: $("boundary-integrations").value,
@@ -67,11 +76,71 @@ function dossierFromForm() {
   };
 }
 
+const mimeByExtension = {
+  pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  csv: "text/csv", html: "text/html", htm: "text/html", md: "text/markdown", txt: "text/plain", json: "application/json", yaml: "text/plain", yml: "text/plain", toml: "text/plain", ini: "text/plain",
+  js: "application/javascript", mjs: "application/javascript", cjs: "application/javascript", ts: "text/typescript", tsx: "text/typescript", jsx: "application/javascript", css: "text/css", py: "text/plain", java: "text/plain", go: "text/plain", rs: "text/plain", rb: "text/plain", php: "text/plain", cs: "text/plain", sql: "text/plain", tf: "text/plain",
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp"
+};
+const binaryMime = new Set(["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "image/png", "image/jpeg", "image/webp"]);
+
+function bytesToBase64(buffer) {
+  const bytes = new Uint8Array(buffer); let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary);
+}
+
+async function browserFileSource(file) {
+  if (file.size > 15 * 1024 * 1024) throw new Error(`${file.name} exceeds the 15 MB source limit.`);
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  const mimeType = mimeByExtension[extension] || file.type;
+  if (!mimeType) throw new Error(`${file.name} has an unsupported file type.`);
+  const encoding = binaryMime.has(mimeType) ? "base64" : "utf8";
+  const content = encoding === "base64" ? bytesToBase64(await file.arrayBuffer()) : await file.text();
+  return { path: file.webkitRelativePath || file.name, mimeType, encoding, content };
+}
+
 async function selectedSources() {
-  const files = [...$("source-files").files];
+  const files = [...$("source-folder").files, ...$("source-files").files];
   if (!files.length) return sampleSources;
-  const accepted = files.filter((file) => file.size <= 2 * 1024 * 1024 && /\.(?:js|mjs|cjs|ts|tsx|jsx|py|java|go|rs|rb|php|cs|json|ya?ml|toml|ini|tf|sql|md|txt|html|css)$/i.test(file.name));
-  return Promise.all(accepted.map(async (file) => ({ path: file.webkitRelativePath || file.name, content: await file.text() })));
+  if (preparedSources) return preparedSources;
+  preparedSources = await Promise.all(files.map(browserFileSource));
+  return preparedSources;
+}
+
+function renderDiscovery(profile, dlpFindings = []) {
+  const root = $("discovery-results"); root.replaceChildren();
+  const heading = el("div", "discovery-heading");
+  heading.append(el("strong", "", "Detected Assessment Intake draft"), el("span", "", `${profile.sourceCount} parsed source(s) · ${dlpFindings.length} local screening indicator(s)`));
+  root.append(heading);
+  const fields = ["name", "accountableOwner", "intendedPurpose", "expectedValue", "jurisdictions", "roles", "users"];
+  const grid = el("div", "discovery-grid");
+  for (const field of fields) {
+    const fact = profile.fields[field]; const card = el("article", "discovery-fact");
+    card.append(el("span", "", label(field)), el("strong", "", fact?.value === null ? "Unknown" : Array.isArray(fact?.value) ? fact.value.join(", ") || "Unknown" : String(fact?.value ?? "Unknown")));
+    card.append(badge(fact?.status ?? "UNKNOWN"), el("small", "", fact?.sourceUnitIds?.length ? `${fact.sourceUnitIds.length} cited source unit(s)` : "No documentary source located"));
+    grid.append(card);
+  }
+  root.append(grid); root.classList.remove("hidden");
+}
+
+async function discoverCaseInformation() {
+  $("error").classList.add("hidden"); $("discover-button").disabled = true; $("discovery-status").textContent = "Parsing sources locally on the Engine and building cited facts…";
+  try {
+    const sources = await selectedSources();
+    if (!sources.length) throw new Error("Select a folder or one or more supported files first.");
+    if (!sources.some((item) => item.mimeType)) {
+      const sample = await fetch("/api/sample").then((response) => response.json());
+      fillDossier(sample.dossier); $("discovery-status").textContent = "Controlled sample dossier loaded for deterministic calibration."; return;
+    }
+    const response = await fetch("/api/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sources }) });
+    const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Source discovery failed");
+    fillDossier(body.solutionProfile.suggestedDossier); renderDiscovery(body.solutionProfile, body.dlpFindings);
+    $("discovery-status").textContent = "Draft ready. Confirm or correct each field before assessment; corrections remain user declarations.";
+    $("assessment-input").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    $("discovery-status").textContent = "Discovery could not be completed."; $("error").textContent = error.message; $("error").classList.remove("hidden");
+  } finally { $("discover-button").disabled = false; }
 }
 
 function renderRecommendation(pkg) {
@@ -81,7 +150,7 @@ function renderRecommendation(pkg) {
 }
 
 function renderMetrics(pkg) {
-  const values = [["Evidence coverage", `${pkg.dimensions.evidenceCoverage}%`], ["Control assurance", `${pkg.dimensions.controlAssurance}%`], ["Residual risk", pkg.dimensions.residualRisk], ["Gate status", pkg.dimensions.gateStatus]];
+  const values = [["Indicator coverage", `${pkg.dimensions.indicatorCoverage ?? pkg.dimensions.evidenceCoverage}%`], ["Control assurance", `${pkg.dimensions.controlAssurance}%`], ["Residual risk", pkg.dimensions.residualRisk], ["Gate status", pkg.dimensions.gateStatus]];
   $("metric-grid").replaceChildren(...values.map(([name, value]) => { const card = el("div", "metric"); card.append(el("span", "", name), el("strong", "", label(value))); return card; }));
 }
 
@@ -170,7 +239,10 @@ function renderPackage(pkg) {
 
 async function loadSample() {
   const response = await fetch("/api/sample"); const sample = await response.json();
-  fillDossier(sample.dossier); sampleSources = sample.sources; $("file-summary").textContent = `${sample.sources.length} controlled sample evidence files loaded`;
+  fillDossier(sample.dossier); sampleSources = sample.sources; preparedSources = null;
+  $("folder-summary").textContent = `${sample.sources.length} controlled sample evidence files loaded`;
+  $("file-summary").textContent = "No individual files selected";
+  $("discovery-status").textContent = "Controlled sample and its dossier are ready for deterministic calibration.";
 }
 
 async function runAssessment(event) {
@@ -192,16 +264,25 @@ function download(content, type, suffix) {
 
 function downloadPackage() { download(JSON.stringify(lastPackage, null, 2), "application/json", "readiness.json"); }
 function downloadHtml() { download(standaloneReportHtml(lastPackage), "text/html;charset=utf-8", "assurance-summary.html"); }
+function printReport() {
+  if (!lastPackage) return;
+  const previousTitle = document.title;
+  const name = lastPackage.assessmentIntake?.identity?.name ?? lastPackage.solution?.name ?? "AI solution";
+  document.title = `${name} — Assurance Summary`;
+  window.addEventListener("afterprint", () => { document.title = previousTitle; }, { once: true });
+  window.print();
+}
 
 stageOptions();
 Promise.all([
   fetch("/api/knowledge").then((response) => response.json()),
   fetch("/api/config").then((response) => response.json()).catch(() => ({ assuranceSummaryEnabled: true }))
 ]).then(([kb, config]) => {
-  $("knowledge-status").textContent = `${kb.source} · ${kb.version}`;
+  $("knowledge-status").textContent = `${kb.releaseStatus ?? "UNSPECIFIED"} · ${kb.source} · ${kb.version}`;
   summaryEnabled = config.assuranceSummaryEnabled !== false;
 }).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; });
-$("sample-button").addEventListener("click", loadSample); $("dossier-form").addEventListener("submit", runAssessment);
+$("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("dossier-form").addEventListener("submit", runAssessment);
 $("summary-tab").addEventListener("click", () => selectView("summary")); $("workspace-tab").addEventListener("click", () => selectView("workspace"));
-$("print-button").addEventListener("click", () => window.print()); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);
-$("source-files").addEventListener("change", () => { sampleSources = []; $("file-summary").textContent = `${$("source-files").files.length} file(s) selected`; });
+$("print-button").addEventListener("click", printReport); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);
+$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; });
+$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; });

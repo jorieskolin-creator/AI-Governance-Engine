@@ -1,0 +1,305 @@
+import { LIFECYCLE_STAGES } from "../contracts.js";
+import { sha256, stableId } from "./hash.js";
+
+export const SOLUTION_FACT_CLASSES = Object.freeze(["OBSERVED", "INFERRED", "USER_DECLARED"]);
+export const SOLUTION_FACT_STATUSES = Object.freeze(["CANDIDATE", "CONFIRMED", "CONFLICTING", "UNKNOWN"]);
+export const SUPPORT_STRENGTHS = Object.freeze(["EXPLICIT", "DERIVED", "WEAK"]);
+
+const criticalFields = new Set(["name", "intendedPurpose", "accountableOwner", "jurisdictions", "currentStage"]);
+const deployRequiredFields = Object.freeze([
+  "name", "accountableOwner", "intendedPurpose", "expectedValue", "currentStage", "targetStage", "jurisdictions", "roles", "users",
+  "operatingBoundary.allowedUses", "operatingBoundary.excludedUses", "operatingBoundary.environment", "operatingBoundary.userScope",
+  "operatingBoundary.dataScope", "operatingBoundary.integrationScope", "operatingBoundary.permissionScope", "operatingBoundary.autonomyScope",
+  "operatingBoundary.monitoringOwner", "data.personalData", "data.specialCategoryData", "data.productionData", "exposure.externalUsers",
+  "exposure.productionAccess", "exposure.consequentialDecisions", "agent.usesAgents", "agent.canTakeActions", "agent.irreversibleActions",
+  "agent.humanOverride", "classification.prohibitedPractice", "classification.highRiskCandidate"
+]);
+
+const normalize = (value) => String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+const unique = (values) => [...new Set(values.filter((item) => item !== undefined && item !== null && item !== ""))];
+
+function artifactClass(path, metadata = {}) {
+  if (metadata.artifactClass) return metadata.artifactClass;
+  const value = path.toLowerCase().replaceAll("\\", "/");
+  if (/(^|\/)(?:node_modules|vendor|third_party|dist|build|coverage|generated|outputs?|out|\.next|target)(\/|$)/.test(value) || /(?:package-lock|pnpm-lock|yarn\.lock)$/.test(value)) return "DEPENDENCY_OR_GENERATED";
+  if (/(^|\/)(?:fixtures?|mocks?|examples?|samples?)(\/|$)/.test(value)) return "FIXTURE_OR_EXAMPLE";
+  if (/(^|\/)(?:test|tests|spec|specs|__tests__)(\/|$)/.test(value) || /(^|\/)(?:test|spec)[._-][^/]+$/.test(value) || /(?:^|[._-])(?:test|spec)\.[^.]+$/.test(value)) return "TEST";
+  if (/\.(?:md|txt|html?|pdf|docx?|xlsx?|csv)$/.test(value)) return "DOCUMENTATION";
+  if (/\.(?:json|ya?ml|toml|ini|tf)$/.test(value) || /dockerfile|\.env/.test(value)) return "CONFIGURATION";
+  if (/\.(?:js|mjs|cjs|ts|tsx|jsx|py|java|go|rs|rb|php|cs|sql)$/.test(value)) return "PRODUCTION_CODE";
+  return "OTHER";
+}
+
+function fact(field, value, options = {}) {
+  const empty = value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
+  const item = {
+    id: stableId("solution-fact", { field, value, sourceUnitIds: options.sourceUnitIds ?? [] }),
+    field,
+    value: empty ? null : value,
+    factClass: options.factClass ?? (empty ? "INFERRED" : "USER_DECLARED"),
+    status: options.status ?? (empty ? "UNKNOWN" : "CANDIDATE"),
+    supportStrength: options.supportStrength ?? (empty ? "WEAK" : "DERIVED"),
+    sourceUnitIds: unique(options.sourceUnitIds ?? []),
+    limitations: unique(options.limitations ?? []),
+    confirmedBy: options.confirmedBy ?? null,
+    confirmedAt: options.confirmedAt ?? null
+  };
+  return { ...item, hash: sha256(item) };
+}
+
+function sourceText(sources) {
+  return sources.map((source) => ({
+    id: source.id ?? source.sourceUnitId ?? stableId("source-unit", { path: source.path, content: source.content }),
+    path: source.path,
+    artifactClass: source.artifactClass ?? artifactClass(source.path, source.metadata),
+    content: String(source.content ?? "")
+  }));
+}
+
+function explicitMatches(sources, value, field) {
+  const needle = normalize(Array.isArray(value) ? value.join(" ") : value);
+  const eligibleClasses = field === "name" ? ["DOCUMENTATION", "CONFIGURATION"] : ["DOCUMENTATION"];
+  const eligible = sources.filter((source) => eligibleClasses.includes(source.artifactClass));
+  if (!needle) return [];
+  if (["true", "false"].includes(needle)) {
+    const fieldLabel = field.split(".").at(-1).replace(/([a-z])([A-Z])/g, "$1 $2");
+    const expected = needle === "true" ? "(?:yes|true)" : "(?:no|false)";
+    const pattern = new RegExp(`${fieldLabel}\\s*[:=\\-]\\s*${expected}\\b`, "i");
+    return eligible.filter((source) => pattern.test(source.content)).map((source) => source.id);
+  }
+  return eligible.filter((source) => normalize(source.content).includes(needle)).map((source) => source.id);
+}
+
+function labelledValue(sources, labels) {
+  const pattern = new RegExp(`(?:${labels.join("|")})\\s*[:=\\-]\\s*([^\\n\\r|]{2,180})`, "i");
+  for (const source of sources.filter((item) => item.artifactClass === "DOCUMENTATION")) {
+    const match = source.content.match(pattern);
+    if (match?.[1]?.trim()) return { value: match[1].trim(), sourceUnitIds: [source.id] };
+  }
+  return null;
+}
+
+function detectedName(sources) {
+  for (const source of sources) {
+    if (/package\.json$/i.test(source.path)) {
+      try {
+        const parsed = JSON.parse(source.content);
+        if (typeof parsed.name === "string" && parsed.name.trim()) return { value: parsed.name.trim(), sourceUnitIds: [source.id], strength: "EXPLICIT" };
+      } catch { /* malformed configuration remains ordinary source evidence */ }
+    }
+  }
+  for (const source of sources.filter((item) => /readme|overview|product/i.test(item.path))) {
+    const heading = source.content.match(/^\s*#\s+(.{2,140})$/m);
+    if (heading) return { value: heading[1].trim(), sourceUnitIds: [source.id], strength: "EXPLICIT" };
+  }
+  return labelledValue(sources, ["solution name", "system name", "product name"]);
+}
+
+function detectedList(sources, values) {
+  const found = [];
+  const ids = [];
+  for (const [canonical, pattern] of values) {
+    for (const source of sources) if (pattern.test(source.content)) { found.push(canonical); ids.push(source.id); break; }
+  }
+  return { value: unique(found), sourceUnitIds: unique(ids) };
+}
+
+function provisionalDossier(detected) {
+  return {
+    name: detected.name?.value ?? "",
+    intendedPurpose: detected.intendedPurpose?.value ?? "",
+    expectedValue: detected.expectedValue?.value ?? "",
+    currentStage: "QUALIFICATION_AND_REGISTRATION",
+    targetStage: "DESIGN_AND_DEVELOPMENT",
+    jurisdictions: detected.jurisdictions?.value ?? [],
+    roles: detected.roles?.value ?? [],
+    users: detected.users?.value ?? [],
+    accountableOwner: detected.accountableOwner?.value ?? "",
+    data: { personalData: null, specialCategoryData: null, productionData: null },
+    exposure: { externalUsers: null, productionAccess: null, consequentialDecisions: null },
+    agent: { usesAgents: null, canTakeActions: null, irreversibleActions: null, humanOverride: null },
+    classification: { prohibitedPractice: null, highRiskCandidate: null },
+    operatingBoundary: {
+      allowedUses: [], excludedUses: [], environment: "ISOLATED_SANDBOX", userScope: "", dataScope: "", integrationScope: "",
+      permissionScope: "", autonomyScope: "", monitoringOwner: "", expiresAt: null
+    }
+  };
+}
+
+export function discoverSolutionProfile(rawSources, declaredDossier = null, confirmation = {}) {
+  const sources = sourceText(rawSources);
+  const discoveryTime = new Date().toISOString();
+  const detected = {
+    name: detectedName(sources),
+    intendedPurpose: labelledValue(sources, ["intended purpose", "purpose", "mission"]),
+    expectedValue: labelledValue(sources, ["expected value", "business value", "expected outcome", "outcome"]),
+    accountableOwner: labelledValue(sources, ["accountable owner", "system owner", "solution owner", "product owner"]),
+    jurisdictions: detectedList(sources, [["FI", /\b(?:Finland|Finnish|FI|FIN)\b/i], ["EU", /\b(?:European Union|EU|EEA)\b/i]]),
+    roles: detectedList(sources, [["PROVIDER", /\bprovider\b/i], ["DEPLOYER", /\bdeployer\b/i], ["IMPORTER", /\bimporter\b/i], ["DISTRIBUTOR", /\bdistributor\b/i]]),
+    users: detectedList(sources, [["EMPLOYEES", /\b(?:employees?|internal users?|staff)\b/i], ["CUSTOMERS", /\b(?:customers?|end users?|consumers?)\b/i]])
+  };
+  const dossier = declaredDossier ?? provisionalDossier(detected);
+  const flattened = flattenDossier(dossier);
+  const facts = {};
+  const contradictions = [];
+  const provisionalDefaults = new Set(["currentStage", "targetStage", "operatingBoundary.environment"]);
+  for (const [field, value] of Object.entries(flattened)) {
+    const direct = explicitMatches(sources, value, field);
+    const discovery = detected[field];
+    const discoveredIds = discovery && normalize(discovery.value) === normalize(value) ? discovery.sourceUnitIds : [];
+    const sourceUnitIds = unique([...direct, ...discoveredIds]);
+    const userConfirmed = confirmation[field]?.confirmed === true;
+    const hasValue = value !== undefined && value !== null && value !== "" && (!Array.isArray(value) || value.length > 0);
+    const conflictsWithDetected = Boolean(declaredDossier && discovery && normalize(discovery.value) && normalize(discovery.value) !== normalize(value));
+    const provisionalUnknown = !declaredDossier && provisionalDefaults.has(field) && !sourceUnitIds.length;
+    if (conflictsWithDetected) contradictions.push({
+      id: stableId("solution-contradiction", { field, declaredValue: value, observedValue: discovery.value, sourceUnitIds: discovery.sourceUnitIds }),
+      field, declaredValue: value, observedValue: discovery.value, sourceUnitIds: discovery.sourceUnitIds,
+      severity: criticalFields.has(field) ? "HIGH" : "MEDIUM",
+      statement: `${field} differs between the submitted declaration and source evidence.`
+    });
+    facts[field] = fact(field, value, {
+      factClass: sourceUnitIds.length ? "OBSERVED" : provisionalUnknown ? "INFERRED" : hasValue ? "USER_DECLARED" : "INFERRED",
+      status: conflictsWithDetected ? "CONFLICTING" : provisionalUnknown ? "UNKNOWN" : sourceUnitIds.length && (declaredDossier || userConfirmed) ? "CONFIRMED" : sourceUnitIds.length || hasValue ? "CANDIDATE" : "UNKNOWN",
+      supportStrength: sourceUnitIds.length ? "EXPLICIT" : hasValue ? "DERIVED" : "WEAK",
+      sourceUnitIds: unique([...sourceUnitIds, ...(conflictsWithDetected ? discovery.sourceUnitIds : [])]),
+      confirmedBy: userConfirmed ? confirmation[field].confirmedBy ?? "USER" : declaredDossier && sourceUnitIds.length ? "DOSSIER_SUBMISSION" : null,
+      confirmedAt: userConfirmed ? confirmation[field].confirmedAt ?? discoveryTime : declaredDossier && sourceUnitIds.length ? discoveryTime : null,
+      limitations: conflictsWithDetected ? ["User confirmation cannot erase the contradictory observed candidate."] : sourceUnitIds.length ? [] : hasValue ? ["The value is declared but not located in the submitted source material."] : ["No value was detected or declared."]
+    });
+    if (conflictsWithDetected) facts[field].candidates = [{ value, factClass: "USER_DECLARED" }, { value: discovery.value, factClass: "OBSERVED", sourceUnitIds: discovery.sourceUnitIds }];
+  }
+  const profile = {
+    version: "solution-profile-1.0.0",
+    fields: facts,
+    contradictions,
+    suggestedDossier: dossier,
+    sourceCount: sources.length,
+    artifactCounts: Object.fromEntries([...new Set(sources.map((item) => item.artifactClass))].sort().map((classification) => [classification, sources.filter((item) => item.artifactClass === classification).length])),
+    sourceHash: sha256(sources.map(({ id, path, artifactClass }) => ({ id, path, artifactClass })))
+  };
+  return { ...profile, hash: sha256(profile) };
+}
+
+export function flattenDossier(dossier) {
+  return {
+    name: dossier.name, accountableOwner: dossier.accountableOwner, intendedPurpose: dossier.intendedPurpose, expectedValue: dossier.expectedValue,
+    currentStage: dossier.currentStage, targetStage: dossier.targetStage, jurisdictions: dossier.jurisdictions, roles: dossier.roles, users: dossier.users,
+    "operatingBoundary.allowedUses": dossier.operatingBoundary?.allowedUses ?? [], "operatingBoundary.excludedUses": dossier.operatingBoundary?.excludedUses ?? [],
+    "operatingBoundary.environment": dossier.operatingBoundary?.environment ?? "UNKNOWN", "operatingBoundary.userScope": dossier.operatingBoundary?.userScope ?? "",
+    "operatingBoundary.dataScope": dossier.operatingBoundary?.dataScope ?? "", "operatingBoundary.integrationScope": dossier.operatingBoundary?.integrationScope ?? "",
+    "operatingBoundary.permissionScope": dossier.operatingBoundary?.permissionScope ?? "", "operatingBoundary.autonomyScope": dossier.operatingBoundary?.autonomyScope ?? "",
+    "operatingBoundary.monitoringOwner": dossier.operatingBoundary?.monitoringOwner ?? "", "operatingBoundary.expiresAt": dossier.operatingBoundary?.expiresAt ?? null,
+    "data.personalData": dossier.data?.personalData, "data.specialCategoryData": dossier.data?.specialCategoryData, "data.productionData": dossier.data?.productionData,
+    "exposure.externalUsers": dossier.exposure?.externalUsers, "exposure.productionAccess": dossier.exposure?.productionAccess,
+    "exposure.consequentialDecisions": dossier.exposure?.consequentialDecisions, "agent.usesAgents": dossier.agent?.usesAgents,
+    "agent.canTakeActions": dossier.agent?.canTakeActions, "agent.irreversibleActions": dossier.agent?.irreversibleActions,
+    "agent.humanOverride": dossier.agent?.humanOverride, "classification.prohibitedPractice": dossier.classification?.prohibitedPractice,
+    "classification.highRiskCandidate": dossier.classification?.highRiskCandidate
+  };
+}
+
+export function buildDocumentationReadiness(profile, targetStage) {
+  const statuses = {};
+  for (const field of deployRequiredFields) {
+    const item = profile.fields[field];
+    const agentsExplicitlyExcluded = profile.fields["agent.usesAgents"]?.value === false && profile.fields["agent.usesAgents"]?.status === "CONFIRMED";
+    const actionsExplicitlyExcluded = profile.fields["agent.canTakeActions"]?.value === false && profile.fields["agent.canTakeActions"]?.status === "CONFIRMED";
+    const notApplicable = agentsExplicitlyExcluded && ["agent.canTakeActions", "agent.irreversibleActions", "agent.humanOverride"].includes(field)
+      || actionsExplicitlyExcluded && field === "agent.irreversibleActions";
+    statuses[field] = notApplicable ? "NOT_APPLICABLE"
+      : !item || item.status === "UNKNOWN" ? "UNKNOWN"
+      : item.status === "CONFLICTING" ? "CONFLICTING"
+        : item.factClass === "OBSERVED" && item.status === "CONFIRMED" ? "DOCUMENTED_AND_CONFIRMED"
+          : item.factClass === "OBSERVED" ? "OBSERVED"
+            : item.factClass === "INFERRED" ? "INFERRED"
+              : "USER_DECLARED_ONLY";
+  }
+  const values = Object.values(statuses);
+  const unknownFields = Object.entries(statuses).filter(([, value]) => value === "UNKNOWN").map(([field]) => field);
+  const conflictingFields = Object.entries(statuses).filter(([, value]) => value === "CONFLICTING").map(([field]) => field);
+  const userDeclaredOnlyFields = Object.entries(statuses).filter(([, value]) => value === "USER_DECLARED_ONLY").map(([field]) => field);
+  const sourceSupportedFields = Object.entries(statuses).filter(([, value]) => ["DOCUMENTED_AND_CONFIRMED", "OBSERVED"].includes(value)).map(([field]) => field);
+  const confirmedFields = Object.entries(statuses).filter(([, value]) => value === "DOCUMENTED_AND_CONFIRMED").map(([field]) => field);
+  const notApplicableFields = Object.entries(statuses).filter(([, value]) => value === "NOT_APPLICABLE").map(([field]) => field);
+  const deploymentTarget = ["DEPLOYMENT", "OPERATION_AND_MONITORING", "REVIEW_AND_EVALUATION", "RETIREMENT"].includes(targetStage);
+  const implementationSourceCount = (profile.artifactCounts?.PRODUCTION_CODE ?? 0) + (profile.artifactCounts?.CONFIGURATION ?? 0);
+  const missingImplementationScope = deploymentTarget && implementationSourceCount === 0;
+  const incompleteForDeployment = values.some((value) => !["DOCUMENTED_AND_CONFIRMED", "NOT_APPLICABLE"].includes(value)) || missingImplementationScope;
+  const sandboxRequired = [...unknownFields, ...conflictingFields].some((field) => criticalFields.has(field));
+  const value = {
+    version: "documentation-readiness-1.0.0",
+    fieldStatuses: statuses,
+    mandatoryFieldCount: deployRequiredFields.length,
+    documentedAndConfirmedCount: confirmedFields.length,
+    satisfiedFieldCount: confirmedFields.length + notApplicableFields.length,
+    sourceSupportedFields, confirmedFields, notApplicableFields, userDeclaredOnlyFields, unknownFields, conflictingFields,
+    implementationSourceCount,
+    missingImplementationScope,
+    documentationToCodeAlignment: conflictingFields.length ? "CONFLICTING" : missingImplementationScope ? "NOT_ASSESSED" : incompleteForDeployment ? "INCOMPLETE" : "ALIGNED",
+    sandboxRequired,
+    deploymentReady: !incompleteForDeployment,
+    gateRequired: deploymentTarget && incompleteForDeployment,
+    status: conflictingFields.length ? "CONFLICTING" : !incompleteForDeployment ? "DOCUMENTED_AND_CONFIRMED" : "INCOMPLETE"
+  };
+  return { ...value, hash: sha256(value) };
+}
+
+export function buildAssessmentIntake(dossier, profile, documentationReadiness, registeredSources) {
+  const provenance = [];
+  const seenSources = new Set();
+  for (const item of registeredSources) {
+    const original = item.originalSource;
+    const entry = original ? { id: original.id, path: original.path, sha256: original.sha256, artifactClass: original.artifactClass }
+      : { id: item.id, path: item.path, sha256: item.sha256, artifactClass: item.artifactClass ?? artifactClass(item.path) };
+    const key = `${entry.id}:${entry.sha256}`;
+    if (!seenSources.has(key)) { seenSources.add(key); provenance.push(entry); }
+  }
+  const intake = {
+    version: "assessment-intake-1.0.0",
+    identity: { name: dossier.name, accountableOwner: dossier.accountableOwner },
+    intendedUse: { intendedPurpose: dossier.intendedPurpose, expectedValue: dossier.expectedValue },
+    lifecycle: { currentStage: dossier.currentStage, targetStage: dossier.targetStage },
+    jurisdictionsAndRoles: { jurisdictions: dossier.jurisdictions, roles: dossier.roles },
+    usersAndAffectedGroups: dossier.users,
+    operatingBoundary: structuredClone(dossier.operatingBoundary),
+    data: structuredClone(dossier.data), exposure: structuredClone(dossier.exposure),
+    agentAuthority: structuredClone(dossier.agent), classification: structuredClone(dossier.classification),
+    sourceProvenance: provenance,
+    sourceManifestHash: sha256(provenance.map(({ id, path, sha256: hash, artifactClass: classification }) => ({ id, path, hash, classification }))),
+    fieldConfirmations: Object.values(profile.fields).filter((item) => item.confirmedBy).map((item) => ({ field: item.field, confirmedBy: item.confirmedBy, confirmedAt: item.confirmedAt, sourceUnitIds: item.sourceUnitIds })),
+    documentationAlignment: documentationReadiness,
+    immutable: true
+  };
+  return { ...intake, hash: sha256(intake) };
+}
+
+export function caseProfileView(assessmentIntake, profile) {
+  const statusFor = (field) => assessmentIntake.documentationAlignment.fieldStatuses[field] ?? "UNKNOWN";
+  return {
+    identityAndIntent: [
+      { field: "name", label: "Solution name", value: assessmentIntake.identity.name, status: statusFor("name") },
+      { field: "accountableOwner", label: "Accountable owner", value: assessmentIntake.identity.accountableOwner, status: statusFor("accountableOwner") },
+      { field: "intendedPurpose", label: "Intended purpose", value: assessmentIntake.intendedUse.intendedPurpose, status: statusFor("intendedPurpose") },
+      { field: "expectedValue", label: "Expected value / outcome", value: assessmentIntake.intendedUse.expectedValue, status: statusFor("expectedValue") }
+    ],
+    assessmentScope: [
+      { field: "currentStage", label: "Current lifecycle stage", value: assessmentIntake.lifecycle.currentStage, status: statusFor("currentStage") },
+      { field: "targetStage", label: "Target lifecycle stage", value: assessmentIntake.lifecycle.targetStage, status: statusFor("targetStage") },
+      { field: "jurisdictions", label: "Jurisdictions", value: assessmentIntake.jurisdictionsAndRoles.jurisdictions, status: statusFor("jurisdictions") },
+      { field: "roles", label: "Regulatory roles", value: assessmentIntake.jurisdictionsAndRoles.roles, status: statusFor("roles") },
+      { field: "users", label: "Users and affected groups", value: assessmentIntake.usersAndAffectedGroups, status: statusFor("users") },
+      { field: "sourceCount", label: "Assessed sources", value: assessmentIntake.sourceProvenance.length, status: "OBSERVED" },
+      { field: "sourceHash", label: "Source manifest hash", value: assessmentIntake.sourceManifestHash, status: "OBSERVED" }
+    ],
+    operatingBoundary: Object.entries(assessmentIntake.operatingBoundary).map(([field, value]) => ({ field: `operatingBoundary.${field}`, label: field, value, status: statusFor(`operatingBoundary.${field}`) })),
+    riskDeclarations: [
+      ...Object.entries(assessmentIntake.data).map(([field, value]) => ({ field: `data.${field}`, label: field, value, status: statusFor(`data.${field}`) })),
+      ...Object.entries(assessmentIntake.exposure).map(([field, value]) => ({ field: `exposure.${field}`, label: field, value, status: statusFor(`exposure.${field}`) })),
+      ...Object.entries(assessmentIntake.agentAuthority).map(([field, value]) => ({ field: `agent.${field}`, label: field, value, status: statusFor(`agent.${field}`) })),
+      ...Object.entries(assessmentIntake.classification).map(([field, value]) => ({ field: `classification.${field}`, label: field, value, status: statusFor(`classification.${field}`) }))
+    ]
+  };
+}
+
+export function validLifecycle(value) { return LIFECYCLE_STAGES.includes(value); }

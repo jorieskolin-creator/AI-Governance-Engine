@@ -1,14 +1,16 @@
+import { jurisdictionScope } from "./jurisdictions.js";
+
 function conditionApplies(condition, dossier) {
   switch (condition) {
     case "ALWAYS": return "APPLICABLE";
-    case "EU": return dossier.jurisdictions.some((item) => /^EU$|EUROPEAN UNION/i.test(item)) ? "POTENTIALLY_APPLICABLE" : "NOT_APPLICABLE";
+    case "EU": return jurisdictionScope(dossier.jurisdictions).euEea ? "POTENTIALLY_APPLICABLE" : "NOT_APPLICABLE";
     case "USES_DATA": return "APPLICABLE";
-    case "PERSONAL_DATA": return dossier.data.personalData || dossier.data.specialCategoryData ? "APPLICABLE" : "NOT_APPLICABLE";
+    case "PERSONAL_DATA": return dossier.data.personalData || dossier.data.specialCategoryData ? "APPLICABLE" : [dossier.data.personalData, dossier.data.specialCategoryData].includes(null) ? "POTENTIALLY_APPLICABLE" : "NOT_APPLICABLE";
     case "THIRD_PARTY_COMPONENTS": return "POTENTIALLY_APPLICABLE";
-    case "USES_AGENTS": return dossier.agent.usesAgents ? "APPLICABLE" : "NOT_APPLICABLE";
-    case "PRODUCTION_OR_EXTERNAL": return dossier.exposure.externalUsers || dossier.exposure.productionAccess || dossier.currentStage === "OPERATION_AND_MONITORING" ? "APPLICABLE" : "NOT_APPLICABLE";
-    case "AFFECTS_PEOPLE": return dossier.users.length > 0 ? "APPLICABLE" : "NOT_APPLICABLE";
-    case "INTERACTS_WITH_PEOPLE": return dossier.users.length > 0 || dossier.exposure.externalUsers ? "POTENTIALLY_APPLICABLE" : "NOT_APPLICABLE";
+    case "USES_AGENTS": return dossier.agent.usesAgents === true ? "APPLICABLE" : dossier.agent.usesAgents === null ? "POTENTIALLY_APPLICABLE" : "NOT_APPLICABLE";
+    case "PRODUCTION_OR_EXTERNAL": return dossier.exposure.externalUsers || dossier.exposure.productionAccess || dossier.currentStage === "OPERATION_AND_MONITORING" ? "APPLICABLE" : [dossier.exposure.externalUsers, dossier.exposure.productionAccess].includes(null) ? "POTENTIALLY_APPLICABLE" : "NOT_APPLICABLE";
+    case "AFFECTS_PEOPLE": return dossier.users.length > 0 ? "APPLICABLE" : "POTENTIALLY_APPLICABLE";
+    case "INTERACTS_WITH_PEOPLE": return dossier.users.length > 0 || dossier.exposure.externalUsers ? "POTENTIALLY_APPLICABLE" : dossier.exposure.externalUsers === false ? "NOT_APPLICABLE" : "POTENTIALLY_APPLICABLE";
     default: return "POTENTIALLY_APPLICABLE";
   }
 }
@@ -16,7 +18,7 @@ function conditionApplies(condition, dossier) {
 export function evaluateApplicability(requirements, dossier, now = new Date()) {
   return requirements.map((requirement) => {
     const euScopedRequirement = ["REQ-A-002", "REQ-B-002", "REQ-E-002"].includes(requirement.id);
-    const euInScope = dossier.jurisdictions.some((item) => /^EU$|EEA$|EUROPEAN UNION/i.test(item));
+    const euInScope = jurisdictionScope(dossier.jurisdictions).euEea;
     const state = euScopedRequirement && !euInScope
       ? "NOT_APPLICABLE"
       : conditionApplies(requirement.applicability, dossier);

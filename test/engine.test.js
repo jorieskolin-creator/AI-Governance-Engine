@@ -140,7 +140,7 @@ test("secret scanner creates a critical hard gate without exposing the value", a
     sources: [{ path: "config/runtime.js", kind: "CODE", content: "const api_key = 'this-is-a-sensitive-secret-value';" }]
   }));
   assert.equal(result.recommendation.outcome, "BLOCKED_IN_CURRENT_FORM");
-  assert.ok(result.hardGates.some((item) => item.code === "SECRET_MATERIAL"));
+  assert.ok(result.hardGates.some((item) => item.code === "SECRET_CANDIDATE"));
   assert.ok(result.evidence.some((item) => item.excerpt === "Potential secret material detected; value redacted."));
   assert.doesNotMatch(JSON.stringify(result), /this-is-a-sensitive-secret-value/);
 });

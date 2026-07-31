@@ -11,13 +11,19 @@ function request(overrides = {}) {
   return value;
 }
 
-test("v1 includes a deterministic lifecycle boundary and decision-ready summary", async () => {
+test("v1 includes complete case context and a deterministic lifecycle boundary", async () => {
   const result = await assessSolution(request());
-  assert.equal(result.schemaVersion, "1.0.0");
+  assert.equal(result.schemaVersion, "1.1.0");
+  assert.equal(result.assuranceSummary.version, "assurance-summary-1.1.0");
   assert.equal(result.transitionBoundary.immutable, true);
   assert.equal(result.transitionBoundary.currentStage, result.solution.currentStage);
   assert.equal(result.transitionBoundary.targetStage, result.solution.targetStage);
   assert.equal(result.assuranceSummary.assessmentMode, "DETERMINISTIC_ONLY");
+  assert.equal(result.assessmentIntake.identity.name, result.solution.name);
+  assert.equal(result.assessmentIntake.data.personalData, result.solution.data.personalData);
+  assert.ok(result.assuranceSummary.caseProfile.identityAndIntent.some((item) => item.field === "accountableOwner"));
+  assert.equal(result.assuranceSummary.auditReference.canonicalJsonPath, "$.evidence");
+  assert.equal(Object.hasOwn(result.assuranceSummary, "evidenceDigest"), false);
   assert.deepEqual(result.assuranceSummary.strengths, []);
   assert.ok(result.assuranceSummary.blockingFindings.every((item) => item.supportStatus === "COGNITIVE_VERIFICATION_NOT_RUN"));
 });
@@ -44,7 +50,7 @@ test("empty playbook output explains that no exact approved tactic is available"
   assert.match(result.assuranceSummary.actionAvailability.message, /no exact approved tactic/i);
 });
 
-test("standalone report is escaped, offline and carries trace versions", async () => {
+test("standalone report is escaped, offline, lean and case-identifiable", async () => {
   const result = await assessSolution(request({ dossier: { name: "<script>alert(1)</script>", intendedPurpose: "<img src=x onerror=alert(1)>" } }));
   const html = standaloneReportHtml(result);
   assert.doesNotMatch(html, /<script|<img/i);
@@ -52,7 +58,8 @@ test("standalone report is escaped, offline and carries trace versions", async (
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.match(html, new RegExp(REPORT_VERSION));
   assert.match(html, new RegExp(result.packageHash));
-  const ordered = ["Decision-ready assurance summary", "Deterministic decision boundary", "Evidence Interpretation", "Hard-Gate Matrix", "A–F Domain Overview", "Confirmed Strengths", "Blocking Gaps and Unknowns", "Governance Action Playbook", "Human Authority", "Evidence and Trace", "Limitations"];
+  assert.doesNotMatch(html, /Evidence Digest|raw evidence excerpt/i);
+  const ordered = ["01 · Decision", "Case Profile and Assessment Scope", "Documentation Alignment", "Deterministic Lifecycle Transition Boundary", "Evidence Interpretation", "Hard-Gate Matrix", "A–F Domain Overview", "Confirmed Strengths", "Blocking Gaps and Unknowns", "Governance Action Playbook", "Human Authority", "Audit Identity", "Limitations"];
   let cursor = -1;
   for (const heading of ordered) {
     const next = html.indexOf(heading);

@@ -11,10 +11,12 @@ export const ACCEPTED_FORMATS = Object.freeze({
   "text/plain": "TEXT",
   "text/markdown": "TEXT",
   "text/csv": "CSV",
+  "text/html": "HTML",
   "application/json": "TEXT",
   "application/javascript": "CODE",
   "text/javascript": "CODE",
   "text/typescript": "CODE",
+  "text/css": "CODE",
   "application/pdf": "PDF",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "DOCX",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "XLSX",
@@ -25,9 +27,10 @@ export const ACCEPTED_FORMATS = Object.freeze({
 
 const stringArray = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
 
-export function validatePreflightInput(input) {
+export function validatePreflightInput(input, options = {}) {
   invariant(input && typeof input === "object", "request body is required");
-  const dossier = validateDossier(input.dossier);
+  const dossier = input.dossier ? validateDossier(input.dossier) : null;
+  if (!options.dossierOptional) invariant(dossier, "dossier is required");
   invariant(Array.isArray(input.sources) && input.sources.length > 0, "sources must contain at least one item");
   const sources = input.sources.map((source, index) => {
     invariant(source && typeof source === "object", `sources[${index}] must be an object`);

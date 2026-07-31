@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Evidence-gated AI solution readiness assessment" />
     <title>Vivicta AI Governance Engine</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=source-first-1.1.0" />
   </head>
   <body>
     <header class="app-header">
@@ -24,17 +24,28 @@
         <div class="boundary-card"><span class="boundary-icon">H</span><div><strong>Human authority boundary</strong><p>Legal, Privacy, Security, Governance, AI Forum and AI Board decisions are never generated as approvals.</p></div></div>
       </section>
 
+      <section id="source-intake" class="panel source-intake-panel">
+        <div class="section-heading"><div><p class="eyebrow">Source-first intake</p><h2>Upload evidence and code</h2></div><button id="sample-button" type="button" class="secondary-button">Load credible sample</button></div>
+        <p class="section-intro">The Engine parses submitted sources without executing code, macros, scripts, forms or embedded instructions. It proposes a cited Assessment Intake for your confirmation.</p>
+        <div class="form-grid two">
+          <label class="upload-box">Codebase or evidence folder<input id="source-folder" type="file" multiple webkitdirectory /><span id="folder-summary">No folder selected</span></label>
+          <label class="upload-box">Individual documents and files<input id="source-files" type="file" multiple accept=".pdf,.docx,.xlsx,.csv,.html,.htm,.md,.txt,.json,.yaml,.yml,.toml,.ini,.js,.mjs,.cjs,.ts,.tsx,.jsx,.css,.py,.java,.go,.rs,.rb,.php,.cs,.sql,.tf,.png,.jpg,.jpeg,.webp" /><span id="file-summary">No individual files selected</span></label>
+        </div>
+        <div class="discovery-actions"><button id="discover-button" class="primary-button" type="button">Discover case information</button><p id="discovery-status" aria-live="polite">Upload sources to generate the first cited intake draft.</p></div>
+        <div id="discovery-results" class="discovery-results hidden" aria-live="polite"></div>
+      </section>
+
       <section id="assessment-input" class="panel input-panel">
-        <div class="section-heading"><div><p class="eyebrow">Assessment intake</p><h2>Solution dossier</h2></div><button id="sample-button" type="button" class="secondary-button">Load credible sample</button></div>
+        <div class="section-heading"><div><p class="eyebrow">Confirm assessment intake</p><h2>Review detected solution profile</h2></div></div>
         <form id="dossier-form">
-          <div class="form-grid two"><label>Solution name<input id="name" required placeholder="Internal knowledge assistant" /></label><label>Accountable owner<input id="owner" required placeholder="Named role or person" /></label></div>
-          <label>Intended purpose<textarea id="purpose" required rows="3" placeholder="What the AI system does, for whom, and within which boundary"></textarea></label>
-          <label>Expected value<textarea id="value" required rows="2" placeholder="Measurable value hypothesis and success criteria"></textarea></label>
+          <div class="form-grid two"><label>Solution name<input id="name" placeholder="Detected from product documentation or project manifest" /></label><label>Accountable owner<input id="owner" placeholder="Must be supported by ownership, RACI, charter or governance evidence" /></label></div>
+          <label>Intended purpose<textarea id="purpose" rows="3" placeholder="Detected from business, product or architecture documentation"></textarea></label>
+          <label>Expected value<textarea id="value" rows="2" placeholder="Measurable outcome and value hypothesis"></textarea></label>
           <div class="form-grid four">
             <label>Current lifecycle stage<select id="current-stage"></select></label><label>Target lifecycle stage<select id="target-stage"></select></label>
             <label>Jurisdictions<input id="jurisdictions" value="EU" placeholder="EU, Finland" /></label><label>Regulatory roles<input id="roles" value="DEPLOYER" placeholder="PROVIDER, DEPLOYER" /></label>
           </div>
-          <div class="form-grid two"><label>Users and affected groups<input id="users" value="EMPLOYEES" placeholder="EMPLOYEES, CUSTOMERS" /></label><label class="upload-box">Codebase and evidence folder<input id="source-files" type="file" multiple webkitdirectory /><span id="file-summary">No folder selected</span></label></div>
+          <div class="form-grid two"><label>Users and affected groups<input id="users" value="EMPLOYEES" placeholder="EMPLOYEES, CUSTOMERS" /></label><div class="confirmation-note"><strong>Confirmation preserves provenance</strong><span>Corrections become user declarations. They do not erase missing documentation or contradictory source evidence.</span></div></div>
 
           <fieldset class="operating-boundary">
             <legend>Declared operating boundary</legend>
@@ -47,12 +58,12 @@
           </fieldset>
 
           <div class="flag-groups">
-            <fieldset><legend>Data</legend><label class="check"><input id="personal-data" type="checkbox" /> Personal data</label><label class="check"><input id="special-data" type="checkbox" /> Special-category data</label><label class="check"><input id="production-data" type="checkbox" /> Production data</label></fieldset>
-            <fieldset><legend>Exposure</legend><label class="check"><input id="external-users" type="checkbox" /> External users</label><label class="check"><input id="production-access" type="checkbox" /> Production access</label><label class="check"><input id="consequential" type="checkbox" /> Consequential decisions</label></fieldset>
-            <fieldset><legend>Agent authority</legend><label class="check"><input id="uses-agents" type="checkbox" /> Uses agents</label><label class="check"><input id="takes-actions" type="checkbox" /> Can take actions</label><label class="check"><input id="irreversible" type="checkbox" /> Irreversible actions</label><label class="check"><input id="human-override" type="checkbox" checked /> Human override</label></fieldset>
-            <fieldset><legend>Classification declaration</legend><label class="check"><input id="prohibited" type="checkbox" /> Prohibited-practice candidate</label><label class="check"><input id="high-risk" type="checkbox" /> High-risk candidate</label></fieldset>
+            <fieldset><legend>Data</legend><label>Personal data<select id="personal-data" class="tri-state"></select></label><label>Special-category data<select id="special-data" class="tri-state"></select></label><label>Production data<select id="production-data" class="tri-state"></select></label></fieldset>
+            <fieldset><legend>Exposure</legend><label>External users<select id="external-users" class="tri-state"></select></label><label>Production access<select id="production-access" class="tri-state"></select></label><label>Consequential decisions<select id="consequential" class="tri-state"></select></label></fieldset>
+            <fieldset><legend>Agent authority</legend><label>Uses agents<select id="uses-agents" class="tri-state"></select></label><label>Can take actions<select id="takes-actions" class="tri-state"></select></label><label>Irreversible actions<select id="irreversible" class="tri-state"></select></label><label>Human override<select id="human-override" class="tri-state"></select></label></fieldset>
+            <fieldset><legend>Classification declaration</legend><label>Prohibited-practice candidate<select id="prohibited" class="tri-state"></select></label><label>High-risk candidate<select id="high-risk" class="tri-state"></select></label></fieldset>
           </div>
-          <div class="submit-row"><p>Text files up to 2 MB each are read locally and sent to this engine instance for assessment.</p><button id="assess-button" class="primary-button" type="submit">Run readiness assessment</button></div>
+          <div class="submit-row"><p>Missing information permits bounded sandbox work. Deployment requires all applicable fields to be documented, confirmed and implementation-aligned.</p><button id="assess-button" class="primary-button" type="submit">Confirm intake and assess readiness</button></div>
         </form>
       </section>
 

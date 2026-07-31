@@ -1,4 +1,4 @@
-import { HUMAN_AUTHORITIES } from "../contracts.js";
+import { classifyArtifact, HUMAN_AUTHORITIES } from "../contracts.js";
 import { sha256, stableId } from "./hash.js";
 
 const SECRET_PATTERNS = [
@@ -56,6 +56,15 @@ function redactSecrets(content) {
   return redacted;
 }
 
+function fixtureSecret(path, content, match) {
+  const artifact = classifyArtifact(path);
+  const value = match?.[0] ?? "";
+  const start = Math.max(0, (match?.index ?? 0) - 100);
+  const context = content.slice(start, (match?.index ?? 0) + value.length + 140);
+  const knownPlaceholder = /AKIA1234567890ABCDEF|(?:sk|rk|pk)_(?:live|test)_[a-z0-9_-]*(?:dummy|example|placeholder|fake)/i.test(value);
+  return ["TEST", "FIXTURE_OR_EXAMPLE"].includes(artifact) && (knownPlaceholder || /fixture|example|dummy|fake|placeholder|should never be uploaded|test/i.test(context));
+}
+
 function assuranceForKind(kind, metadata = {}) {
   const validHuman = metadata.humanActorId && metadata.humanActorId !== "ENGINE" && HUMAN_AUTHORITIES.includes(metadata.authority);
   // FORMALLY_APPROVED is reserved for a future connector that verifies human identity,
@@ -88,7 +97,8 @@ export function buildSourceRegistry(sources, now = new Date()) {
     const safeContent = redactSecrets(source.content);
     const sourceId = `src-${sourceHash.slice(0, 16)}`;
     const stale = isStale(source.metadata, now);
-    registeredSources.push({ id: sourceId, path: source.path, kind: source.kind, sha256: sourceHash, size: source.content.length });
+    const sourceArtifactClass = classifyArtifact(source.path, source.metadata);
+    registeredSources.push({ id: sourceId, path: source.path, kind: source.kind, artifactClass: sourceArtifactClass, sha256: sourceHash, size: source.content.length, originalSource: source.metadata?.originalSource ?? null });
     const assuranceState = assuranceForKind(source.kind, source.metadata);
 
     if (Array.isArray(source.metadata?.controlIds) && source.metadata.controlIds.length) {
@@ -98,21 +108,27 @@ export function buildSourceRegistry(sources, now = new Date()) {
         signal: source.metadata.signal ?? "explicit-control-evidence",
         domainIds: source.metadata.domainIds ?? [], controlIds: source.metadata.controlIds,
         antiPatternIds: source.metadata.antiPatternIds ?? [], assuranceState,
-        polarity: source.metadata.polarity ?? "SUPPORT", stale, capturedAt: now.toISOString(), metadata: source.metadata
+        polarity: source.metadata.polarity ?? "SUPPORT", eligibleForAssurance: true, evidenceClass: "EXPLICIT_MAPPING",
+        stale, capturedAt: now.toISOString(), metadata: { ...source.metadata, artifactClass: sourceArtifactClass }
       });
     }
 
     for (const pattern of SECRET_PATTERNS) {
       const match = pattern.exec(source.content);
       if (!match) continue;
+      const syntheticFixture = fixtureSecret(source.path, source.content, match);
       const artifact = {
         id: stableId("evd", { sourceId, signal: "hardcoded-secret" }), sourceId, path: source.path, kind: "SCAN_RESULT", sha256: sourceHash,
         excerpt: "Potential secret material detected; value redacted.", signal: "hardcoded-secret", domainIds: ["D"],
-        controlIds: ["CTRL-D-01"], antiPatternIds: ["AP-D-01"], assuranceState: "TESTED",
-        polarity: "RISK", stale: false, capturedAt: now.toISOString(), metadata: { scanner: "built-in-secret-scan" }
+        controlIds: ["CTRL-D-01"], antiPatternIds: syntheticFixture ? [] : ["AP-D-01"], assuranceState: "TESTED",
+        polarity: syntheticFixture ? "CANDIDATE_RISK" : "RISK", eligibleForAssurance: false,
+        evidenceClass: syntheticFixture ? "TEST_FIXTURE_INDICATOR" : "AUTOMATED_INDICATOR",
+        stale: false, capturedAt: now.toISOString(), metadata: { scanner: "built-in-secret-scan", artifactClass: sourceArtifactClass, syntheticFixture }
       };
       evidence.push(artifact);
-      findings.push({ code: "SECRET_MATERIAL", severity: "CRITICAL", evidenceId: artifact.id, message: `Potential secret detected in ${source.path}` });
+      findings.push(syntheticFixture
+        ? { code: "SECRET_TEST_FIXTURE", severity: "INFO", evidenceId: artifact.id, message: `Synthetic secret fixture detected in ${source.path}`, actionable: false }
+        : { code: "SECRET_CANDIDATE", severity: "CRITICAL", evidenceId: artifact.id, message: `Potential secret candidate detected in ${source.path}`, actionable: true });
       break;
     }
 
@@ -122,8 +138,9 @@ export function buildSourceRegistry(sources, now = new Date()) {
       evidence.push({
         id: stableId("evd", { sourceId, signal: signal.signal, index: textMatch.index }), sourceId, path: source.path, kind: source.kind, sha256: sourceHash,
         excerpt: excerpt(safeContent, textMatch.index), signal: signal.signal, domainIds: signal.domains,
-        controlIds: signal.controls, antiPatternIds: [], assuranceState, polarity: "SUPPORT",
-        stale, capturedAt: now.toISOString(), metadata: source.metadata
+        controlIds: signal.controls, antiPatternIds: [], assuranceState: "DECLARED", polarity: "SUPPORT",
+        eligibleForAssurance: false, evidenceClass: "AUTOMATED_INDICATOR",
+        stale, capturedAt: now.toISOString(), metadata: { ...source.metadata, artifactClass: sourceArtifactClass, assuranceCeiling: assuranceState }
       });
     }
 
@@ -131,7 +148,8 @@ export function buildSourceRegistry(sources, now = new Date()) {
       evidence.push({
         id: stableId("evd", { sourceId, signal: "tested-absence", antiPatternId }), sourceId, path: source.path, kind: source.kind, sha256: sourceHash,
         excerpt: `Explicit test for absence of ${antiPatternId}`, signal: "tested-absence", domainIds: [], controlIds: [],
-        antiPatternIds: [antiPatternId], assuranceState, polarity: "ABSENCE_TEST", stale, capturedAt: now.toISOString(), metadata: source.metadata
+        antiPatternIds: [antiPatternId], assuranceState, polarity: "ABSENCE_TEST", eligibleForAssurance: assuranceState === "TESTED",
+        evidenceClass: "EXPLICIT_ABSENCE_TEST", stale, capturedAt: now.toISOString(), metadata: { ...source.metadata, artifactClass: sourceArtifactClass }
       });
     }
   }
@@ -139,21 +157,21 @@ export function buildSourceRegistry(sources, now = new Date()) {
 }
 
 export function dossierEvidence(dossier, now = new Date()) {
-  const common = { sourceId: "dossier", path: "intended-use-dossier", kind: "DECLARATION", sha256: sha256(dossier), assuranceState: "DECLARED", stale: false, capturedAt: now.toISOString(), metadata: {} };
+  const common = { sourceId: "dossier", path: "intended-use-dossier", kind: "DECLARATION", sha256: sha256(dossier), assuranceState: "DECLARED", eligibleForAssurance: true, evidenceClass: "DECLARED", stale: false, capturedAt: now.toISOString(), metadata: {} };
   const entries = [
     { signal: "purpose", excerpt: dossier.intendedPurpose, domains: ["A"], controls: ["CTRL-A-01"] },
     { signal: "value", excerpt: dossier.expectedValue, domains: ["A"], controls: ["CTRL-A-03"] },
     { signal: "accountable-owner", excerpt: dossier.accountableOwner, domains: ["A", "F"], controls: ["CTRL-A-01", "CTRL-F-01"] },
-    { signal: "classification", excerpt: `Prohibited=${dossier.classification.prohibitedPractice}; highRiskCandidate=${dossier.classification.highRiskCandidate}`, domains: ["A"], controls: ["CTRL-A-02"] }
+    { signal: "classification", excerpt: dossier.classification.prohibitedPractice === null && dossier.classification.highRiskCandidate === null ? "" : `Prohibited=${dossier.classification.prohibitedPractice}; highRiskCandidate=${dossier.classification.highRiskCandidate}`, domains: ["A"], controls: ["CTRL-A-02"] }
   ];
-  return entries.map((entry) => ({
+  return entries.filter((entry) => typeof entry.excerpt === "string" && entry.excerpt.trim()).map((entry) => ({
     ...common, id: stableId("evd", { sourceId: "dossier", signal: entry.signal, excerpt: entry.excerpt }), excerpt: entry.excerpt, signal: entry.signal, domainIds: entry.domains,
     controlIds: entry.controls, antiPatternIds: [], polarity: "SUPPORT"
   }));
 }
 
 export function dossierRiskEvidence(dossier, now = new Date()) {
-  const base = { sourceId: "dossier", path: "intended-use-dossier", kind: "DECLARATION", sha256: sha256(dossier), assuranceState: "DECLARED", stale: false, capturedAt: now.toISOString(), polarity: "RISK", metadata: {} };
+  const base = { sourceId: "dossier", path: "intended-use-dossier", kind: "DECLARATION", sha256: sha256(dossier), assuranceState: "DECLARED", eligibleForAssurance: true, evidenceClass: "DECLARED_RISK", stale: false, capturedAt: now.toISOString(), polarity: "RISK", metadata: {} };
   const risks = [];
   const push = (signal, excerpt, domainIds, controlIds, antiPatternIds) => risks.push({ ...base, id: stableId("evd", { sourceId: "dossier", signal, excerpt }), signal, excerpt, domainIds, controlIds, antiPatternIds });
   if ((dossier.data.personalData || dossier.data.specialCategoryData) && dossier.data.productionData) {

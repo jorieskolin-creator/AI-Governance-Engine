@@ -6,14 +6,14 @@ This is a clean governance implementation inspired by the FinOps Engine's proces
 
 ## What the engine does
 
-- Registers and hashes every submitted source.
+- Starts from uploaded sources, registers and hashes them, and proposes a cited Assessment Intake for user confirmation.
 - Scans code, configuration, tests, reviews, and operational records for governance-relevant signals.
 - Evaluates six governance domains across seven lifecycle stages.
 - Separates evidence coverage, control assurance, residual risk, and hard-gate status.
 - Preserves silence as `UNKNOWN`; it never treats missing evidence as proof of safety or compliance.
 - Selects approved governance actions only from verified findings.
 - Produces one canonical JSON readiness package with two connected views: the detailed Assessment Workspace and the decision-ready Assurance Summary.
-- Exports the Assurance Summary as a printable A4 report and a script-free, self-contained HTML file that works offline.
+- Exports the Assurance Summary as a printable A4 report and a script-free, self-contained HTML file that works offline. Full evidence remains only in the protected JSON audit package.
 - Records required human authorities without issuing formal approval.
 
 ## Evidence-gated cognitive pipeline (v2)
@@ -27,6 +27,8 @@ Only locked findings become evidence for the deterministic engine. Raw model out
 The v2 endpoints are disabled by default and require a bearer token:
 
 - `POST /api/v2/runs/preflight` parses and screens evidence locally and returns redacted packet previews.
+- `POST /api/v2/runs/{id}/discover` returns the cited Assessment Intake draft.
+- `POST /api/v2/runs/{id}/confirm` records the confirmed or corrected dossier without erasing source conflicts.
 - `POST /api/v2/runs/{id}/execute` records explicit packet/provider approval and starts the run.
 - `GET /api/v2/runs/{id}` returns progress.
 - `GET /api/v2/runs/{id}/result` returns `ReadinessPackageV2`.
@@ -47,9 +49,9 @@ npm test
 npm start
 ```
 
-Open `http://localhost:4174`. Use **Load credible sample** to inspect the complete output or fill the dossier and upload a code folder.
+Open `http://localhost:4174`. Upload a codebase folder or individual PDF, DOCX, XLSX, CSV, HTML, Markdown, JSON, configuration, code, text, or supported image file. Use **Discover case information**, review the cited draft, and then confirm or correct it before assessment. **Load credible sample** remains available for deterministic calibration.
 
-The post-assessment result opens in **Assurance Summary** when `ASSURANCE_SUMMARY_ENABLED=true`. Switch to **Assessment Workspace** without rerunning the assessment. The summary provides the immutable decision and lifecycle boundary, hard gates, A–F status, strengths, blockers, actions, human authority, limitations, and a minimized evidence digest.
+The post-assessment result opens in **Assurance Summary** when `ASSURANCE_SUMMARY_ENABLED=true`. Switch to **Assessment Workspace** without rerunning the assessment. The summary provides the complete Case Profile, documentation alignment, immutable lifecycle boundary, hard gates, A–F status, strengths, blockers, actions, human authority, audit identity, and limitations. It intentionally contains no Evidence Digest or raw excerpts.
 
 Use **Print / Save PDF**, **Download HTML**, or the unchanged canonical **Download JSON** control. HTML and PDF are derived views only: they never calculate an outcome. The standalone HTML contains no scripts, external assets, or executable source-provided markup.
 
@@ -95,13 +97,14 @@ Use **Print / Save PDF**, **Download HTML**, or the unchanged canonical **Downlo
 
 `GET /api/sample` returns a complete sample request. `GET /api/knowledge` returns the active, versioned knowledge manifest. `GET /api/config` exposes non-secret experience flags.
 
-`ReadinessPackageV2` is additive at schema version `2.1.0`. Both v1 and v2 packages include `transitionBoundary` and `assuranceSummary`; v1 evidence is explicitly labelled as automated indicators because cognitive verification was not run.
+`POST /api/discover` accepts source-first MIME-aware uploads without a dossier and returns a deterministic `solutionProfile`, source manifest, and local DLP findings. Binary sources use base64; HTML is parsed inertly.
+
+The deterministic package is schema `1.1.0`; `ReadinessPackageV2` is additive at schema `2.2.0`. Both include immutable `assessmentIntake`, field-level `solutionProfile`, `documentationReadiness`, `transitionBoundary`, and `assuranceSummary`. The Assurance Summary contract is `assurance-summary-1.1.0`. V1 lexical matches are explicitly labelled as automated indicators because cognitive verification was not run.
 
 ### v2 preflight example
 
 ```json
 {
-  "dossier": { "...": "same dossier contract as v1" },
   "sources": [
     {
       "path": "src/assistant.js",
@@ -113,6 +116,8 @@ Use **Print / Save PDF**, **Download HTML**, or the unchanged canonical **Downlo
   ]
 }
 ```
+
+The dossier is optional at preflight. When omitted, call `/discover`, submit the reviewed dossier and field confirmations to `/confirm`, then approve the resulting redacted packets for `/execute`.
 
 Use `Authorization: Bearer <COGNITIVE_API_TOKEN>` for every `/api/v2/*` request. Submit every returned packet ID to `/execute` with the explicitly approved provider names. A high/critical claim needs a provider different from its extractor; insufficient provider approval produces `COGNITIVE_ASSESSMENT_INCOMPLETE` rather than a positive recommendation.
 

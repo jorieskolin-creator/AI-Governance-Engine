@@ -21,7 +21,6 @@ const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 const allowedOrigin = process.env.ALLOWED_ORIGIN ?? `http://localhost:${port}`;
 const maxBodyBytes = 25 * 1024 * 1024;
 const cognitiveEnabled = process.env.COGNITIVE_PIPELINE_ENABLED === "true";
-const cognitiveV3Enabled = process.env.COGNITIVE_PIPELINE_V3_ENABLED === "true";
 const assuranceSummaryEnabled = process.env.ASSURANCE_SUMMARY_ENABLED !== "false";
 const cognitiveToken = process.env.COGNITIVE_API_TOKEN ?? "";
 function positiveEnvNumber(name, fallback) {
@@ -97,7 +96,7 @@ function publicRunView(run) {
     runId: run.id, status: run.status, stage: run.stage, createdAt: run.createdAt, expiresAt: run.expiresAt,
     completedAt: run.completedAt ?? null, resultAvailable: Boolean(run.result), error: run.error,
     solutionProfile: run.solutionProfile,
-    cognitiveContractVersion: run.result?.cognitive?.contractVersion ?? (cognitiveV3Enabled ? "3.0.0" : "3.0.0-SHADOW"),
+    cognitiveContractVersion: run.result?.cognitive?.contractVersion ?? "3.0.0",
     domainProgress,
     coverage: run.result?.coverageMatrix?.counts ?? null,
     publicationGate: run.result?.publicationGate?.status ?? null,
@@ -162,7 +161,6 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/config") return sendJson(response, 200, {
       assuranceSummaryEnabled,
       cognitivePipelineEnabled: cognitiveEnabled,
-      cognitivePipelineV3Enabled: cognitiveV3Enabled,
       discoveryRecheckAvailable: cognitiveEnabled
     });
     if (request.method === "GET" && url.pathname === "/api/knowledge") return sendJson(response, 200, knowledgeManifestView(knowledge));
@@ -229,7 +227,6 @@ const server = http.createServer(async (request, response) => {
       for (const packet of run.packets) packet.transmissionState = "APPROVED";
       void executeCognitiveRun(run, {
         knowledge,
-        v3Enabled: cognitiveV3Enabled,
         domainConcurrency: positiveEnvNumber("COGNITIVE_MAX_CONCURRENCY", 3),
         budgets: {
           maxCalls: positiveEnvNumber("COGNITIVE_MAX_CALLS_PER_RUN", 60),

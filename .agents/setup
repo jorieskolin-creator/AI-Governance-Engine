@@ -5,14 +5,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 toolchain_prefix="$HOME/.local"
+pnpm_version="$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' package.json)"
+[[ -n "$pnpm_version" ]] || { echo "package.json must declare packageManager as pnpm@<version>" >&2; exit 1; }
 node_is_supported() {
   "$1" -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 20 || (major === 20 && minor >= 16) ? 0 : 1)'
 }
-pnpm_is_supported() {
-  local version major
-  version="$("$1" --version 2>/dev/null)" || return 1
-  major="${version%%.*}"
-  [[ "$major" =~ ^[0-9]+$ ]] && (( major >= 9 ))
+pnpm_is_pinned() {
+  [[ "$("$1" --version 2>/dev/null)" == "$pnpm_version" ]]
 }
 
 if [[ -x "$toolchain_prefix/bin/node" ]] && node_is_supported "$toolchain_prefix/bin/node"; then
@@ -22,16 +21,16 @@ fi
 if ! command -v node >/dev/null 2>&1 || ! node_is_supported "$(command -v node)"; then
   echo "Installing the Node.js 22 and pnpm toolchain..."
   mkdir -p "$toolchain_prefix"
-  npm install --global --prefix "$toolchain_prefix" node@22 pnpm@10
+  npm install --global --prefix "$toolchain_prefix" node@22 "pnpm@$pnpm_version"
   export PATH="$toolchain_prefix/bin:$PATH"
 fi
 
 echo "Checking Node.js version..."
 node_is_supported "$(command -v node)"
 
-if ! command -v pnpm >/dev/null 2>&1 || ! pnpm_is_supported "$(command -v pnpm)"; then
+if ! command -v pnpm >/dev/null 2>&1 || ! pnpm_is_pinned "$(command -v pnpm)"; then
   echo "Installing pnpm..."
-  npm install --global --prefix "$toolchain_prefix" pnpm@10
+  npm install --global --prefix "$toolchain_prefix" "pnpm@$pnpm_version"
   export PATH="$toolchain_prefix/bin:$PATH"
 fi
 

@@ -55,6 +55,6 @@ flowchart LR
 
 ## Deployment boundary
 
-Railway runs the stateless application and serves the dashboard/API. Vercel hosts immutable, versioned knowledge documents and their manifest. In production, the engine fails closed when it cannot load the manifest or validate every document hash.
+Railway can run the current single-process deployment skeleton and serve the dashboard/API. The application has no database, but it is not operationally stateless: v2 run state and raw evidence are held in process memory, so restarts lose active runs and horizontal scaling is not supported. Vercel hosts immutable, versioned knowledge documents and their manifest. In production mode, the engine fails closed when it cannot load the manifest or validate every document hash.
 
 The canonical readiness package is the sole output contract. PDF, HTML, or a later Saidot connector should render or transfer that package rather than calculate a second result.

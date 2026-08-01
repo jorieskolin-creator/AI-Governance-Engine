@@ -1,83 +1,99 @@
 # Vivicta AI Governance Engine
 
-Standalone, evidence-gated readiness assessment for AI solutions. The engine accepts an intended-use dossier, a codebase/source packet, and supporting evidence. It produces a structured readiness package that explains what is supported, unknown, contradictory, blocked, and required next.
+Evidence-gated readiness assessment for AI solutions. The engine accepts an intended-use dossier, source material and supporting evidence, then produces a structured package that distinguishes supported, unknown, contradictory and blocking conditions.
 
-This is a clean governance implementation inspired by the FinOps Engine's processing pattern. It contains no FinOps criteria, maturity model, scoring, personas, prompts, tactics, or terminology.
+## Project status
 
-## What the engine does
+> **Active pre-production development.** The deterministic governance core, source-intake path, cognitive contract skeleton and reporting views are implemented and covered by automated tests. The Knowledge Base taxonomy and content are still being authored. Production identity, persistence, horizontal scaling, operational monitoring and deployment hardening are not complete.
 
-- Starts from uploaded sources, registers and hashes them, and proposes a cited Assessment Intake for user confirmation.
-- Uses one browser/server source registry, continues through mixed repositories, and records every parsed, irrelevant, unsupported, failed, or unsafe file in a content-addressed Source Ingestion Manifest.
-- Scans code, configuration, tests, reviews, and operational records for governance-relevant signals.
-- Evaluates six governance domains across seven lifecycle stages.
-- Separates evidence coverage, control assurance, residual risk, and hard-gate status.
-- Preserves silence as `UNKNOWN`; it never treats missing evidence as proof of safety or compliance.
-- Selects approved governance actions only from verified findings.
-- Produces one canonical JSON readiness package with two connected views: the detailed Assessment Workspace and the decision-ready Assurance Summary.
-- Exports the Assurance Summary as a printable A4 report and a script-free, self-contained HTML file that works offline. Full evidence remains only in the protected JSON audit package.
-- Records required human authorities without issuing formal approval.
+The repository is suitable for controlled development and calibration. It is not a production certification service, legal-advice system or formal approval authority.
 
-## Evidence-gated cognitive pipeline (v3 contract)
+## Implemented foundation
 
-The authenticated v2 API now carries cognitive contract `3.0.0`: independently verified solution understanding, immutable raw/derived evidence lineage, object-level assessment coverage, parallel A-F claim extraction, independent verification, bounded rescan/adjudication, deterministic assessment, controlled synthesis, repair/re-analysis, and a separate publication gate. Its invariant is:
+- Source-first intake registers, classifies and hashes submitted artifacts and records exclusions in a content-addressed Source Ingestion Manifest.
+- Deterministic assessment evaluates six governance domains across seven lifecycle stages.
+- Evidence coverage, control assurance, residual risk and hard-gate status remain separate concepts.
+- Missing evidence remains `UNKNOWN`; silence is not interpreted as safety, compliance or absence of an anti-pattern.
+- Hard gates cannot be overridden by scores or generated narrative.
+- Required human authorities are recorded without issuing formal approval.
+- The canonical JSON package drives both the detailed Assessment Workspace and decision-ready Assurance Summary.
+- HTML and printable views are derived from the package and do not calculate a second outcome.
+- The optional cognitive pipeline preserves raw/derived lineage, verifies citations and keeps unsupported claims outside deterministic decision evidence.
+- Knowledge authoring validates rich category JSON and compiles five runtime collections plus an immutable manifest.
 
-`raw source → derived source → candidate fact/claim → verification → adjudicated claim → locked finding → deterministic decision → action → narrative → fact-check → publication gate`
+## Authority and evidence flow
 
-Only decision-eligible adjudicated claims become locked findings and deterministic evidence. Unsupported, conflicting, and unverifiable claims remain in a separate audit ledger. Raw model output cannot change applicability, assurance, anti-pattern state, hard gates, readiness, lifecycle boundaries, or formal authority.
+The cognitive contract is `3.0.0`. It is the only implemented cognitive pipeline; there is no separate shadow or compatibility implementation. `COGNITIVE_PIPELINE_ENABLED` controls the complete authenticated cognitive API and execution path.
 
-The v2 endpoints are disabled by default and require a bearer token:
-
-- `POST /api/v2/runs/preflight` parses and screens evidence locally and returns redacted packet previews.
-- `POST /api/v2/runs/{id}/discover` returns the cited Assessment Intake draft.
-- `POST /api/v2/runs/{id}/confirm` records the confirmed or corrected dossier without erasing source conflicts.
-- `POST /api/v2/runs/{id}/execute` records explicit packet/provider approval and starts the run.
-- `GET /api/v2/runs/{id}` returns progress.
-- `GET /api/v2/runs/{id}/result` returns `ReadinessPackageV2`.
-- `DELETE /api/v2/runs/{id}` cancels and purges the ephemeral evidence.
-- `GET /api/v2/models` shows profile availability and approval state without exposing credentials.
-
-Preflight accepts UTF-8 or base64 content with an explicit MIME type. Supported formats include common repository text and code, JSON, CSV, inert HTML, PDF, DOCX, XLSX, PNG, JPEG, and WebP. Office archives are checked for unsafe paths, macros, excessive expansion, and suspicious compression. Files, macros, spreadsheet formulas, scripts, links, and source instructions are never executed or calculated. Images must be marked by the caller as sanitized before they can be transmitted.
-
-Mixed selections continue when at least one relevant source is parseable. Dependency, generated, build, cache, and version-control content is recorded as `KNOWN_IRRELEVANT`; source-like, parse, and unsafe exclusions create `SOURCE_COVERAGE_INCOMPLETE`. That gate requires review and an isolated sandbox in early stages and blocks Deployment or later progression until the blind spot is resubmitted or covered by an attributable scoped human review. Ordinary intake confirmation cannot clear it.
-
-Production model profiles are allow-listed per stage through `MODEL_PROFILE_APPROVALS`. Pilot profiles are never promoted automatically. Set `COGNITIVE_PIPELINE_V3_ENABLED=true` only after shadow calibration; integrity protections remain fail-closed in compatibility mode.
-
-## Run
-
-Use Node.js 20.16 or newer. Install the pinned parser dependencies before starting:
-
-```powershell
-npm install
-npm test
-npm start
+```text
+raw source
+  -> derived source
+  -> candidate fact or claim
+  -> independent verification
+  -> adjudicated claim
+  -> locked finding
+  -> deterministic decision and action
+  -> controlled narrative
+  -> fact-check
+  -> publication gate
 ```
 
-Open `http://localhost:4174`. Upload a codebase folder or individual PDF, DOCX, XLSX, CSV, HTML, Markdown, JSON, configuration, code, text, or supported image file. Use **Discover case information**, review the cited draft, and then confirm or correct it before assessment. **Load credible sample** remains available for deterministic calibration.
+Only decision-eligible adjudicated claims become locked findings and deterministic evidence. Unsupported, conflicting and unverifiable claims remain in the audit ledger. Model output cannot directly change applicability, assurance, anti-pattern state, hard gates, readiness, lifecycle boundaries or formal authority.
 
-The post-assessment result opens in **Assurance Summary** when `ASSURANCE_SUMMARY_ENABLED=true`. Switch to **Assessment Workspace** without rerunning the assessment. The summary provides the complete Case Profile, documentation alignment, immutable lifecycle boundary, hard gates, A–F status, strengths, blockers, actions, human authority, audit identity, and limitations. It intentionally contains no Evidence Digest or raw excerpts.
+The engine returns readiness recommendations such as `READY_WITH_CONDITIONS`, `REMEDIATE_BEFORE_NEXT_STAGE`, `HUMAN_REVIEW_REQUIRED` and `BLOCKED_IN_CURRENT_FORM`. Legal, Privacy, Security, Governance, AI Forum and AI Board decisions remain human acts. `FORMALLY_APPROVED` is reserved for a future trusted decision connector that verifies identity, authority, signature, scope and validity.
 
-Use **Print / Save PDF**, **Download HTML**, or the unchanged canonical **Download JSON** control. HTML and PDF are derived views only: they never calculate an outcome. The standalone HTML contains no scripts, external assets, or executable source-provided markup.
+## Local development
 
-## API
+Requirements:
 
-`POST /api/assess`
+- Node.js 20.16 or newer; CI and Amp orbs use Node.js 22.
+- pnpm 10.34.5, pinned by the `packageManager` field.
+
+```bash
+pnpm install --frozen-lockfile
+pnpm run check
+pnpm start
+```
+
+The dashboard is served on port `4174` by default. Copy configuration from `.env.example` into your development environment; do not commit credentials.
+
+The dashboard can upload a codebase folder or individual supported files, discover cited case information for review, and run the deterministic assessment. **Load credible sample** provides a local calibration case.
+
+## Current deterministic API
+
+`POST /api/assess` accepts the current dossier model and text sources:
 
 ```json
 {
   "dossier": {
     "name": "Internal knowledge assistant",
     "intendedPurpose": "Answer employee questions from approved internal material",
-    "expectedValue": "Reduce support handling time",
+    "expectedValue": "Reduce repeated support handling",
     "currentStage": "DESIGN_AND_DEVELOPMENT",
     "targetStage": "VERIFICATION_AND_VALIDATION",
     "jurisdictions": ["EU"],
     "roles": ["DEPLOYER"],
     "users": ["EMPLOYEES"],
     "accountableOwner": "Solution owner",
-    "data": { "personalData": false, "specialCategoryData": false, "productionData": false },
-    "exposure": { "externalUsers": false, "productionAccess": false, "consequentialDecisions": false },
-    "agent": { "usesAgents": true, "canTakeActions": false, "irreversibleActions": false, "humanOverride": true },
-    "classification": { "prohibitedPractice": false, "highRiskCandidate": false },
+    "data": {
+      "categories": ["SYNTHETIC", "PUBLIC_NON_PERSONAL"]
+    },
+    "exposure": {
+      "currentUserAccess": "INTERNAL_ONLY",
+      "intendedUserAccess": "INTERNAL_ONLY",
+      "productionAccess": false,
+      "consequentialDecisions": false
+    },
+    "agent": {
+      "usesAgents": true,
+      "canTakeActions": false,
+      "irreversibleActions": false,
+      "humanOverride": true
+    },
+    "classification": {
+      "prohibitedPractice": false,
+      "highRiskCandidate": false
+    },
     "operatingBoundary": {
       "allowedUses": ["Internal employee question answering"],
       "excludedUses": ["Consequential employment decisions"],
@@ -98,59 +114,71 @@ Use **Print / Save PDF**, **Download HTML**, or the unchanged canonical **Downlo
 }
 ```
 
-`GET /api/sample` returns a complete sample request. `GET /api/knowledge` returns the active, versioned knowledge manifest. `GET /api/knowledge/diagnostics` exposes hash checks, release status, structural validation and cross-document reference integrity without exposing knowledge content. `GET /api/config` exposes non-secret experience flags.
+Additional deterministic endpoints:
 
-`POST /api/discover` accepts source-first MIME-aware uploads without a dossier and returns a deterministic `solutionProfile`, source manifest, local DLP findings, and the AI-recheck availability policy. Binary sources use base64; HTML is parsed inertly. Data is described with explicit multi-select categories, while current and intended user access are separate bounded modes.
+- `POST /api/discover` performs MIME-aware source discovery without requiring a dossier.
+- `GET /api/sample` returns a complete current sample request.
+- `GET /api/knowledge` returns the active sanitized knowledge identity.
+- `GET /api/knowledge/diagnostics` returns structural and referential diagnostics.
+- `GET /api/config` returns non-secret experience and pipeline availability flags.
 
-`POST /api/v2/runs/{id}/discover-recheck` can semantically recheck unresolved deterministic facts. It is intentionally available only after authenticated v2 preflight and explicit approval of every transmitted packet and provider. Exact source quotes are verified locally, results remain candidates requiring user confirmation, and the recheck cannot overwrite deterministic facts.
+The deterministic package is schema `1.3.0`. It includes the Assessment Intake, field-level solution profile, documentation readiness, source-ingestion record, lifecycle transition boundary and Assurance Summary. Lexical matches remain automated indicators; they are not cognitive verification.
 
-The deterministic package is schema `1.3.0`; `ReadinessPackageV2` is additive at schema `2.5.0`. Both include immutable `assessmentIntake` `1.2.0`, field-level `solutionProfile`, `documentationReadiness`, `sourceIngestion`, `transitionBoundary`, and `assuranceSummary`. The Assurance Summary contract is `assurance-summary-1.4.0`. V2.5 additionally exposes derived-source lineage, adjudicated and unresolved claim ledgers, object-level coverage, finding locks, exact action grounding, bounded re-analysis, and the readiness-independent publication gate. V1 lexical matches remain automated indicators because cognitive verification was not run.
+## Authenticated cognitive API
 
-### v2 preflight example
+The cognitive API is disabled by default. When enabled, every `/api/v2/*` request requires `Authorization: Bearer <COGNITIVE_API_TOKEN>`.
 
-```json
-{
-  "sources": [
-    {
-      "path": "src/assistant.js",
-      "mimeType": "application/javascript",
-      "encoding": "utf8",
-      "content": "export function answer() { /* ... */ }",
-      "metadata": { "kind": "CODE" }
-    }
-  ]
-}
-```
+- `POST /api/v2/runs/preflight` parses and screens evidence locally and returns redacted packet previews.
+- `POST /api/v2/runs/{id}/discover` returns the cited intake draft.
+- `POST /api/v2/runs/{id}/discover-recheck` performs an approved semantic recheck without overwriting deterministic facts.
+- `POST /api/v2/runs/{id}/confirm` records the reviewed dossier without erasing source conflicts.
+- `POST /api/v2/runs/{id}/execute` records explicit packet/provider approval and starts the run.
+- `GET /api/v2/runs/{id}` returns progress.
+- `GET /api/v2/runs/{id}/result` returns `ReadinessPackageV2` schema `2.5.0`.
+- `DELETE /api/v2/runs/{id}` purges the ephemeral run record and evidence held by the run store.
+- `GET /api/v2/models` exposes profile availability and approval state without credentials.
 
-The dossier is optional at preflight. When omitted, call `/discover`, submit the reviewed dossier and field confirmations to `/confirm`, then approve the resulting redacted packets for `/execute`.
+Supported intake includes common repository text and code, JSON, CSV, inert HTML, PDF, DOCX, XLSX, PNG, JPEG and WebP. Binary content uses base64. Office archives are checked for unsafe paths, macros, excessive expansion and suspicious compression. Source files, formulas, scripts, links and embedded instructions are not executed.
 
-Use `Authorization: Bearer <COGNITIVE_API_TOKEN>` for every `/api/v2/*` request. Submit every returned packet ID to `/execute` with explicitly approved provider names. Approval is evaluated per transmitted packet and stage. Decision-relevant claims require a provider different from their extractor; insufficient independent-provider coverage produces `COGNITIVE_ASSESSMENT_INCOMPLETE` rather than a positive recommendation.
+## Knowledge Base status
+
+The bundled JavaScript catalogue is an explicitly `CALIBRATION_TEST_ONLY` bootstrap used for local development and tests. It is not an approved governance release and must not be presented as legal advice or a production control baseline.
+
+The long-term source of truth is the authoring JSON described in [knowledge-authoring/README.md](knowledge-authoring/README.md). Category PDFs and the five runtime collections are generated views. The taxonomy, stable identifier policy, status model and complete approved content are still under development.
+
+Production startup requires `VERCEL_KB_MANIFEST_URL`; it does not silently fall back to the local bootstrap catalogue. The loader verifies manifest and document hashes plus structural references. Approval and release-governance enforcement will be hardened as the taxonomy and Knowledge Base are finalized.
+
+See [docs/knowledge-base.md](docs/knowledge-base.md) for the runtime manifest and compilation contract.
+
+## Intentional current limitations
+
+- The service is a development skeleton, not a multi-tenant production service.
+- The v2 run store is process-local and in memory. Restarts lose active runs, and horizontal scaling is not supported.
+- Cancellation purges the run-store copy, but run-scoped abort propagation to an already active provider request is not implemented yet.
+- Authentication uses one service bearer token rather than tenant identity and authorization.
+- The legacy deterministic endpoints are not protected by the v2 authentication and rate-limit guard.
+- Aggregate run/provider concurrency, durable queues and financial budgets are not implemented.
+- Production monitoring, centralized audit logging, malware scanning, persistence, incident response and deployment security validation remain future hardening work.
+- Images currently rely on caller-provided sanitized metadata; a trusted image-sanitization service is not integrated.
+- Knowledge taxonomy, identifiers and release content are not finalized.
+- Final readiness packages are versioned by implementation contract but do not yet pass a separate runtime output-schema validator.
+
+These limitations are development boundaries, not evidence that the corresponding production controls exist. See [SECURITY.md](SECURITY.md) and [docs/deployment.md](docs/deployment.md) for additional security and deployment context.
 
 ## Model qualification
 
-Run the live harness only in a controlled environment with provider credentials:
+Live benchmarking is opt-in because it sends approved packets to configured providers and incurs cost:
 
-```powershell
-$env:BENCHMARK_CONFIRM_LIVE_CALLS="true"
-npm run benchmark:models
+```bash
+BENCHMARK_CONFIRM_LIVE_CALLS=true pnpm run benchmark:models
 ```
 
-Use `BENCHMARK_PROFILE_IDS` to constrain cost. The harness checks schemas and zero-tolerance integrity conditions and emits hashes, usage, and latency. It deliberately reports `REQUIRES_HUMAN_LABEL_REVIEW`: human-labelled precision and high/critical recall must meet the documented floors before profile IDs are added to `MODEL_PROFILE_APPROVALS`.
+Use `BENCHMARK_PROFILE_IDS` to constrain the run. The harness checks structured output and zero-tolerance integrity conditions, but deliberately reports `REQUIRES_HUMAN_LABEL_REVIEW`. Human-labelled precision and high/critical recall must meet the qualification floors before profile IDs are added to `MODEL_PROFILE_APPROVALS`.
 
-## Human authority boundary
+## Further documentation
 
-The engine emits one of:
-
-- `READY_FOR_NEXT_STAGE`
-- `READY_WITH_CONDITIONS`
-- `REMEDIATE_BEFORE_NEXT_STAGE`
-- `HUMAN_REVIEW_REQUIRED`
-- `BLOCKED_IN_CURRENT_FORM`
-
-These are readiness recommendations. `LEGAL`, `PRIVACY`, `SECURITY`, `GOVERNANCE`, `AI_FORUM`, and `AI_BOARD` decisions remain human acts. The engine has no API that can create a formal approval, and its output contract identifies the authority required for every unresolved decision.
-
-The `FORMALLY_APPROVED` assurance state is reserved for a future trusted decision connector that verifies human identity, authority, signature, decision scope, and validity. The public assessment API caps a caller-supplied approval artifact at `HUMAN_VALIDATED`; it cannot self-assert or import formal authorization by metadata alone.
-
-## Knowledge governance
-
-The bundled catalogue is a pilot baseline, not legal advice. Normative sources carry authority type, effective dates, official URLs, and human-approval status. Production use requires provision-level mappings to be approved and maintained by the accountable Legal, Privacy, Security, and Governance owners.
+- [Architecture and trust boundaries](docs/architecture.md)
+- [Knowledge Base runtime contract](docs/knowledge-base.md)
+- [Knowledge authoring workflow](knowledge-authoring/README.md)
+- [Deployment skeleton](docs/deployment.md)
+- [Security model](SECURITY.md)

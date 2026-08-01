@@ -459,7 +459,7 @@ export async function executeCognitiveRun(run, options = {}) {
   const cognitiveCoverage = { required: true, complete: failedStages.length === 0 && coverageMatrix.complete, failedStages: unique(failedStages), domainCount: Object.keys(DOMAINS).length, assessedDomainCount: domainResults.filter((item) => item.status === "COMPLETED").length, claimCount: claimRecords.size, verifiedClaimCount: lockedFindings.length, coverageMatrix };
   const publicationGate = evaluatePublicationGate({ coverageMatrix, findingLockRecords, unresolvedClaims, factCheckIntegrity, narrative: synthesis, actionGroundingRecords: provisional.actionGroundingRecords, integrityIncidents, reanalysisTrace });
   const cognitive = {
-    contractVersion: COGNITIVE_CONTRACT_VERSION, rolloutMode: options.v3Enabled === false ? "SHADOW_COMPATIBILITY" : "ENABLED", solutionModel, derivedSourceUnits: derivedSourceUnits.map(({ content, ...item }) => ({ ...item, contentHash: sha256(content) })),
+    contractVersion: COGNITIVE_CONTRACT_VERSION, rolloutMode: "ENABLED", solutionModel, derivedSourceUnits: derivedSourceUnits.map(({ content, ...item }) => ({ ...item, contentHash: sha256(content) })),
     claimLedger: [...claimRecords.values()], contradictionGraph: consolidated.contradictionGraph, verificationRecords, adjudicatedClaims, unresolvedClaims, lockedFindings, findingLockRecords,
     coverage: cognitiveCoverage, coverageMatrix, narrative: publicationGate.status === "REPORT_WITHHELD" ? deterministicNarrative(provisional, lockedFindings) : synthesis, factCheck, factCheckIntegrity,
     reanalysisTrace, publicationGate, actionGroundingRecords: provisional.actionGroundingRecords, integrityIncidents,

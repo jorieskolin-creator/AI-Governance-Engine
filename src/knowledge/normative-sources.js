@@ -1,4 +1,4 @@
-export const KNOWLEDGE_VERSION = "vivicta-governance-pilot-2026-07-29";
+export const KNOWLEDGE_VERSION = "ai-governance-calibration-2026-07-29";
 
 export const NORMATIVE_SOURCES = Object.freeze([
   {
@@ -26,11 +26,11 @@ export const NORMATIVE_SOURCES = Object.freeze([
     notes: "Applicability and lawful-basis conclusions require Privacy or Legal validation."
   },
   {
-    id: "SRC-VIVICTA-AI-GOVERNANCE-GUIDELINE-2026",
-    title: "Vivicta AI Governance Process",
+    id: "SRC-INTERNAL-AI-GOVERNANCE-GUIDELINE-2026",
+    title: "Internal AI Governance Process",
     authority: "INTERNAL_PROCESS",
-    jurisdiction: "VIVICTA",
-    officialUrl: "internal://vivicta/ai-governance-process",
+    jurisdiction: "INTERNAL",
+    officialUrl: "internal://organization/ai-governance-process",
     effectiveFrom: "2026-01-01",
     effectiveUntil: null,
     approvalStatus: "PILOT_REVIEW_REQUIRED",

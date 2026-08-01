@@ -1,4 +1,4 @@
-# Vivicta AI Governance Engine
+# AI Governance Engine
 
 Evidence-gated readiness assessment for AI solutions. The engine accepts an intended-use dossier, source material and supporting evidence, then produces a structured package that distinguishes supported, unknown, contradictory and blocking conditions.
 

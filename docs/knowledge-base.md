@@ -5,7 +5,7 @@ Production knowledge is loaded from `VERCEL_KB_MANIFEST_URL`. The manifest and e
 ```json
 {
   "schemaVersion": "1.0.0",
-  "version": "vivicta-approved-2026-08-01",
+  "version": "ai-governance-approved-2026-08-01",
   "documents": [
     {
       "id": "normative-sources-2026-08",

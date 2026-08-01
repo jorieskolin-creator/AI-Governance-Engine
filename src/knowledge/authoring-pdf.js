@@ -46,7 +46,7 @@ function objectValues(doc, value) {
 
 function header(doc, title, subtitle) {
   doc.rect(0, 0, doc.page.width, 155).fill(COLORS.forest);
-  doc.fillColor(COLORS.lime).font("Helvetica-Bold").fontSize(9).text("VIVICTA AI GOVERNANCE KNOWLEDGE BASE", 48, 42);
+  doc.fillColor(COLORS.lime).font("Helvetica-Bold").fontSize(9).text("AI GOVERNANCE KNOWLEDGE BASE", 48, 42);
   doc.fillColor("#ffffff").fontSize(24).text(title, 48, 67, { width: 500 });
   doc.fillColor("#dce8df").font("Helvetica").fontSize(10).text(subtitle, 48, 112, { width: 500 });
   doc.y = 175;

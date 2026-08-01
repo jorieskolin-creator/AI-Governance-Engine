@@ -3,7 +3,7 @@ export const REQUIREMENTS = Object.freeze([
     id: "REQ-A-001",
     domain: "A",
     title: "Intended purpose and accountable use boundary",
-    sourceIds: ["SRC-EU-AI-ACT-2024-1689-OMNIBUS-2026", "SRC-VIVICTA-AI-GOVERNANCE-GUIDELINE-2026"],
+    sourceIds: ["SRC-EU-AI-ACT-2024-1689-OMNIBUS-2026", "SRC-INTERNAL-AI-GOVERNANCE-GUIDELINE-2026"],
     authority: "MIXED",
     lifecycleStages: ["QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "REVIEW_AND_EVALUATION"],
     applicability: "ALWAYS",
@@ -25,7 +25,7 @@ export const REQUIREMENTS = Object.freeze([
     id: "REQ-A-003",
     domain: "A",
     title: "Value and proportionality hypothesis",
-    sourceIds: ["SRC-VIVICTA-AI-GOVERNANCE-GUIDELINE-2026", "SRC-NIST-AI-RMF-1-GAI"],
+    sourceIds: ["SRC-INTERNAL-AI-GOVERNANCE-GUIDELINE-2026", "SRC-NIST-AI-RMF-1-GAI"],
     authority: "INTERNAL_PROCESS",
     lifecycleStages: ["QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "REVIEW_AND_EVALUATION"],
     applicability: "ALWAYS",
@@ -58,7 +58,7 @@ export const REQUIREMENTS = Object.freeze([
     id: "REQ-B-003",
     domain: "B",
     title: "Confidentiality, IP and licensing",
-    sourceIds: ["SRC-VIVICTA-AI-GOVERNANCE-GUIDELINE-2026", "SRC-ISO-IEC-42001-2023"],
+    sourceIds: ["SRC-INTERNAL-AI-GOVERNANCE-GUIDELINE-2026", "SRC-ISO-IEC-42001-2023"],
     authority: "INTERNAL_PROCESS",
     lifecycleStages: ["DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION", "DEPLOYMENT"],
     applicability: "ALWAYS",
@@ -168,7 +168,7 @@ export const REQUIREMENTS = Object.freeze([
     id: "REQ-F-001",
     domain: "F",
     title: "Accountability and decision rights",
-    sourceIds: ["SRC-VIVICTA-AI-GOVERNANCE-GUIDELINE-2026", "SRC-ISO-IEC-42001-2023"],
+    sourceIds: ["SRC-INTERNAL-AI-GOVERNANCE-GUIDELINE-2026", "SRC-ISO-IEC-42001-2023"],
     authority: "INTERNAL_PROCESS",
     lifecycleStages: ["QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION", "DEPLOYMENT", "OPERATION_AND_MONITORING", "REVIEW_AND_EVALUATION", "RETIREMENT"],
     applicability: "ALWAYS",
@@ -190,7 +190,7 @@ export const REQUIREMENTS = Object.freeze([
     id: "REQ-F-003",
     domain: "F",
     title: "Monitoring, incidents, material change and retirement",
-    sourceIds: ["SRC-EU-AI-ACT-2024-1689-OMNIBUS-2026", "SRC-VIVICTA-AI-GOVERNANCE-GUIDELINE-2026"],
+    sourceIds: ["SRC-EU-AI-ACT-2024-1689-OMNIBUS-2026", "SRC-INTERNAL-AI-GOVERNANCE-GUIDELINE-2026"],
     authority: "MIXED",
     lifecycleStages: ["DEPLOYMENT", "OPERATION_AND_MONITORING", "REVIEW_AND_EVALUATION", "RETIREMENT"],
     applicability: "PRODUCTION_OR_EXTERNAL",
@@ -198,4 +198,3 @@ export const REQUIREMENTS = Object.freeze([
     humanAuthority: "GOVERNANCE"
   }
 ]);
-

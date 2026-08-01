@@ -1,6 +1,6 @@
 export const SAMPLE_REQUEST = {
   dossier: {
-    name: "Vivicta Internal Knowledge Assistant",
+    name: "Internal Knowledge Assistant",
     intendedPurpose: "Answer employee process questions using approved internal knowledge while citing the supporting source.",
     expectedValue: "Reduce repeated support handling while preserving authoritative source ownership and escalation.",
     currentStage: "DESIGN_AND_DEVELOPMENT",

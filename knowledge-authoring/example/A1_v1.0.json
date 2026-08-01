@@ -34,13 +34,13 @@
   "related_criteria": [],
   "related_antipatterns": ["AP-A1"],
   "normative_source_mappings": [{
-    "source_id": "SRC-VIVICTA-GOV-2026",
-    "title": "Vivicta AI Governance Process",
-    "official_url": "internal://vivicta/ai-governance-process",
+    "source_id": "SRC-INTERNAL-GOV-2026",
+    "title": "Internal AI Governance Process",
+    "official_url": "internal://organization/ai-governance-process",
     "authority_type": "INTERNAL_PROCESS",
     "relevant_locator": "Qualification and registration",
     "mapping_rationale": "Defines the organizational purpose and ownership record.",
-    "jurisdiction": ["VIVICTA"],
+    "jurisdiction": ["INTERNAL"],
     "effective_status": "VERIFY_AT_ASSESSMENT",
     "last_verified_on": "2026-07-31"
   }],

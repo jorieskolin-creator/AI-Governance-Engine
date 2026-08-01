@@ -21,8 +21,8 @@ Every category must explicitly provide `runtime_severity`, `runtime_signals`, an
 ```powershell
 pnpm kb:validate -- --input "C:\path\to\authoring"
 pnpm kb:render -- --input "C:\path\to\authoring" --out "C:\path\to\human-pdfs"
-pnpm kb:compile -- --input "C:\path\to\authoring" --out "C:\path\to\runtime" --version "vivicta-governance-1.0.0" --release-status APPROVED
-pnpm kb:manifest -- --input "C:\path\to\runtime" --urls "C:\path\to\blob-urls.json" --version "vivicta-governance-1.0.0" --release-status APPROVED
+pnpm kb:compile -- --input "C:\path\to\authoring" --out "C:\path\to\runtime" --version "ai-governance-1.0.0" --release-status APPROVED
+pnpm kb:manifest -- --input "C:\path\to\runtime" --urls "C:\path\to\blob-urls.json" --version "ai-governance-1.0.0" --release-status APPROVED
 ```
 
 Use `--compat --allow-calibration` only for calibration of legacy packages. Compatibility mode maps legacy lifecycle labels, permits source-ID-only mappings, and infers missing runtime fields with visible warnings. It is not a production approval path.

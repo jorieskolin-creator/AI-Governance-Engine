@@ -1,0 +1,7 @@
+{
+  "normativeSources": "https://your-private-blob.example/normativeSources.json",
+  "requirements": "https://your-private-blob.example/requirements.json",
+  "controls": "https://your-private-blob.example/controls.json",
+  "antipatterns": "https://your-private-blob.example/antipatterns.json",
+  "tactics": "https://your-private-blob.example/tactics.json"
+}

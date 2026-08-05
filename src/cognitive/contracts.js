@@ -180,7 +180,7 @@ export const DOMAIN_CLAIMS_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["claimType", "statement", "sourceUnitIds", "evidenceQuotes", "controlIds", "antiPatternIds", "requirementIds", "domains", "severity", "proposedAssuranceState", "limitations"],
+        required: ["claimType", "statement", "sourceUnitIds", "evidenceQuotes", "controlIds", "antiPatternIds", "requirementIds", "findingDefinitionIds", "assessmentObjectIds", "domains", "severity", "proposedAssuranceState", "limitations", "proposedFindingState", "absenceTest"],
         properties: {
           claimType: { type: "string", enum: CLAIM_TYPES },
           statement: { type: "string" },
@@ -194,8 +194,8 @@ export const DOMAIN_CLAIMS_SCHEMA = {
           domains: { type: "array", items: { type: "string", enum: Object.keys(DOMAINS) } },
           severity: { type: "string", enum: SEVERITIES },
           proposedAssuranceState: { type: "string", enum: ["UNKNOWN", "DECLARED", "IMPLEMENTED", "TESTED", "OPERATIONALLY_OBSERVED", "HUMAN_VALIDATED"] },
-          limitations: { type: "array", items: { type: "string" } }, proposedFindingState: { type: "string" },
-          absenceTest: { type: "object", additionalProperties: false, required: ["scope", "method", "executedAt", "result", "systemVersion", "limitations"], properties: {
+          limitations: { type: "array", items: { type: "string" } }, proposedFindingState: { type: ["string", "null"] },
+          absenceTest: { type: ["object", "null"], additionalProperties: false, required: ["scope", "method", "executedAt", "result", "systemVersion", "limitations"], properties: {
             scope: { type: "string" }, method: { type: "string" }, executedAt: { type: "string" }, result: { type: "string" }, systemVersion: { type: "string" }, limitations: { type: "array", items: { type: "string" } }
           } }
         }
@@ -205,7 +205,7 @@ export const DOMAIN_CLAIMS_SCHEMA = {
 };
 
 export const VERIFICATION_SCHEMA = {
-  type: "object", additionalProperties: false, required: ["status", "rationale", "checkedSourceUnitIds", "conflictingSourceUnitIds"], properties: {
+  type: "object", additionalProperties: false, required: ["status", "rationale", "checkedSourceUnitIds", "conflictingSourceUnitIds", "acceptedAssuranceState", "mappingStatus", "scopeStatus", "quoteStatus"], properties: {
     status: { type: "string", enum: VERIFICATION_STATES }, rationale: { type: "string" }, checkedSourceUnitIds: { type: "array", items: { type: "string" } }, conflictingSourceUnitIds: { type: "array", items: { type: "string" } },
     acceptedAssuranceState: { type: "string", enum: ["UNKNOWN", "DECLARED", "IMPLEMENTED", "TESTED", "OPERATIONALLY_OBSERVED", "HUMAN_VALIDATED"] },
     mappingStatus: { type: "string", enum: ["SUPPORTED", "PARTIAL", "UNSUPPORTED", "NOT_CHECKED"] },
@@ -223,10 +223,10 @@ export const SYNTHESIS_SCHEMA = {
       type: "array",
       items: {
         type: "object", additionalProperties: false,
-        required: ["id", "section", "text", "findingIds", "gateIds", "controlIds", "evidenceIds"],
+        required: ["id", "section", "text", "domain", "authority", "findingIds", "gateIds", "controlIds", "evidenceIds", "actionIds"],
         properties: {
           id: { type: "string" }, section: { type: "string", enum: NARRATIVE_SECTIONS }, text: { type: "string" },
-          domain: { type: "string", enum: Object.keys(DOMAINS) }, authority: { type: "string" },
+          domain: { type: ["string", "null"], enum: [...Object.keys(DOMAINS), null] }, authority: { type: ["string", "null"] },
           findingIds: { type: "array", items: { type: "string" } }, gateIds: { type: "array", items: { type: "string" } },
           controlIds: { type: "array", items: { type: "string" } }, evidenceIds: { type: "array", items: { type: "string" } }, actionIds: { type: "array", items: { type: "string" } }
         }
@@ -238,9 +238,9 @@ export const SYNTHESIS_SCHEMA = {
 export const FACT_CHECK_SCHEMA = {
   type: "object", additionalProperties: false, required: ["supported", "itemResults"], properties: {
     supported: { type: "boolean" },
-    itemResults: { type: "array", items: { type: "object", additionalProperties: false, required: ["itemId", "status", "rationale", "correctedText"], properties: {
+    itemResults: { type: "array", items: { type: "object", additionalProperties: false, required: ["itemId", "status", "rationale", "correctedText", "issueType", "affectedFindingIds", "affectedActionIds"], properties: {
       itemId: { type: "string" }, status: { type: "string", enum: ["SUPPORTED", "PARTIAL", "UNSUPPORTED"] }, rationale: { type: "string" }, correctedText: { type: "string" },
-      issueType: { type: "string", enum: FACT_CHECK_ISSUES }, affectedFindingIds: { type: "array", items: { type: "string" } }, affectedActionIds: { type: "array", items: { type: "string" } }
+      issueType: { type: ["string", "null"], enum: [...FACT_CHECK_ISSUES, null] }, affectedFindingIds: { type: "array", items: { type: "string" } }, affectedActionIds: { type: "array", items: { type: "string" } }
     } } }
   }
 };

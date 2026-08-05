@@ -24,16 +24,29 @@ function geminiOutput(body) {
 
 function validateSchema(value, schema, path = "$") {
   if (schema.enum && !schema.enum.includes(value)) throw new Error(`${path} is outside the allowed enum`);
-  if (schema.type === "object") {
+  const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (value === null && types.includes("null")) return;
+  if (types.includes("object")) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${path} must be an object`);
     for (const key of schema.required ?? []) if (!Object.hasOwn(value, key)) throw new Error(`${path}.${key} is required`);
     if (schema.additionalProperties === false) for (const key of Object.keys(value)) if (!Object.hasOwn(schema.properties ?? {}, key)) throw new Error(`${path}.${key} is not allowed`);
     for (const [key, child] of Object.entries(schema.properties ?? {})) if (Object.hasOwn(value, key)) validateSchema(value[key], child, `${path}.${key}`);
-  } else if (schema.type === "array") {
+  } else if (types.includes("array")) {
     if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
     for (let index = 0; index < value.length; index += 1) validateSchema(value[index], schema.items, `${path}[${index}]`);
-  } else if (schema.type === "string" && typeof value !== "string") throw new Error(`${path} must be a string`);
-  else if (schema.type === "boolean" && typeof value !== "boolean") throw new Error(`${path} must be a boolean`);
+  } else if (types.includes("string") && typeof value !== "string") throw new Error(`${path} must be a string`);
+  else if (types.includes("boolean") && typeof value !== "boolean") throw new Error(`${path} must be a boolean`);
+}
+
+export function assertOpenAiStrictSchema(schema, path = "$") {
+  const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (types.includes("object")) {
+    const propertyNames = Object.keys(schema.properties ?? {}).sort();
+    const requiredNames = [...(schema.required ?? [])].sort();
+    if (propertyNames.join("|") !== requiredNames.join("|")) throw new Error(`${path} must require every declared object property for OpenAI strict structured output`);
+    for (const [name, child] of Object.entries(schema.properties ?? {})) assertOpenAiStrictSchema(child, `${path}.${name}`);
+  }
+  if (types.includes("array") && schema.items) assertOpenAiStrictSchema(schema.items, `${path}[]`);
 }
 
 async function requestJson(url, init, timeoutMs) {
@@ -47,6 +60,7 @@ async function requestJson(url, init, timeoutMs) {
 }
 
 function openAiRequest(profile, credential, prompt, schemaName, schema, media = []) {
+  assertOpenAiStrictSchema(schema);
   return requestJson("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" },

@@ -42,17 +42,17 @@ function mockTransport({ schemaName, prompt, profile }) {
   }
   else if (domain) {
     const quote = prompt.match(new RegExp(`SOURCE_UNIT ${unitId}\\n[^\\n]*\\n([^\\n]+)`))?.[1] ?? "[missing quote]";
-    value = { claims: [{ claimType: "CONTROL_SUPPORT", statement: `Candidate evidence for domain ${domain}.`, sourceUnitIds: [unitId], evidenceQuotes: [{ sourceUnitId: unitId, quote }], controlIds: [controlByDomain[domain]], antiPatternIds: [], requirementIds: [], domains: [domain], severity: "MEDIUM", proposedAssuranceState: "IMPLEMENTED", limitations: ["Static evidence only."] }] };
+    value = { claims: [{ claimType: "CONTROL_SUPPORT", statement: `Candidate evidence for domain ${domain}.`, sourceUnitIds: [unitId], evidenceQuotes: [{ sourceUnitId: unitId, quote }], controlIds: [controlByDomain[domain]], antiPatternIds: [], requirementIds: [], findingDefinitionIds: [], assessmentObjectIds: [], domains: [domain], severity: "MEDIUM", proposedAssuranceState: "IMPLEMENTED", limitations: ["Static evidence only."], proposedFindingState: null, absenceTest: null }] };
   }
-  else if (schemaName === "claim_verification" || schemaName === "claim_adjudication") value = { status: "SUPPORTED", rationale: "The cited source unit supports the narrow candidate statement.", checkedSourceUnitIds: [unitId], conflictingSourceUnitIds: [] };
+  else if (schemaName === "claim_verification" || schemaName === "claim_adjudication") value = { status: "SUPPORTED", rationale: "The cited source unit supports the narrow candidate statement.", checkedSourceUnitIds: [unitId], conflictingSourceUnitIds: [], acceptedAssuranceState: "IMPLEMENTED", mappingStatus: "SUPPORTED", scopeStatus: "SUPPORTED", quoteStatus: "SUPPORTED" };
   else if (schemaName === "readiness_synthesis") {
     const data = jsonBetween(prompt, "LOCKED_DECISION_DATA", "END_LOCKED_DECISION_DATA");
     const finding = data.lockedFindings[0];
-    value = { items: [{ id: "draft-executive", section: "EXECUTIVE_DECISION", text: "The deterministic package identifies remediation before progression.", findingIds: finding ? [finding.id] : [], gateIds: data.hardGates[0] ? [data.hardGates[0].id] : [], controlIds: finding?.controlIds ?? [], evidenceIds: [] }] };
+    value = { items: [{ id: "draft-executive", section: "EXECUTIVE_DECISION", text: "The deterministic package identifies remediation before progression.", domain: null, authority: null, findingIds: finding ? [finding.id] : [], gateIds: data.hardGates[0] ? [data.hardGates[0].id] : [], controlIds: finding?.controlIds ?? [], evidenceIds: [], actionIds: [] }] };
   }
   else if (schemaName === "narrative_fact_check") {
     const synthesis = jsonBetween(prompt, "SYNTHESIS", "LOCKED_FINDINGS");
-    value = { supported: true, itemResults: synthesis.items.map((item) => ({ itemId: item.id, status: "SUPPORTED", rationale: "The item is bounded by its cited deterministic references.", correctedText: "" })) };
+    value = { supported: true, itemResults: synthesis.items.map((item) => ({ itemId: item.id, status: "SUPPORTED", rationale: "The item is bounded by its cited deterministic references.", correctedText: "", issueType: null, affectedFindingIds: [], affectedActionIds: [] })) };
   }
   else throw new Error(`Unexpected schema: ${schemaName}`);
   return Promise.resolve({ value, responseModel: profile.model, usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } });

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { INTAKE_QUESTIONNAIRE } from "./intake-questionnaire.js";
 
 export const AUTHORING_SCHEMA_VERSION = "1.0.0";
 export const CANONICAL_LIFECYCLE_STAGES = Object.freeze([
@@ -264,7 +265,7 @@ export async function compileRuntimeCollections(validation, outputDirectory, opt
   const allObjects = [...capabilities, ...antipatterns];
   const runtimeTactics = tactics.map((item) => ({ id: item.id, version: item.version, status: APPROVED_STATUSES.has(item.__catalog?.release_status) ? "APPROVED" : item.__catalog?.release_status ?? "DRAFT", title: item.title, findingSignals: item.eligible_finding_ids, domains: unique([...array(item.assessment_mappings?.capabilities), ...array(item.assessment_mappings?.antipatterns)].map((id) => id.replace(/^AP-/, "").charAt(0))), lifecycleStages: unique(array(item.reassessment_targets).flatMap((id) => allObjects.find((object) => object.id === id)?.__canonicalStages ?? [])), useWhen: item.use_when ?? item.objective, doNotUseWhen: item.do_not_use_when, ownerRoles: item.owners, activities: item.activities, requiredArtifacts: item.artifacts, acceptanceCriteria: item.acceptance_criteria, verification: item.verification, blocksTransition: item.blocks_transition ?? "Progression remains blocked until acceptance evidence is reassessed.", completionEffect: "NEW_EVIDENCE_AND_REASSESSMENT_REQUIRED", assessmentMappings: item.assessment_mappings, eligibleFindingIds: item.eligible_finding_ids, triggerStates: item.trigger_states, reassessmentTargets: item.reassessment_targets })).sort((a, b) => a.id.localeCompare(b.id));
   await mkdir(outputDirectory, { recursive: true });
-  const collections = { normativeSources, requirements, controls, antipatterns: runtimeAntipatterns, tactics: runtimeTactics };
+  const collections = { normativeSources, requirements, controls, antipatterns: runtimeAntipatterns, tactics: runtimeTactics, intakeQuestionnaire: [structuredClone(INTAKE_QUESTIONNAIRE)] };
   for (const [type, entries] of Object.entries(collections)) if (!entries.length) throw new Error(`Compilation requires a non-empty ${type} collection`);
   const files = {};
   for (const [type, entries] of Object.entries(collections)) {
@@ -277,7 +278,7 @@ export async function compileRuntimeCollections(validation, outputDirectory, opt
 }
 
 export async function createRuntimeManifest(runtimeDirectory, urlMap, options = {}) {
-  const types = ["normativeSources", "requirements", "controls", "antipatterns", "tactics"];
+  const types = ["normativeSources", "requirements", "controls", "antipatterns", "tactics", "intakeQuestionnaire"];
   const report = JSON.parse(await readFile(path.join(runtimeDirectory, "compilation-report.json"), "utf8"));
   if (report.validation?.status !== "PASS") throw new Error("Compilation report is not valid");
   const documents = [];
@@ -288,7 +289,7 @@ export async function createRuntimeManifest(runtimeDirectory, urlMap, options = 
     if (report.files?.[type]?.sha256 !== actual) throw new Error(`Compiled file changed after validation: ${file}`);
     documents.push({ id: `kb-${type}-${options.version ?? report.version}`, type, url, sha256: actual });
   }
-  const manifest = { schemaVersion: "1.0.0", version: options.version ?? report.version, releaseStatus: options.releaseStatus ?? report.releaseStatus, generatedAt: new Date().toISOString(), documents };
+  const manifest = { schemaVersion: "1.1.0", version: options.version ?? report.version, releaseStatus: options.releaseStatus ?? report.releaseStatus, generatedAt: new Date().toISOString(), documents };
   await writeFile(path.join(runtimeDirectory, "runtime-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   return manifest;
 }

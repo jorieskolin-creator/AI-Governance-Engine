@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test",
-    "check": "node scripts/check-sources.js && node --test",
+    "check": "node scripts/check-sources.js && node scripts/check-content-policy.js && node --test",
     "benchmark:models": "node scripts/benchmark-models.js",
     "kb:validate": "node scripts/knowledge-authoring.js validate",
     "kb:compile": "node scripts/knowledge-authoring.js compile",

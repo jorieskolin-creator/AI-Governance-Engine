@@ -2,6 +2,42 @@ export const KNOWLEDGE_VERSION = "ai-governance-calibration-2026-07-29";
 
 export const NORMATIVE_SOURCES = Object.freeze([
   {
+    id: "SRC-EU-AIA-2024-1689",
+    title: "Regulation (EU) 2024/1689 - Artificial Intelligence Act",
+    authority: "BINDING_LAW",
+    jurisdiction: "EU",
+    officialUrl: "https://eur-lex.europa.eu/eli/reg/2024/1689/oj/eng",
+    effectiveFrom: "2024-08-01",
+    effectiveUntil: null,
+    approvalStatus: "APPROVED_SOURCE_METADATA",
+    ownerAuthority: "LEGAL",
+    notes: "Provision-level applicability and legal conclusions remain subject to current-version legal review."
+  },
+  {
+    id: "SRC-EU-AIA-ARTICLE-50-GUIDANCE-2026",
+    title: "Commission guidelines on transparency obligations under Article 50",
+    authority: "REGULATORY_GUIDANCE",
+    jurisdiction: "EU",
+    officialUrl: "https://digital-strategy.ec.europa.eu/en/library/guidelines-transparency-obligations-providers-and-deployers-ai-systems",
+    effectiveFrom: "2026-07-20",
+    effectiveUntil: null,
+    approvalStatus: "APPROVED_SOURCE_METADATA",
+    ownerAuthority: "LEGAL",
+    notes: "Final guidance; it does not replace the binding legal text."
+  },
+  {
+    id: "SRC-EU-AIA-HIGH-RISK-DRAFT-GUIDANCE-2026",
+    title: "Draft Commission guidelines on classification of high-risk AI systems",
+    authority: "DRAFT_REGULATORY_GUIDANCE",
+    jurisdiction: "EU",
+    officialUrl: "https://digital-strategy.ec.europa.eu/en/library/draft-commission-guidelines-classification-high-risk-ai-systems",
+    effectiveFrom: null,
+    effectiveUntil: null,
+    approvalStatus: "DRAFT_SOURCE_METADATA",
+    ownerAuthority: "LEGAL",
+    notes: "Draft guidance must never be represented as final or binding."
+  },
+  {
     id: "SRC-EU-AI-ACT-2024-1689-OMNIBUS-2026",
     title: "EU Artificial Intelligence Act - operational baseline after AI Omnibus",
     authority: "BINDING_LAW",

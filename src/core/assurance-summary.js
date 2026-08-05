@@ -239,11 +239,13 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
     ...(knowledge.releaseStatus !== "APPROVED" ? [`The assessment uses ${knowledge.releaseStatus ?? "UNSPECIFIED"} knowledge rather than an approved production normative mapping.`] : []),
     ...(cognitive?.coverage && !cognitive.coverage.complete ? [`Cognitive assessment incomplete: ${cognitive.coverage.failedStages.join(", ")}.`] : []),
     ...(cognitive?.publicationGate?.status === "REPORT_WITH_LIMITATIONS" ? cognitive.publicationGate.limitations.map((item) => `Publication limitation: ${item}.`) : []),
-    ...(cognitive?.publicationGate?.status === "REPORT_WITHHELD" ? ["Generated assurance narrative was withheld; use the deterministic package and audit ledger."] : [])
+    ...(cognitive?.publicationGate?.status === "REPORT_WITHHELD" ? ["Generated assurance narrative was withheld; use the deterministic package and audit ledger."] : []),
+    ...(documentationReadiness.questionnaireUnknowns?.length ? [`${documentationReadiness.questionnaireUnknowns.length} applicability or classification question(s) remain unknown or require human interpretation.`] : []),
+    ...(documentationReadiness.unsupportedNegativeAnswers?.length ? [`${documentationReadiness.unsupportedNegativeAnswers.length} negative or not-applicable declaration(s) lack sufficient support and cannot clear a gate.`] : [])
   ]);
 
   return {
-    version: "assurance-summary-1.4.0",
+    version: "assurance-summary-1.5.0",
     assessmentMode: mode,
     decision: recommendation,
     dimensions,

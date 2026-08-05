@@ -1,9 +1,12 @@
 import { LIFECYCLE_STAGES } from "../contracts.js";
 import { sha256, stableId } from "./hash.js";
+import { INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
 
 export const SOLUTION_FACT_CLASSES = Object.freeze(["OBSERVED", "INFERRED", "USER_DECLARED"]);
 export const SOLUTION_FACT_STATUSES = Object.freeze(["CANDIDATE", "CONFIRMED", "CONFLICTING", "UNKNOWN"]);
 export const SUPPORT_STRENGTHS = Object.freeze(["EXPLICIT", "DERIVED", "WEAK"]);
+export const INTAKE_FACT_ORIGINS = Object.freeze(["OBSERVED", "AI_CANDIDATE", "USER_DECLARED", "HUMAN_CLASSIFIED"]);
+export const INTAKE_SUPPORT_STATUSES = Object.freeze(["SUPPORTED", "PARTIAL", "UNSUPPORTED", "CONFLICTING", "NOT_CHECKED"]);
 
 const criticalFields = new Set(["name", "intendedPurpose", "accountableOwner", "jurisdictions", "currentStage", "classification.prohibitedPractice"]);
 const deployRequiredFields = Object.freeze([
@@ -139,12 +142,13 @@ function detectedList(sources, labels, values) {
 }
 
 function provisionalDossier(detected) {
+  const detectedRoles = detected.roles?.value ?? [];
   return {
     name: detected.name?.value ?? "",
     intendedPurpose: detected.intendedPurpose?.value ?? "",
     expectedValue: detected.expectedValue?.value ?? "",
-    currentStage: "QUALIFICATION_AND_REGISTRATION",
-    targetStage: "DESIGN_AND_DEVELOPMENT",
+    currentStage: "UNKNOWN",
+    targetStage: "UNKNOWN",
     jurisdictions: detected.jurisdictions?.value ?? [],
     roles: detected.roles?.value ?? [],
     users: detected.users?.value ?? [],
@@ -153,6 +157,13 @@ function provisionalDossier(detected) {
     exposure: { currentUserAccess: "UNKNOWN", intendedUserAccess: "UNKNOWN", externalUsers: null, productionAccess: null, consequentialDecisions: null },
     agent: { usesAgents: null, canTakeActions: null, irreversibleActions: null, humanOverride: null },
     classification: { prohibitedPractice: null, highRiskCandidate: null },
+    intakeAnswers: detectedRoles.length ? {
+      REGULATORY_ROLES: {
+        answerState: "YES", values: detectedRoles, origin: "OBSERVED", supportStatus: "PARTIAL",
+        sourceUnitIds: detected.roles.sourceUnitIds, evidenceLinks: [], limitations: ["Role terminology was mechanically located and still requires legal or governance confirmation."],
+        confirmedBy: null, confirmedAt: null
+      }
+    } : {},
     operatingBoundary: {
       allowedUses: [], excludedUses: [], environment: "ISOLATED_SANDBOX", userScope: "", dataScope: "", integrationScope: "",
       permissionScope: "", autonomyScope: "", monitoringOwner: "", expiresAt: null
@@ -232,7 +243,8 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
     const userConfirmed = confirmation[field]?.confirmed === true;
     const hasValue = value !== undefined && value !== null && value !== "" && (!Array.isArray(value) || value.length > 0);
     const conflictsWithDetected = Boolean(declaredDossier && discovery && normalizedFieldValue(field, discovery.value) && normalizedFieldValue(field, discovery.value) !== normalizedFieldValue(field, value));
-    const provisionalUnknown = !declaredDossier && provisionalDefaults.has(field) && !sourceUnitIds.length;
+    const lifecycleUnknown = ["currentStage", "targetStage"].includes(field) && dossier.lifecycleDeclaration?.[field] === "UNKNOWN";
+    const provisionalUnknown = lifecycleUnknown || (!declaredDossier && provisionalDefaults.has(field) && !sourceUnitIds.length);
     if (conflictsWithDetected) contradictions.push({
       id: stableId("solution-contradiction", { field, declaredValue: value, observedValue: discovery.value, sourceUnitIds: discovery.sourceUnitIds }),
       field, declaredValue: value, observedValue: discovery.value, sourceUnitIds: discovery.sourceUnitIds,
@@ -251,9 +263,33 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
     if (conflictsWithDetected) facts[field].candidates = [{ value, factClass: "USER_DECLARED" }, { value: discovery.value, factClass: "OBSERVED", sourceUnitIds: discovery.sourceUnitIds }];
   }
   addSemanticContradictions(dossier, facts, contradictions);
+  const assessmentIntakeFacts = Object.fromEntries(INTAKE_QUESTIONNAIRE.questions.map((question) => {
+    const answer = dossier.intakeAnswers?.[question.id] ?? {};
+    const answerState = answer.answerState ?? "UNKNOWN";
+    const values = answer.values ?? [];
+    const item = {
+      id: stableId("assessment-intake-fact", { questionId: question.id, answerState, values, sourceUnitIds: answer.sourceUnitIds ?? [] }),
+      questionId: question.id,
+      fieldId: question.fieldId,
+      value: values.length ? values : answerState,
+      answerState,
+      origin: answer.origin ?? "USER_DECLARED",
+      supportStatus: answer.supportStatus ?? (answerState === "UNKNOWN" ? "NOT_CHECKED" : "UNSUPPORTED"),
+      evidenceLinks: answer.evidenceLinks ?? [],
+      sourceUnitIds: unique(answer.sourceUnitIds ?? []),
+      requirementMappings: question.sourceMappings ?? [],
+      limitations: unique([...(answer.limitations ?? []), ...(answerState !== "UNKNOWN" && !(answer.sourceUnitIds?.length) ? ["The answer is declared but is not supported by submitted evidence."] : [])]),
+      confirmedBy: answer.confirmedBy ?? null,
+      confirmedAt: answer.confirmedAt ?? null,
+      negativeAnswerRequiresEvidence: question.negativeAnswerRequiresEvidence === true,
+      humanDecisionAuthority: question.humanDecisionAuthority
+    };
+    return [question.id, { ...item, hash: sha256(item) }];
+  }));
   const profile = {
-    version: "solution-profile-1.0.0",
+    version: "solution-profile-1.1.0",
     fields: facts,
+    assessmentIntakeFacts,
     contradictions,
     suggestedDossier: dossier,
     sourceCount: sources.length,
@@ -312,11 +348,16 @@ export function buildDocumentationReadiness(profile, targetStage, sourceIngestio
   const implementationSourceCount = (profile.artifactCounts?.PRODUCTION_CODE ?? 0) + (profile.artifactCounts?.CONFIGURATION ?? 0);
   const missingImplementationScope = deploymentTarget && implementationSourceCount === 0;
   const sourceCoverageReviewRequired = sourceIngestion?.coverageStatus === "INCOMPLETE_REVIEW_REQUIRED" && !sourceIngestion?.humanCoverageAcceptance;
-  const incompleteForDeployment = values.some((value) => !["DOCUMENTED_AND_CONFIRMED", "NOT_APPLICABLE"].includes(value)) || missingImplementationScope || sourceCoverageReviewRequired;
+  const questionFacts = Object.values(profile.assessmentIntakeFacts ?? {});
+  const questionnaireUnknowns = questionFacts.filter((item) => ["UNKNOWN", "HUMAN_REVIEW_REQUIRED"].includes(item.answerState)).map((item) => item.questionId);
+  const unsupportedNegativeAnswers = questionFacts.filter((item) => ["NO", "NOT_APPLICABLE"].includes(item.answerState) && item.negativeAnswerRequiresEvidence && !["SUPPORTED", "PARTIAL"].includes(item.supportStatus) && item.origin !== "HUMAN_CLASSIFIED").map((item) => item.questionId);
+  const questionnaireConflicts = questionFacts.filter((item) => item.supportStatus === "CONFLICTING").map((item) => item.questionId);
+  const incompleteForDeployment = values.some((value) => !["DOCUMENTED_AND_CONFIRMED", "NOT_APPLICABLE"].includes(value)) || missingImplementationScope || sourceCoverageReviewRequired || questionnaireUnknowns.length > 0 || unsupportedNegativeAnswers.length > 0 || questionnaireConflicts.length > 0;
   const materialContradictions = profile.contradictions.filter((item) => ["HIGH", "CRITICAL"].includes(item.severity));
-  const sandboxRequired = [...unknownFields, ...conflictingFields].some((field) => criticalFields.has(field)) || materialContradictions.length > 0 || sourceCoverageReviewRequired;
+  const criticalQuestionIds = new Set(["AI_SYSTEM_QUALIFICATION", "PROHIBITED_PRACTICE_CATEGORIES", "EU_MARKET_OR_SERVICE", "EU_ESTABLISHED_ACTOR", "EU_OUTPUT_USED", "ANNEX_III_USE_AREAS"]);
+  const sandboxRequired = [...unknownFields, ...conflictingFields].some((field) => criticalFields.has(field)) || questionnaireUnknowns.some((id) => criticalQuestionIds.has(id)) || questionnaireConflicts.length > 0 || materialContradictions.length > 0 || sourceCoverageReviewRequired;
   const value = {
-    version: "documentation-readiness-1.1.0",
+    version: "documentation-readiness-1.2.0",
     fieldStatuses: statuses,
     mandatoryFieldCount: deployRequiredFields.length,
     documentedAndConfirmedCount: confirmedFields.length,
@@ -328,6 +369,9 @@ export function buildDocumentationReadiness(profile, targetStage, sourceIngestio
     materialContradictionCount: materialContradictions.length,
     sourceCoverageStatus: sourceIngestion?.coverageStatus ?? "SUBMITTED_SCOPE_ONLY",
     sourceCoverageReviewRequired,
+    questionnaireUnknowns,
+    unsupportedNegativeAnswers,
+    questionnaireConflicts,
     documentationToCodeAlignment: conflictingFields.length ? "CONFLICTING" : missingImplementationScope ? "NOT_ASSESSED" : incompleteForDeployment ? "INCOMPLETE" : "ALIGNED",
     sandboxRequired,
     deploymentReady: !incompleteForDeployment,
@@ -348,7 +392,7 @@ export function buildAssessmentIntake(dossier, profile, documentationReadiness, 
     if (!seenSources.has(key)) { seenSources.add(key); provenance.push(entry); }
   }
   const intake = {
-    version: "assessment-intake-1.2.0",
+    version: "assessment-intake-1.3.0",
     identity: { name: dossier.name, accountableOwner: dossier.accountableOwner },
     intendedUse: { intendedPurpose: dossier.intendedPurpose, expectedValue: dossier.expectedValue },
     lifecycle: { currentStage: dossier.currentStage, targetStage: dossier.targetStage },
@@ -357,6 +401,12 @@ export function buildAssessmentIntake(dossier, profile, documentationReadiness, 
     operatingBoundary: structuredClone(dossier.operatingBoundary),
     data: structuredClone(dossier.data), exposure: structuredClone(dossier.exposure),
     agentAuthority: structuredClone(dossier.agent), classification: structuredClone(dossier.classification),
+    questionnaire: {
+      id: INTAKE_QUESTIONNAIRE.id,
+      version: INTAKE_QUESTIONNAIRE.version,
+      answers: Object.values(profile.assessmentIntakeFacts ?? {}),
+      humanClassificationQuestions: Object.values(profile.assessmentIntakeFacts ?? {}).filter((item) => item.answerState === "HUMAN_REVIEW_REQUIRED" || item.supportStatus === "CONFLICTING").map((item) => item.questionId)
+    },
     sourceProvenance: provenance,
     sourceIngestion,
     sourceManifestHash: sha256(provenance.map(({ id, path, sha256: hash, artifactClass: classification }) => ({ id, path, hash, classification }))),
@@ -371,6 +421,7 @@ export function caseProfileView(assessmentIntake, profile) {
   const statusFor = (field) => assessmentIntake.documentationAlignment.fieldStatuses[field] ?? "UNKNOWN";
   const exposureEntries = Object.entries(assessmentIntake.exposure).filter(([field]) => field !== "externalUsers"
     || !("currentUserAccess" in assessmentIntake.exposure || "intendedUserAccess" in assessmentIntake.exposure));
+  const questionById = new Map(INTAKE_QUESTIONNAIRE.questions.map((item) => [item.id, item]));
   return {
     identityAndIntent: [
       { field: "name", label: "Solution name", value: assessmentIntake.identity.name, status: statusFor("name") },
@@ -394,7 +445,13 @@ export function caseProfileView(assessmentIntake, profile) {
       ...exposureEntries.map(([field, value]) => ({ field: `exposure.${field}`, label: fieldLabel(`exposure.${field}`), value, status: statusFor(`exposure.${field}`) })),
       ...Object.entries(assessmentIntake.agentAuthority).map(([field, value]) => ({ field: `agent.${field}`, label: fieldLabel(`agent.${field}`), value, status: statusFor(`agent.${field}`) })),
       ...Object.entries(assessmentIntake.classification).map(([field, value]) => ({ field: `classification.${field}`, label: fieldLabel(`classification.${field}`), value, status: statusFor(`classification.${field}`) }))
-    ]
+    ],
+    classificationScreening: (assessmentIntake.questionnaire?.answers ?? []).map((item) => ({
+      field: item.questionId,
+      label: questionById.get(item.questionId)?.prompt ?? item.questionId,
+      value: item.value,
+      status: item.answerState === "UNKNOWN" ? "UNKNOWN" : item.supportStatus
+    }))
   };
 }
 

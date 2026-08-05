@@ -14,13 +14,14 @@ import { modelPolicy, publicModelPolicy, requiredGovernanceProviders } from "./c
 import { EphemeralRunStore } from "./cognitive/run-store.js";
 import { buildSourceIngestionManifest } from "./core/source-ingestion.js";
 import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
+import { sanitizeRestrictedValue } from "../public/content-policy.js";
 
 const port = Number(process.env.PORT ?? 4174);
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 const allowedOrigin = process.env.ALLOWED_ORIGIN ?? `http://localhost:${port}`;
 const maxBodyBytes = 25 * 1024 * 1024;
 const assuranceSummaryEnabled = process.env.ASSURANCE_SUMMARY_ENABLED !== "false";
-const cognitiveContractVersion = "3.0.0";
+const cognitiveContractVersion = "3.1.0";
 const buildRevision = process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GIT_COMMIT_SHA ?? "local";
 function positiveEnvNumber(name, fallback) {
   const value = Number(process.env[name] ?? fallback);
@@ -34,7 +35,7 @@ const runStore = new EphemeralRunStore();
 const rateWindows = new Map();
 
 function sendJson(response, status, value) {
-  const body = JSON.stringify(value);
+  const body = JSON.stringify(sanitizeRestrictedValue(value));
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body), "Cache-Control": "no-store" });
   response.end(body);
 }
@@ -194,6 +195,7 @@ const server = http.createServer(async (request, response) => {
       discoveryRecheckAvailable: true
     });
     if (request.method === "GET" && url.pathname === "/api/knowledge") return sendJson(response, 200, knowledgeManifestView(knowledge));
+    if (request.method === "GET" && url.pathname === "/api/intake-questionnaire") return sendJson(response, 200, { ...knowledge.intakeQuestionnaire, source: knowledge.intakeQuestionnaireSource ?? "BUNDLED" });
     if (request.method === "GET" && url.pathname === "/api/knowledge/diagnostics") return sendJson(response, 200, knowledge.diagnostics ?? { status: "UNKNOWN", issues: [{ severity: "WARNING", code: "DIAGNOSTICS_UNAVAILABLE", message: "Knowledge diagnostics were not generated at startup.", entryIds: [] }] });
     if (request.method === "POST" && url.pathname === "/api/discover") {
       const payload = await readJson(request);
@@ -218,7 +220,8 @@ const server = http.createServer(async (request, response) => {
         sourceManifest: run.registeredSources,
         dlpFindings: run.dlpFindings,
         sourceIngestion: run.sourceIngestion,
-        discoveryRecheck
+        discoveryRecheck,
+        citationIndex: run.packets.flatMap((packet) => packet.sourceUnits.map((unit) => ({ sourceUnitId: unit.id, path: unit.path, locator: unit.locator, sha256: unit.sha256 })))
       });
     }
     if (request.method === "POST" && url.pathname === "/api/assess") {

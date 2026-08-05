@@ -2,14 +2,14 @@
 
 ## Decision-ready reporting
 
-The canonical readiness package is the only source of truth. Source-first intake first builds a content-addressed `SourceIngestionManifest 1.0.0`, then a field-level `solutionProfile`, immutable `assessmentIntake 1.2.0`, and deterministic `documentationReadiness` before governance assessment. The engine then builds `transitionBoundary`, enriched hard gates, and the `assuranceSummary 1.4.0` view model before any cognitive synthesis. The browser renders two views over that same package:
+The canonical readiness package is the only source of truth. Source-first intake first builds a content-addressed `SourceIngestionManifest 1.0.0`, then a field-level `solutionProfile`, immutable `assessmentIntake 1.3.0`, versioned applicability questionnaire, and deterministic `documentationReadiness` before governance assessment. The engine then builds `transitionBoundary`, enriched hard gates, and the `assuranceSummary 1.5.0` view model before any cognitive synthesis. The browser renders two views over that same package:
 
 - **Assessment Workspace** for intake, detailed controls, evidence, execution diagnostics, and remediation work.
 - **Assurance Summary** for owners, executives, and formal reviewers.
 
 The summary renderer does not calculate readiness. Live HTML and printable PDF use the same ordered report-section markup; only pagination and interactive controls differ. The downloadable HTML is self-contained, has embedded CSS, contains no executable scripts or external assets, and escapes all untrusted values. It contains no Evidence Digest or raw excerpts. JSON remains the complete canonical audit record.
 
-For `ReadinessPackageV2` 2.5.0 and cognitive contract 3.0.0, raw sources remain immutable and all OCR or multimodal interpretations are derived source units with parent lineage and conservative ceilings. Candidate solution facts are independently verified before they enter shared context. Candidate claims pass local citation validation, independent semantic verification, bounded rescan/adjudication and a deterministic finding lock. Unsupported claims remain in the unresolved ledger. Item-level fact-checking can trigger one bounded claim re-adjudication or one wording repair, and every repair is checked again. A separate publication gate can withhold generated narrative without changing lifecycle readiness. The deterministic fallback package remains available as schema 1.3.0.
+For `ReadinessPackageV2` 2.6.0 and cognitive contract 3.1.0, raw sources remain immutable and all OCR or multimodal interpretations are derived source units with parent lineage and conservative ceilings. Candidate solution and intake facts are independently verified before they enter shared context. Candidate claims pass local citation validation, independent semantic verification, bounded rescan/adjudication and a deterministic finding lock. Unsupported claims remain in the unresolved ledger. Item-level fact-checking can trigger one bounded claim re-adjudication or one wording repair, and every repair is checked again. A separate publication gate can withhold generated narrative without changing lifecycle readiness. The deterministic fallback package remains available as schema 1.4.0.
 
 The AI Governance Engine is a standalone evidence-processing service. It reuses the useful shape of the FinOps Engine—parallel domain assessment, evidence verification, hard gates, controlled synthesis, traceability, and targeted action selection—without importing any FinOps domain model.
 
@@ -57,4 +57,4 @@ flowchart LR
 
 Railway can run the current single-process deployment skeleton and serve the dashboard/API. The application has no database, but it is not operationally stateless: v2 run state and raw evidence are held in process memory, so restarts lose active runs and horizontal scaling is not supported. Vercel hosts immutable, versioned knowledge documents and their manifest. In production mode, the engine fails closed when it cannot load the manifest or validate every document hash.
 
-The canonical readiness package is the sole output contract. PDF, HTML, or a later Saidot connector should render or transfer that package rather than calculate a second result.
+The canonical readiness package is the sole output contract. PDF, HTML, or a later external governance connector should render or transfer that package rather than calculate a second result.

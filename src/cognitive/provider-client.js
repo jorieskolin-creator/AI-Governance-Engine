@@ -217,7 +217,7 @@ export class StructuredModelClient {
       requestId: `model-request-${requestHash.slice(0, 24)}`, provider: profile.provider, configuredModel: profile.model,
       responseModel: response?.responseModel ?? null,
       parameters: profile.provider === "GEMINI" ? { thinkingLevel: profile.thinkingLevel } : { effort: profile.effort },
-      promptVersion, schemaName, schemaVersion: "3.0.0", packetHash, requestHash,
+      promptVersion, schemaName, schemaVersion: "3.1.0", packetHash, requestHash,
       usage: response?.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, latencyMs: Date.now() - started,
       retry, refusal: Boolean(error?.refusal), status: error ? "FAILED" : "COMPLETED", error: error ? error.message : null,
       outputHash: response ? sha256(stableStringify(response.value)) : null

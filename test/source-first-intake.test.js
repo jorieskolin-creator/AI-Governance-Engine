@@ -9,8 +9,17 @@ import { validateDossier } from "../src/contracts.js";
 import { discoverSolutionProfile } from "../src/core/solution-profile.js";
 import { classifyUploadPath, provisionalIngestionManifest, resolveUploadMimeType } from "../public/upload-types.js";
 import { buildSourceIngestionManifest } from "../src/core/source-ingestion.js";
+import { INTAKE_QUESTIONNAIRE } from "../src/knowledge/intake-questionnaire.js";
 
 function sampleRequest() { return structuredClone(SAMPLE_REQUEST); }
+
+function completeHumanClassifications() {
+  return Object.fromEntries(INTAKE_QUESTIONNAIRE.questions.map((question) => [question.id, {
+    answerState: question.id === "AI_SYSTEM_QUALIFICATION" ? "YES" : question.type === "MULTI" ? "NO" : question.options.includes("NOT_APPLICABLE") ? "NOT_APPLICABLE" : "NO",
+    values: question.type === "MULTI" ? ["NONE_OF_THE_ABOVE"] : [], origin: "HUMAN_CLASSIFIED", supportStatus: "SUPPORTED",
+    confirmedBy: "AUTHORIZED_REVIEWER", confirmedAt: "2026-08-05T08:00:00.000Z"
+  }]));
+}
 
 function documentedProfile(dossier) {
   const boundary = dossier.operatingBoundary;
@@ -226,6 +235,7 @@ test("missing critical documentation enforces an isolated sandbox without invent
 test("deployment documentation gate clears only when the complete intake is source-supported", async () => {
   const input = sampleRequest();
   input.dossier.targetStage = "DEPLOYMENT";
+  input.dossier.intakeAnswers = completeHumanClassifications();
   input.sources = [
     { path: "governance/case-profile.md", kind: "DOCUMENT", content: documentedProfile(input.dossier) },
     { path: "src/assistant.js", kind: "CODE", content: "export function answer(question) { return { question, requiresHumanReview: true }; }" }

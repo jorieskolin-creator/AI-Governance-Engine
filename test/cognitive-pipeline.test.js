@@ -93,8 +93,8 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: mockTransport });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
-  assert.equal(result.schemaVersion, "2.5.0");
-  assert.equal(result.cognitive.contractVersion, "3.0.0");
+  assert.equal(result.schemaVersion, "2.6.0");
+  assert.equal(result.cognitive.contractVersion, "3.1.0");
   assert.equal(result.recommendation.formalApproval, false);
   assert.equal(result.cognitive.coverage.complete, true);
   assert.ok(result.coverageMatrix.entries.some((item) => item.evidenceStatus === "NO_EVIDENCE_FOUND"));
@@ -166,7 +166,7 @@ test("one failed domain returns a partial deterministic package and incomplete c
   };
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 60 }), transport: failingDomain });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
-  assert.equal(result.schemaVersion, "2.5.0");
+  assert.equal(result.schemaVersion, "2.6.0");
   assert.equal(result.coverageMatrix.domainStatus.C, "FAILED");
   assert.ok(result.cognitive.coverage.failedStages.includes("DOMAIN_ASSESSMENT:C"));
   assert.ok(result.hardGates.some((item) => item.code === "COGNITIVE_ASSESSMENT_INCOMPLETE"));

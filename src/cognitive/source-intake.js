@@ -1,6 +1,7 @@
 import { extname } from "node:path";
 import { classifyArtifact, HUMAN_AUTHORITIES } from "../contracts.js";
 import { sha256, stableId } from "../core/hash.js";
+import { sanitizeRestrictedText } from "../../public/content-policy.js";
 
 const MAX_SOURCE_BYTES = 15 * 1024 * 1024;
 const MAX_EXTRACTED_CHARACTERS = 5_000_000;
@@ -134,8 +135,9 @@ async function extractSegments(source, bytes) {
 }
 
 export function redactText(text) {
-  let value = text;
+  let value = sanitizeRestrictedText(text);
   const findings = [];
+  if (value !== text) findings.push({ type: "RESTRICTED_IDENTIFIER", count: 1, severity: "HIGH" });
   for (const entry of [...SECRET_PATTERNS, ...PERSONAL_PATTERNS]) {
     let count = 0;
     value = value.replace(entry.pattern, () => { count += 1; return `[REDACTED_${entry.type}]`; });
@@ -180,7 +182,7 @@ function chunkText(source, sourceId, segment, maxChars = 6000) {
     const redacted = redactText(raw);
     const locator = `${segment.locator};lines:${startLine}-${endLine}`;
     const unit = {
-      id: stableId("unit", { sourceId, locator, text: redacted.text }), sourceId, path: source.path,
+      id: stableId("unit", { sourceId, locator, text: redacted.text }), sourceId, path: sanitizeRestrictedText(source.path),
       format: source.format, mimeType: source.mimeType, evidenceKind: source.metadata?.kind ?? sourceKindForPath(source.path), evidenceClass: source.metadata?.kind === "DECLARATION" ? "DECLARED" : "OBSERVED", assuranceCeiling: assuranceCeiling(source), locator, sha256: sha256(raw),
       content: redacted.text, sensitivity: redacted.findings.map((item) => item.type),
       transmissionState: "PENDING_APPROVAL", coverage: { characters: raw.length, startLine, endLine }
@@ -201,7 +203,7 @@ function parseFailure(error, source) {
   const message = String(error?.message ?? "Source parsing failed");
   const unsafe = /macro|unsafe archive|suspicious compressed|does not match|invalid base64/i.test(message);
   return {
-    path: source.path,
+    path: sanitizeRestrictedText(source.path),
     mimeType: source.mimeType,
     format: source.format,
     size: source.encoding === "base64" ? null : String(source.content ?? "").length,
@@ -222,13 +224,14 @@ export async function parseAndScreenSources(sources, options = {}) {
       if (bytes.length > MAX_SOURCE_BYTES) throw new Error(`${source.path} exceeds the 15 MB per-source intake limit`);
       assertFileSignature(source, bytes);
       const sourceHash = sha256(bytes);
+      const safePath = sanitizeRestrictedText(source.path);
       const sourceId = stableId("src", { path: source.path, sourceHash });
       const segments = await extractSegments(source, bytes);
-      registeredSources.push({ id: sourceId, path: source.path, mimeType: source.mimeType, format: source.format, artifactClass: classifyArtifact(source.path, source.metadata), sha256: sourceHash, size: bytes.length, metadata: source.metadata });
+      registeredSources.push({ id: sourceId, path: safePath, mimeType: source.mimeType, format: source.format, artifactClass: classifyArtifact(source.path, source.metadata), sha256: sourceHash, size: bytes.length, metadata: source.metadata });
       for (const segment of segments) {
       if (source.format === "PDF" && !segment.text.trim()) {
         const unit = {
-          id: stableId("unit", { sourceId, locator: segment.locator, sourceHash, emptyVisualPage: true }), sourceId, path: source.path,
+          id: stableId("unit", { sourceId, locator: segment.locator, sourceHash, emptyVisualPage: true }), sourceId, path: safePath,
           format: source.format, mimeType: source.mimeType, evidenceKind: "DOCUMENT", evidenceClass: "OBSERVED", assuranceCeiling: "DECLARED", locator: segment.locator, sha256: sourceHash,
           content: "[PDF PAGE HAS NO EXTRACTABLE TEXT]", sensitivity: ["UNSCREENED_PDF_PAGE"], transmissionState: "PENDING_APPROVAL", coverage: { characters: 0 }
         };
@@ -239,7 +242,7 @@ export async function parseAndScreenSources(sources, options = {}) {
       if (segment.media) {
         const sanitized = source.metadata?.sanitized === true;
         const unit = {
-          id: stableId("unit", { sourceId, locator: segment.locator, sourceHash }), sourceId, path: source.path,
+          id: stableId("unit", { sourceId, locator: segment.locator, sourceHash }), sourceId, path: safePath,
           format: source.format, mimeType: source.mimeType, evidenceKind: source.metadata?.kind ?? "DOCUMENT", evidenceClass: source.metadata?.kind === "DECLARATION" ? "DECLARED" : "OBSERVED", assuranceCeiling: assuranceCeiling(source), locator: segment.locator, sha256: sourceHash,
           content: "[IMAGE CONTENT — transmit only after explicit approval]", media: segment.media,
           sensitivity: sanitized ? [] : ["UNSCREENED_IMAGE"], transmissionState: "PENDING_APPROVAL", coverage: { images: 1 }

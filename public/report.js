@@ -1,8 +1,10 @@
-export const REPORT_VERSION = "assurance-report-1.4.0";
+import { sanitizeRestrictedText, sanitizeRestrictedValue } from "./content-policy.js";
+
+export const REPORT_VERSION = "assurance-report-1.5.0";
 
 const array = (value) => Array.isArray(value) ? value : [];
 const label = (value) => String(value ?? "").replaceAll("_", " ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
-const escapeHtml = (value) => String(value ?? "")
+const escapeHtml = (value) => sanitizeRestrictedText(String(value ?? ""))
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 
@@ -78,7 +80,7 @@ function decisionMarkup(pkg, summary) {
 
 function caseProfileMarkup(summary) {
   const profile = summary.caseProfile ?? {};
-  return section("02", "Case identification", "Case Profile and Assessment Scope", `<div class="case-grid">${caseGroup("Identity and intent", profile.identityAndIntent)}${caseGroup("Assessment scope", profile.assessmentScope)}${caseGroup("Declared operating boundary", profile.operatingBoundary)}${caseGroup("Risk-relevant declarations", profile.riskDeclarations)}</div>`);
+  return section("02", "Case identification", "Case Profile and Assessment Scope", `<div class="case-grid">${caseGroup("Identity and intent", profile.identityAndIntent)}${caseGroup("Assessment scope", profile.assessmentScope)}${caseGroup("Declared operating boundary", profile.operatingBoundary)}${caseGroup("Risk-relevant declarations", profile.riskDeclarations)}${caseGroup("Applicability and classification screening", profile.classificationScreening)}</div>`);
 }
 
 function documentationMarkup(summary) {
@@ -151,6 +153,7 @@ function reportBodyMarkup(pkg) {
 }
 
 export function renderAssuranceSummary(root, pkg) {
+  pkg = sanitizeRestrictedValue(pkg);
   root.replaceChildren();
   if (!pkg.assuranceSummary) {
     const message = document.createElement("p");
@@ -167,6 +170,7 @@ const staticCss = `
 `;
 
 export function standaloneReportHtml(pkg) {
+  pkg = sanitizeRestrictedValue(pkg);
   const body = reportBodyMarkup(pkg);
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(solutionName(pkg))} — Assurance Summary</title><style>${staticCss}</style></head><body>${body}</body></html>`;
 }

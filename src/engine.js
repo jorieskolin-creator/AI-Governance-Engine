@@ -11,8 +11,22 @@ import { loadKnowledgeSnapshot, knowledgeManifestView } from "./knowledge/provid
 import { buildAssessmentIntake, buildDocumentationReadiness, discoverSolutionProfile } from "./core/solution-profile.js";
 import { buildSourceIngestionManifest } from "./core/source-ingestion.js";
 
-const ENGINE_VERSION = "governance-engine-0.2.0";
-const RULESET_VERSION = "readiness-rules-2.0.0";
+const ENGINE_VERSION = "governance-engine-0.3.0";
+const RULESET_VERSION = "readiness-rules-2.1.0";
+
+function questionnaireHumanDecisions(assessmentIntake) {
+  const map = new Map();
+  for (const item of assessmentIntake.questionnaire?.answers ?? []) {
+    if (item.answerState !== "HUMAN_REVIEW_REQUIRED" && item.supportStatus !== "CONFLICTING" && !(["NO", "NOT_APPLICABLE"].includes(item.answerState) && item.negativeAnswerRequiresEvidence && !["SUPPORTED", "PARTIAL"].includes(item.supportStatus) && item.origin !== "HUMAN_CLASSIFIED")) continue;
+    const authorities = String(item.humanDecisionAuthority ?? "GOVERNANCE").split("_AND_").filter((value) => ["LEGAL", "PRIVACY", "SECURITY", "GOVERNANCE"].includes(value));
+    for (const authority of authorities.length ? authorities : ["GOVERNANCE"]) {
+      const current = map.get(authority) ?? { authority, reasons: [], status: "PENDING_HUMAN_DECISION" };
+      current.reasons.push(`${item.questionId}: declared answer requires supported human interpretation`);
+      map.set(authority, current);
+    }
+  }
+  return [...map.values()];
+}
 
 function timed(trace, id, fn) {
   const startedAt = new Date();
@@ -39,6 +53,7 @@ function solutionUnderstanding(dossier, registry, evidence, sourceIngestion) {
     exposure: dossier.exposure,
     agent: dossier.agent,
     classification: dossier.classification,
+    intakeAnswers: dossier.intakeAnswers,
     operatingBoundary: dossier.operatingBoundary,
     sourceCount: registry.registeredSources.length,
     sourceManifestHash: registry.registryHash,
@@ -64,7 +79,13 @@ async function buildPackage({ dossier, knowledge, registry, evidence, registryFi
   const actions = await timed(trace, "playbook", () => selectPlaybookActions(knowledge.tactics, lockedFindings));
   const actionGroundingRecords = buildActionGroundingRecords(actions, lockedFindings, knowledge.tactics);
   const readiness = calculateReadiness(controls, antiPatterns, gates, evidence, documentationReadiness);
-  const humanDecisions = humanDecisionRequirements(gates, applicability, dossier);
+  const decisionMap = new Map(humanDecisionRequirements(gates, applicability, dossier).map((item) => [item.authority, item]));
+  for (const item of questionnaireHumanDecisions(assessmentIntake)) {
+    const current = decisionMap.get(item.authority) ?? { authority: item.authority, reasons: [], status: item.status };
+    current.reasons = [...new Set([...current.reasons, ...item.reasons])];
+    decisionMap.set(item.authority, current);
+  }
+  const humanDecisions = [...decisionMap.values()];
   const transitionBoundary = buildTransitionBoundary({ dossier, gates, domains, readiness, humanDecisions, documentationReadiness });
   const knowledgeView = knowledgeManifestView(knowledge);
   const recommendation = {
@@ -140,7 +161,7 @@ export async function assessSolution(input, options = {}) {
   return buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
     solution: solutionUnderstanding(dossier, registry, evidence, sourceIngestion), solutionProfile, sourceIngestion, trace, startedAt, runId,
-    schemaVersion: "1.3.0", cognitiveCoverage: null, cognitive: null, lockedFindings: []
+    schemaVersion: "1.4.0", cognitiveCoverage: null, cognitive: null, lockedFindings: []
   });
 }
 
@@ -160,7 +181,7 @@ export async function assessVerifiedSolution(input, options = {}) {
   return buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
     solution: { ...input.solutionModel, sourceIngestion }, solutionProfile, sourceIngestion, trace, startedAt, runId: input.runId,
-    schemaVersion: "2.5.0", cognitiveCoverage: input.cognitiveCoverage,
+    schemaVersion: "2.6.0", cognitiveCoverage: input.cognitiveCoverage,
     cognitive: input.cognitive, lockedFindings: input.lockedFindings ?? input.cognitive?.lockedFindings ?? []
   });
 }

@@ -4,7 +4,7 @@ import { sha256, stableStringify } from "../core/hash.js";
 export const PROMPT_VERSIONS = Object.freeze({
   solution: "solution-understanding-2.1.0",
   solutionVerification: "solution-fact-verification-3.0.0",
-  discoveryRecheck: "discovery-recheck-1.0.0",
+  discoveryRecheck: "discovery-recheck-1.1.0",
   imageExtraction: "image-extraction-2.0.0",
   routing: "semantic-routing-2.0.0",
   domain: "domain-assessment-3.0.0",

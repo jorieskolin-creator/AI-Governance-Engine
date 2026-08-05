@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Evidence-gated AI solution readiness assessment" />
     <title>AI Governance Engine</title>
-    <link rel="stylesheet" href="/styles.css?v=source-first-1.2.0" />
+    <link rel="stylesheet" href="/styles.css?v=evidence-intake-1.3.0" />
   </head>
   <body>
     <header class="app-header">
@@ -47,9 +47,15 @@
           <label>Expected value<textarea id="value" rows="2" placeholder="Measurable outcome and value hypothesis"></textarea></label>
           <div class="form-grid four">
             <label>Current lifecycle stage<select id="current-stage"></select></label><label>Target lifecycle stage<select id="target-stage"></select></label>
-            <label>Jurisdictions<input id="jurisdictions" value="EU" placeholder="EU, Finland" /></label><label>Regulatory roles<input id="roles" value="DEPLOYER" placeholder="PROVIDER, DEPLOYER" /></label>
+            <label>Jurisdictions<input id="jurisdictions" placeholder="Unknown until detected or declared" /></label><label>Regulatory roles<input id="roles" placeholder="Unknown until screened below" /></label>
           </div>
-          <div class="form-grid two"><label>Users and affected groups<input id="users" value="EMPLOYEES" placeholder="EMPLOYEES, CUSTOMERS" /></label><div class="confirmation-note"><strong>Confirmation preserves provenance</strong><span>Corrections become user declarations. They do not erase missing documentation or contradictory source evidence.</span></div></div>
+          <div class="form-grid two"><label>Users and affected groups<input id="users" placeholder="Unknown until detected or declared" /></label><div class="confirmation-note"><strong>Confirmation preserves provenance</strong><span>Corrections become user declarations. They do not erase missing documentation or contradictory source evidence.</span></div></div>
+
+          <section class="questionnaire-panel" aria-labelledby="questionnaire-title">
+            <div class="section-heading"><div><p class="eyebrow">Applicability and classification</p><h3 id="questionnaire-title">Evidence-backed screening questions</h3></div><span id="questionnaire-version" class="badge UNKNOWN">Loading</span></div>
+            <p class="field-hint">Every unanswered item remains Unknown. A negative declaration does not clear a legal or lifecycle gate without supporting evidence or a named human classification.</p>
+            <div id="intake-questionnaire" class="questionnaire-sections" aria-live="polite"></div>
+          </section>
 
           <fieldset class="operating-boundary">
             <legend>Declared operating boundary</legend>
@@ -65,7 +71,7 @@
             <fieldset class="data-profile"><legend>Data profile</legend><p class="field-hint">Select every category that may enter the assessed boundary.</p><div id="data-categories" class="category-options"><label><input type="checkbox" value="SYNTHETIC" />Simulated / synthetic data</label><label><input type="checkbox" value="PUBLIC_NON_PERSONAL" />Public non-personal data</label><label><input type="checkbox" value="ANONYMIZED" />Anonymized data</label><label><input type="checkbox" value="PSEUDONYMIZED" />Pseudonymized data</label><label><input type="checkbox" value="CLEANED_APPROVED_PRODUCTION" />Cleaned and approved production data</label><label><input type="checkbox" value="RAW_PRODUCTION" />Raw production data</label><label><input type="checkbox" value="PERSONAL_DATA" />Personal data</label><label><input type="checkbox" value="SPECIAL_CATEGORY_DATA" />Special-category data</label><label><input type="checkbox" value="CONFIDENTIAL_OR_PROPRIETARY" />Confidential or proprietary data</label></div></fieldset>
             <fieldset><legend>User access and exposure</legend><label>Current user access<select id="current-user-access" class="access-mode"></select></label><label>Intended user access<select id="intended-user-access" class="access-mode"></select></label><label>Production access<select id="production-access" class="tri-state"></select></label><label>Consequential decisions<select id="consequential" class="tri-state"></select></label></fieldset>
             <fieldset><legend>Agent authority</legend><label>Uses agents<select id="uses-agents" class="tri-state"></select></label><label>Can take actions<select id="takes-actions" class="tri-state"></select></label><label>Irreversible actions<select id="irreversible" class="tri-state"></select></label><label>Human override<select id="human-override" class="tri-state"></select></label></fieldset>
-            <fieldset><legend>Classification declaration</legend><label>Prohibited-practice candidate<select id="prohibited" class="tri-state"></select></label><label>High-risk candidate<select id="high-risk" class="tri-state"></select></label></fieldset>
+            <fieldset class="legacy-classification hidden"><legend>Compatibility classification</legend><label>Prohibited-practice candidate<select id="prohibited" class="tri-state"></select></label><label>High-risk candidate<select id="high-risk" class="tri-state"></select></label></fieldset>
           </div>
           <div class="submit-row"><p>Missing information permits bounded sandbox work. Deployment requires all applicable fields to be documented, confirmed and implementation-aligned. Submitting starts the Engine’s evidence-gated AI analysis with redacted evidence and configured server-side providers.</p><button id="assess-button" class="primary-button" type="submit">Confirm intake and start AI analysis</button></div>
         </form>
@@ -93,6 +99,6 @@
       <section id="error" class="error-panel hidden" aria-live="assertive"></section>
     </main>
     <footer>AI Governance Engine - Readiness recommendation, not formal approval</footer>
-    <script type="module" src="/app.js?v=source-first-1.2.0"></script>
+    <script type="module" src="/app.js?v=evidence-intake-1.3.0"></script>
   </body>
 </html>

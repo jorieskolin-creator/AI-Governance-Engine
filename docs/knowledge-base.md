@@ -43,7 +43,7 @@ Rich capability, anti-pattern and tactic JSON must not be uploaded as direct run
 2. Maintain one shared Tactic Catalog and reciprocal tactic references.
 3. Generate human PDFs from the canonical JSON.
 4. Validate all 60 objects together.
-5. Compile the approved authoring package into the five runtime collections.
+5. Compile the approved authoring package into the five governance collections plus the versioned assessment-intake questionnaire.
 6. Upload those five exact files and generate the runtime manifest last from their immutable URLs and byte hashes.
 
 The compiler preserves rich authoring metadata as additive fields while emitting the existing runtime keys. Lifecycle-specific assurance targets are retained in `targetStateByLifecycle`; the Engine selects the target for the requested transition and falls back to `targetState` for older collections.

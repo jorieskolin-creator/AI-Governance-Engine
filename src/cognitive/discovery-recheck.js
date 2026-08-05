@@ -33,7 +33,10 @@ export async function recheckDiscovery(run, input, options = {}) {
   const profile = policy.choose("SOLUTION_UNDERSTANDING", { allowedProviders: providers });
   const packets = relevantPackets(run, profile.provider, approval);
   if (!packets.length) throw new Error("No approved documentation or configuration packet is available for discovery recheck");
-  const targetFields = Object.values(run.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED" || item.factClass === "USER_DECLARED").map((item) => ({ field: item.field, currentValue: item.value, status: item.status, factClass: item.factClass }));
+  const targetFields = [
+    ...Object.values(run.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED" || item.factClass === "USER_DECLARED").map((item) => ({ field: item.field, currentValue: item.value, status: item.status, factClass: item.factClass })),
+    ...Object.values(run.solutionProfile.assessmentIntakeFacts ?? {}).filter((item) => item.answerState === "UNKNOWN" || !["SUPPORTED", "PARTIAL"].includes(item.supportStatus)).map((item) => ({ field: `intakeAnswers.${item.questionId}`, currentValue: item.value, status: item.supportStatus, factClass: item.origin }))
+  ];
   const client = options.client ?? new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2, maxTokens: 60_000, maxMs: 180_000 }) });
   const generated = await client.generate({ profile, prompt: discoveryRecheckPrompt(targetFields, packets), schemaName: "discovery_recheck", schema: DISCOVERY_RECHECK_SCHEMA, packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.discoveryRecheck });
   const units = new Map(packets.flatMap((packet) => packet.sourceUnits).map((unit) => [unit.id, unit]));

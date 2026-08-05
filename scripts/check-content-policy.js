@@ -6,6 +6,7 @@ import { restrictedTokenMatches } from "../public/content-policy.js";
 const projectRoot = resolve(import.meta.dirname, "..");
 const textExtensions = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".html", ".css", ".md", ".json", ".yml", ".yaml", ".toml", ".xml", ".txt", ".env"]);
 const scanRoots = ["src", "public", "scripts", "test", "docs", ".github"];
+const rootFiles = ["package.json", "pnpm-lock.yaml", "railway.json", ".env.example"];
 
 function filesUnder(directory) {
   if (!existsSync(directory)) return [];
@@ -16,9 +17,16 @@ function filesUnder(directory) {
 }
 
 function trackedFiles() {
-  const result = spawnSync("git", ["ls-files", "-z"], { cwd: projectRoot, encoding: "utf8" });
-  if (result.status !== 0) throw new Error("Unable to enumerate tracked repository files for policy checking.");
-  return result.stdout.split("\0").filter(Boolean).map((item) => join(projectRoot, item));
+  if (process.env.CONTENT_POLICY_FORCE_FILESYSTEM !== "1") {
+    const result = spawnSync("git", ["ls-files", "-z"], { cwd: projectRoot, encoding: "utf8" });
+    if (result.status === 0) return result.stdout.split("\0").filter(Boolean).map((item) => join(projectRoot, item));
+  }
+
+  process.stderr.write("Git metadata unavailable; scanning the project-owned filesystem allowlist.\n");
+  return [
+    ...scanRoots.flatMap((root) => filesUnder(join(projectRoot, root))),
+    ...rootFiles.map((file) => join(projectRoot, file)).filter(existsSync)
+  ];
 }
 
 async function extractText(file) {

@@ -8,7 +8,7 @@ import {
 import { buildActionGroundingRecords, selectPlaybookActions } from "../src/core/playbook-engine.js";
 import { assessAntiPatterns } from "../src/core/assessment.js";
 import { ModelBudget, StructuredModelClient } from "../src/cognitive/provider-client.js";
-import { modelPolicy } from "../src/cognitive/model-policy.js";
+import { modelPolicy, requiredGovernanceProviders } from "../src/cognitive/model-policy.js";
 
 const sourceUnit = {
   id: "unit-1", sourceId: "src-1", path: "src/control.js", locator: "text;lines:1-1", sha256: "source-hash",
@@ -77,6 +77,21 @@ test("coverage is object-level and cannot be satisfied by one parent claim", () 
   const completeClaim = claim({ antiPatternIds: ["AP-D3"], assessmentObjectIds: ["Q-D3", "SC-D3", "AT-D3"], findingDefinitionIds: ["FND-D3-REQ", "FND-D3-001", "FND-AP-D3-001"] });
   const complete = buildAssessmentCoverageMatrix(knowledge, dossier, [completeClaim], [{ domain: "D", status: "COMPLETED" }]);
   assert.equal(complete.complete, true);
+});
+
+test("a searched object with no evidence is assessed but cannot become control support", () => {
+  const dossier = { currentStage: "DESIGN_AND_DEVELOPMENT", targetStage: "DESIGN_AND_DEVELOPMENT" };
+  const objectIds = ["REQ-D3", "FND-D3-REQ", "CTRL-D3", "Q-D3", "SC-D3", "FND-D3-001", "AP-D3", "AT-D3", "FND-AP-D3-001"];
+  const matrix = buildAssessmentCoverageMatrix(knowledge, dossier, [], [{ domain: "D", status: "COMPLETED", assessmentResults: objectIds.map((objectId) => ({ objectId, status: "NO_EVIDENCE_FOUND" })) }]);
+  assert.equal(matrix.complete, true);
+  assert.ok(matrix.entries.every((item) => item.status === "ASSESSED"));
+  assert.ok(matrix.entries.every((item) => item.evidenceStatus === "NO_EVIDENCE_FOUND"));
+});
+
+test("the governance route requires all three server-side provider credentials", () => {
+  const complete = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test" });
+  assert.deepEqual(requiredGovernanceProviders(complete).sort(), ["ANTHROPIC", "GEMINI", "OPENAI"]);
+  assert.throws(() => requiredGovernanceProviders(modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test" })), /GEMINI/i);
 });
 
 test("cross-domain claim consolidation preserves a contradiction graph", () => {

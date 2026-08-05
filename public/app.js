@@ -10,6 +10,7 @@ let lastPackage = null;
 let sampleSources = [];
 let summaryEnabled = true;
 let preparedSources = null;
+let activeRunId = null;
 
 const $ = (id) => document.getElementById(id);
 const label = (value) => String(value ?? "").replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -144,9 +145,17 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null) {
   }
   root.append(grid);
   if (recheck) {
-    root.append(el("p", "discovery-recheck-note", recheck.status === "AVAILABLE_AFTER_APPROVAL"
-      ? "AI semantic recheck is available in the authenticated v2 flow after explicit packet and provider approval. It proposes cited candidates only; it never overwrites this deterministic draft."
-      : "AI semantic recheck is disabled. Missing fields remain unknown until documented or declared by the user."));
+    const message = recheck.status === "COMPLETED"
+      ? `AI semantic recheck completed: ${recheck.candidates?.length ?? 0} cited candidate(s) were produced for your review. They do not overwrite this deterministic intake draft.`
+      : recheck.status === "BLOCKED_BY_LOCAL_DLP"
+        ? "AI semantic recheck was blocked by local source screening. Missing fields remain unknown until documented or declared by the user."
+        : `AI semantic recheck is unavailable: ${label(recheck.failureCode ?? recheck.status)}. The deterministic intake draft remains available.`;
+    root.append(el("p", "discovery-recheck-note", message));
+    if (recheck.candidates?.length) {
+      const candidates = el("ul", "discovery-candidates");
+      for (const candidate of recheck.candidates) candidates.append(el("li", "", `${label(candidate.field)}: ${candidate.value ?? "Not found"} (${label(candidate.status)})`));
+      root.append(candidates);
+    }
   }
   root.classList.remove("hidden");
 }
@@ -156,15 +165,12 @@ async function discoverCaseInformation() {
   try {
     const prepared = await selectedSources();
     if (!prepared.sources.length) throw new Error("Select a folder or one or more supported files first.");
-    if (!prepared.sources.some((item) => item.mimeType)) {
-      const sample = await fetch("/api/sample").then((response) => response.json());
-      fillDossier(sample.dossier); $("discovery-status").textContent = "Controlled sample dossier loaded for deterministic calibration."; return;
-    }
     const response = await fetch("/api/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(prepared) });
     const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Source discovery failed");
+    activeRunId = body.runId;
     fillDossier(body.solutionProfile.suggestedDossier); renderDiscovery(body.solutionProfile, body.dlpFindings, body.discoveryRecheck);
     const unresolved = Object.values(body.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED").length;
-    $("discovery-status").textContent = `Draft ready with ${unresolved} unresolved field(s). Confirm or correct the draft; approved v2 runs may use a cited AI recheck.`;
+    $("discovery-status").textContent = `Draft ready with ${unresolved} unresolved field(s). Confirm or correct it, then start the full evidence-gated AI assessment.`;
     $("assessment-input").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     $("discovery-status").textContent = "Discovery could not be completed."; $("error").textContent = error.message; $("error").classList.remove("hidden");
@@ -268,18 +274,80 @@ function renderPackage(pkg) {
 
 async function loadSample() {
   const response = await fetch("/api/sample"); const sample = await response.json();
-  fillDossier(sample.dossier); sampleSources = sample.sources; preparedSources = null;
+  fillDossier(sample.dossier);
+  sampleSources = sample.sources.map((source) => ({
+    ...source,
+    mimeType: source.path.endsWith(".json") ? "application/json" : source.path.endsWith(".js") ? "application/javascript" : "text/markdown",
+    encoding: "utf8"
+  }));
+  preparedSources = null; activeRunId = null;
   $("folder-summary").textContent = `${sample.sources.length} controlled sample evidence files loaded`;
   $("file-summary").textContent = "No individual files selected";
-  $("discovery-status").textContent = "Controlled sample and its dossier are ready for deterministic calibration.";
+  $("discovery-status").textContent = "Controlled sample loaded. Discover case information to run the same source-first AI workflow.";
+}
+
+function setProgress(title, detail) {
+  $("progress-title").textContent = title;
+  $("progress-detail").textContent = detail;
+}
+
+function progressText(run) {
+  const domain = Object.entries(run.domainProgress ?? {}).find(([, value]) => value.status === "RUNNING")?.[0];
+  if (domain) return `Assessing governance domain ${domain}.`;
+  return {
+    PREFLIGHT: "Screening sources and creating redacted evidence packets.",
+    INTAKE_CONFIRMED: "Preparing verified solution understanding.",
+    SOLUTION_UNDERSTANDING: "Building and independently verifying solution understanding.",
+    PACKET_ROUTING: "Routing redacted evidence to governance domains.",
+    DOMAIN_ASSESSMENT: "Assessing A–F governance evidence.",
+    EVIDENCE_VERIFICATION: "Independently verifying candidate claims.",
+    CONTROLLED_SYNTHESIS: "Writing a summary from locked findings only.",
+    FINAL_FACT_CHECK: "Fact-checking the decision-ready narrative.",
+    COMPLETED: "Cognitive assessment completed."
+  }[run.stage] ?? "Processing the evidence-gated assessment.";
+}
+
+async function postJson(path, body = undefined) {
+  const response = await fetch(path, {
+    method: "POST", headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  const value = await response.json();
+  if (!response.ok) throw new Error(`${value.detail || value.error || "Cognitive assessment failed"}${value.failureCode ? ` (${label(value.failureCode)})` : ""}`);
+  return value;
+}
+
+async function waitForRun(runId) {
+  for (let attempt = 0; attempt < 750; attempt += 1) {
+    const response = await fetch(`/api/v2/runs/${encodeURIComponent(runId)}`);
+    const run = await response.json();
+    if (!response.ok) throw new Error(run.detail || run.error || "Cognitive run status is unavailable");
+    setProgress("Evidence-gated AI analysis", progressText(run));
+    if (run.status === "COMPLETED") return run;
+    if (["FAILED", "PURGED", "CANCELLED"].includes(run.status)) throw new Error(`${run.error || "Cognitive analysis did not complete."}${run.failureCode ? ` (${label(run.failureCode)})` : ""}`);
+    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+  }
+  throw new Error("Cognitive analysis exceeded the browser waiting limit. The server may still be processing the run.");
 }
 
 async function runAssessment(event) {
   event.preventDefault(); $("error").classList.add("hidden"); $("progress").classList.remove("hidden"); $("assess-button").disabled = true;
   try {
     const prepared = await selectedSources();
-    const response = await fetch("/api/assess", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dossier: dossierFromForm(), ...prepared }) });
-    const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Assessment failed"); renderPackage(body);
+    const dossier = dossierFromForm();
+    setProgress("Preparing AI analysis", "Local screening is complete. Redacted evidence will be analysed by the Engine’s configured providers.");
+    if (!activeRunId) {
+      const preflight = await postJson("/api/v2/runs/preflight", { dossier, ...prepared });
+      activeRunId = preflight.runId;
+    } else {
+      await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, { dossier, confirmations: {} });
+    }
+    await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/execute`);
+    await waitForRun(activeRunId);
+    const response = await fetch(`/api/v2/runs/${encodeURIComponent(activeRunId)}/result`);
+    const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Cognitive result is unavailable");
+    renderPackage(body);
+    activeRunId = null;
   } catch (error) { $("error").textContent = error.message; $("error").classList.remove("hidden"); }
   finally { $("progress").classList.add("hidden"); $("assess-button").disabled = false; }
 }
@@ -332,5 +400,5 @@ Promise.all([
 $("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("dossier-form").addEventListener("submit", runAssessment);
 $("summary-tab").addEventListener("click", () => selectView("summary")); $("workspace-tab").addEventListener("click", () => selectView("workspace"));
 $("print-button").addEventListener("click", printReport); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);
-$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; });
-$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; });
+$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; });
+$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; });

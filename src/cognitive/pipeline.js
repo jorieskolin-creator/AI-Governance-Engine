@@ -15,12 +15,35 @@ import {
 } from "./prompts.js";
 import {
   applySolutionFactVerification, buildAssessmentCoverageMatrix, consolidateClaims, createAdjudicatedClaim,
-  createDerivedSourceUnit, evaluatePublicationGate, evidenceLinksForClaim, lockAdjudicatedClaim,
+  createDerivedSourceUnit, evaluatePublicationGate, evidenceLinksForClaim, lockAdjudicatedClaim, assessmentWorkItems,
   normalizeSolutionCandidates, validateClaimMappings, validateFactCheckCompleteness
 } from "./integrity.js";
 
 const HIGH_INTEGRITY = new Set(["HIGH", "CRITICAL"]);
 const unique = (values) => [...new Set(values.filter(Boolean))];
+const ASSESSMENT_WORK_ITEM_BATCH_SIZE = 12;
+
+function batches(values, size = ASSESSMENT_WORK_ITEM_BATCH_SIZE) {
+  const output = [];
+  for (let index = 0; index < values.length; index += size) output.push(values.slice(index, index + size));
+  return output;
+}
+
+function knowledgeForWorkItems(knowledge, domain, workItems) {
+  const parents = new Set(workItems.flatMap((item) => [item.objectId, item.parentId]).filter(Boolean));
+  return {
+    controls: knowledge.controls.filter((item) => item.domain === domain && parents.has(item.id)),
+    requirements: knowledge.requirements.filter((item) => item.domain === domain && parents.has(item.id)),
+    antiPatterns: knowledge.antipatterns.filter((item) => item.domain === domain && parents.has(item.id))
+  };
+}
+
+function claimMapsWorkItem(claim, workItem) {
+  return [
+    ...claim.requirementIds, ...claim.controlIds, ...claim.antiPatternIds,
+    ...claim.assessmentObjectIds, ...claim.findingDefinitionIds
+  ].includes(workItem.objectId);
+}
 
 function stage(run, name, status, detail = {}) {
   if (run.cancelled) throw new Error("Cognitive run was cancelled or expired");
@@ -332,22 +355,37 @@ export async function executeCognitiveRun(run, options = {}) {
   stage(run, "DOMAIN_ASSESSMENT", "RUNNING");
   const domainResults = await mapLimitSettled(Object.keys(DOMAINS), options.domainConcurrency ?? 3, async (domain) => {
     stage(run, `DOMAIN_${domain}`, "RUNNING");
+    const workItems = assessmentWorkItems(knowledge, run.dossier, domain);
     const rawPackets = rawPacketsForDomain(run, routing.routes, domain);
-    if (!rawPackets.length) { stage(run, `DOMAIN_${domain}`, "COMPLETED", { claimCount: 0, coverage: "NO_RELEVANT_PACKET" }); return { domain, status: "COMPLETED", claims: [] }; }
-    const profile = chooseForPackets(policy, "DOMAIN_ASSESSMENT", run, rawPackets, { requireAll: false }); const packets = packetsForDomain(run, profile.provider, routing.routes, domain);
-    if (!packets.length) throw new Error(`No approved evidence packet is available to the selected ${domain} assessor`);
-    const controls = knowledge.controls.filter((item) => item.domain === domain); const requirements = knowledge.requirements.filter((item) => item.domain === domain); const antiPatterns = knowledge.antipatterns.filter((item) => item.domain === domain);
-    recordTransmission(run, `DOMAIN_${domain}`, profile, packets);
-    const output = await client.generate({ profile, prompt: domainPrompt({ domain, dossier: run.dossier, solutionModel, packets, controls, requirements, antiPatterns }), schemaName: `domain_${domain.toLowerCase()}_claims`, schema: DOMAIN_CLAIMS_SCHEMA, packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.domain });
-    const created = [];
-    for (const candidate of output.value.claims) {
-      try {
-        const claim = createGovernanceClaim(candidate, { provider: profile.provider, model: profile.model, profileId: profile.id, domain });
-        const mapping = validateClaimMappings(claim, knowledge); if (!mapping.valid) throw new Error(mapping.issues.join("; "));
-        created.push(claim);
-      } catch (error) { run.trace.push({ stage: `DOMAIN_${domain}`, status: "CLAIM_REJECTED", at: new Date().toISOString(), error: error.message }); }
+    if (!rawPackets.length) {
+      const assessmentResults = workItems.map((item) => ({ objectId: item.objectId, status: "NO_EVIDENCE_FOUND", scope: "NO_RELEVANT_EVIDENCE_PACKET" }));
+      stage(run, `DOMAIN_${domain}`, "COMPLETED", { claimCount: 0, coverage: "NO_RELEVANT_PACKET", assessedObjectCount: assessmentResults.length });
+      return { domain, status: "COMPLETED", claims: [], assessmentResults };
     }
-    stage(run, `DOMAIN_${domain}`, "COMPLETED", { claimCount: created.length }); return { domain, status: "COMPLETED", profile, claims: created };
+    const profile = chooseForPackets(policy, "DOMAIN_ASSESSMENT", run, rawPackets, { requireAll: false });
+    const packets = packetsForDomain(run, profile.provider, routing.routes, domain);
+    if (!packets.length) throw new Error(`No approved evidence packet is available to the selected ${domain} assessor`);
+    const created = [];
+    for (const batch of batches(workItems)) {
+      const scopedKnowledge = knowledgeForWorkItems(knowledge, domain, batch);
+      recordTransmission(run, `DOMAIN_${domain}`, profile, packets);
+      const output = await client.generate({
+        profile,
+        prompt: domainPrompt({ domain, dossier: run.dossier, solutionModel, packets, ...scopedKnowledge, assessmentWorkItems: batch }),
+        schemaName: `domain_${domain.toLowerCase()}_claims`, schema: DOMAIN_CLAIMS_SCHEMA,
+        packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.domain
+      });
+      for (const candidate of output.value.claims) {
+        try {
+          const claim = createGovernanceClaim(candidate, { provider: profile.provider, model: profile.model, profileId: profile.id, domain });
+          const mapping = validateClaimMappings(claim, knowledge); if (!mapping.valid) throw new Error(mapping.issues.join("; "));
+          created.push(claim);
+        } catch (error) { run.trace.push({ stage: `DOMAIN_${domain}`, status: "CLAIM_REJECTED", at: new Date().toISOString(), error: error.message }); }
+      }
+    }
+    const assessmentResults = workItems.map((item) => ({ objectId: item.objectId, status: created.some((claim) => claimMapsWorkItem(claim, item)) ? "ASSESSED" : "NO_EVIDENCE_FOUND", scope: "BOUNDED_EVIDENCE_BATCH" }));
+    stage(run, `DOMAIN_${domain}`, "COMPLETED", { claimCount: created.length, assessedObjectCount: assessmentResults.length });
+    return { domain, status: "COMPLETED", profile, claims: created, assessmentResults };
   });
   for (const result of domainResults.filter((item) => item.status === "FAILED")) { failedStages.push(`DOMAIN_ASSESSMENT:${result.domain}`); stage(run, `DOMAIN_${result.domain}`, "FAILED", { error: result.error }); }
   const consolidated = consolidateClaims(domainResults.flatMap((item) => item.claims)); claims = consolidated.claims;

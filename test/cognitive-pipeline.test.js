@@ -70,19 +70,19 @@ test("preflight redacts secrets and keeps prompt-like source text inert", async 
 test("AI discovery recheck returns quote-grounded candidates without overwriting deterministic facts", async () => {
   const run = await createPreflight({ sources: [{ path: "README.md", mimeType: "text/markdown", content: "# FinOps Engine\nSolution name: FinOps Engine\nIntended purpose: Assess FinOps evidence for governance decisions." }] });
   const unit = run.packets[0].sourceUnits[0];
-  const policy = modelPolicy({ OPENAI_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ profile }) => ({
     value: { candidates: [{ field: "name", status: "CANDIDATE", value: "FinOps Engine", sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote: "Solution name: FinOps Engine" }], rationale: "The product name is explicitly labelled." }] },
     responseModel: profile.model, usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
   }) });
   const before = structuredClone(run.solutionProfile);
-  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["OPENAI"] }));
+  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
   const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
   assert.equal(result.candidates[0].status, "CANDIDATE");
   assert.match(result.candidates[0].limitations[0], /requires user confirmation/i);
   assert.deepEqual(run.solutionProfile, before);
   assert.equal(run.transmissionManifest[0].stage, "DISCOVERY_RECHECK");
-  assert.equal(run.transmissionManifest[0].provider, "OPENAI");
+  assert.equal(run.transmissionManifest[0].provider, "ANTHROPIC");
   assert.ok(run.transmissionManifest[0].approvedAt);
 });
 
@@ -96,7 +96,8 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   assert.equal(result.schemaVersion, "2.5.0");
   assert.equal(result.cognitive.contractVersion, "3.0.0");
   assert.equal(result.recommendation.formalApproval, false);
-  assert.ok(result.cognitive.coverage.failedStages.includes("ASSESSMENT_COVERAGE_INCOMPLETE"));
+  assert.equal(result.cognitive.coverage.complete, true);
+  assert.ok(result.coverageMatrix.entries.some((item) => item.evidenceStatus === "NO_EVIDENCE_FOUND"));
   assert.equal(result.cognitive.lockedFindings.length, 6);
   assert.ok(result.cognitive.verificationRecords.every((item) => item.status === "SUPPORTED"));
   assert.ok(result.evidence.filter((item) => item.signal === "verified-control-evidence").every((item) => item.assuranceState === "IMPLEMENTED"));

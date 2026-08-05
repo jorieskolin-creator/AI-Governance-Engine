@@ -67,11 +67,11 @@
             <fieldset><legend>Agent authority</legend><label>Uses agents<select id="uses-agents" class="tri-state"></select></label><label>Can take actions<select id="takes-actions" class="tri-state"></select></label><label>Irreversible actions<select id="irreversible" class="tri-state"></select></label><label>Human override<select id="human-override" class="tri-state"></select></label></fieldset>
             <fieldset><legend>Classification declaration</legend><label>Prohibited-practice candidate<select id="prohibited" class="tri-state"></select></label><label>High-risk candidate<select id="high-risk" class="tri-state"></select></label></fieldset>
           </div>
-          <div class="submit-row"><p>Missing information permits bounded sandbox work. Deployment requires all applicable fields to be documented, confirmed and implementation-aligned.</p><button id="assess-button" class="primary-button" type="submit">Confirm intake and assess readiness</button></div>
+          <div class="submit-row"><p>Missing information permits bounded sandbox work. Deployment requires all applicable fields to be documented, confirmed and implementation-aligned. Submitting starts the Engine’s evidence-gated AI analysis with redacted evidence and configured server-side providers.</p><button id="assess-button" class="primary-button" type="submit">Confirm intake and start AI analysis</button></div>
         </form>
       </section>
 
-      <section id="progress" class="panel progress-panel hidden" aria-live="polite"><div class="spinner"></div><div><strong>Building the evidence package</strong><p>Registering sources, resolving applicability, verifying controls and applying hard gates.</p></div></section>
+      <section id="progress" class="panel progress-panel hidden" aria-live="polite"><div class="spinner"></div><div><strong id="progress-title">Building the evidence package</strong><p id="progress-detail">Registering sources, resolving applicability, verifying controls and applying hard gates.</p></div></section>
 
       <section id="results" class="hidden" aria-live="polite">
         <div id="view-switch" class="view-switch" role="tablist" aria-label="Assessment result view"><button id="summary-tab" class="view-tab active" type="button" role="tab" aria-selected="true">Assurance Summary</button><button id="workspace-tab" class="view-tab" type="button" role="tab" aria-selected="false">Assessment Workspace</button></div>

@@ -18,12 +18,14 @@ The repository is suitable for controlled development and calibration. It is not
 - Required human authorities are recorded without issuing formal approval.
 - The canonical JSON package drives both the detailed Assessment Workspace and decision-ready Assurance Summary.
 - HTML and printable views are derived from the package and do not calculate a second outcome.
-- The optional cognitive pipeline preserves raw/derived lineage, verifies citations and keeps unsupported claims outside deterministic decision evidence.
+- The standard cognitive pipeline preserves raw/derived lineage, verifies citations and keeps unsupported claims outside deterministic decision evidence.
 - Knowledge authoring validates rich category JSON and compiles five runtime collections plus an immutable manifest.
+
+Every normal assessment uses cognitive contract `3.0.0`: independently verified solution understanding, immutable raw/derived evidence lineage, object-level assessment coverage, parallel A–F claim extraction, independent verification, bounded rescan/adjudication, deterministic assessment, controlled synthesis, repair/re-analysis, and a separate publication gate.
 
 ## Authority and evidence flow
 
-The cognitive contract is `3.0.0`. It is the only implemented cognitive pipeline; there is no separate shadow or compatibility implementation. `COGNITIVE_PIPELINE_ENABLED` controls the complete authenticated cognitive API and execution path.
+The cognitive contract is `3.0.0`. It is the only implemented cognitive pipeline; there is no separate shadow or compatibility implementation. It is the normal browser assessment path; users never enter credentials or select providers.
 
 ```text
 raw source
@@ -39,6 +41,8 @@ raw source
 ```
 
 Only decision-eligible adjudicated claims become locked findings and deterministic evidence. Unsupported, conflicting and unverifiable claims remain in the audit ledger. Model output cannot directly change applicability, assurance, anti-pattern state, hard gates, readiness, lifecycle boundaries or formal authority.
+
+The fixed initial route is Anthropic for discovery and A–F assessment, OpenAI for independent verification and controlled synthesis, Gemini for disputed-claim adjudication, and Anthropic for final fact-checking. Missing primary or independent-provider availability produces `COGNITIVE_ASSESSMENT_INCOMPLETE`, never a silent positive fallback.
 
 The engine returns readiness recommendations such as `READY_WITH_CONDITIONS`, `REMEDIATE_BEFORE_NEXT_STAGE`, `HUMAN_REVIEW_REQUIRED` and `BLOCKED_IN_CURRENT_FORM`. Legal, Privacy, Security, Governance, AI Forum and AI Board decisions remain human acts. `FORMALLY_APPROVED` is reserved for a future trusted decision connector that verifies identity, authority, signature, scope and validity.
 
@@ -57,7 +61,7 @@ pnpm start
 
 The dashboard is served on port `4174` by default. Copy configuration from `.env.example` into your development environment; do not commit credentials.
 
-The dashboard can upload a codebase folder or individual supported files, discover cited case information for review, and run the deterministic assessment. **Load credible sample** provides a local calibration case.
+The dashboard can upload a codebase folder or individual supported files. **Discover case information** performs local DLP screening, deterministic discovery, and a cited AI semantic recheck. After confirmation, **Confirm intake and start AI analysis** runs the full evidence-gated pipeline. **Load credible sample** follows the same source-first workflow.
 
 ## Current deterministic API
 
@@ -120,23 +124,23 @@ Additional deterministic endpoints:
 - `GET /api/sample` returns a complete current sample request.
 - `GET /api/knowledge` returns the active sanitized knowledge identity.
 - `GET /api/knowledge/diagnostics` returns structural and referential diagnostics.
-- `GET /api/config` returns non-secret experience and pipeline availability flags.
+- `GET /api/config` returns the non-secret always-on cognitive mode, contract version, and deployed build revision.
 
 The deterministic package is schema `1.3.0`. It includes the Assessment Intake, field-level solution profile, documentation readiness, source-ingestion record, lifecycle transition boundary and Assurance Summary. Lexical matches remain automated indicators; they are not cognitive verification.
 
-## Authenticated cognitive API
+## Cognitive API and safeguards
 
-The cognitive API is disabled by default. When enabled, every `/api/v2/*` request requires `Authorization: Bearer <COGNITIVE_API_TOKEN>`.
+The browser calls the normal cognitive path automatically. Provider credentials stay on the server, and execution automatically records the configured provider route and approved redacted packet transmission.
 
 - `POST /api/v2/runs/preflight` parses and screens evidence locally and returns redacted packet previews.
 - `POST /api/v2/runs/{id}/discover` returns the cited intake draft.
-- `POST /api/v2/runs/{id}/discover-recheck` performs an approved semantic recheck without overwriting deterministic facts.
+- `POST /api/v2/runs/{id}/discover-recheck` performs a cited semantic recheck without overwriting deterministic facts.
 - `POST /api/v2/runs/{id}/confirm` records the reviewed dossier without erasing source conflicts.
-- `POST /api/v2/runs/{id}/execute` records explicit packet/provider approval and starts the run.
+- `POST /api/v2/runs/{id}/execute` records the fixed server-side route and starts the run.
 - `GET /api/v2/runs/{id}` returns progress.
 - `GET /api/v2/runs/{id}/result` returns `ReadinessPackageV2` schema `2.5.0`.
 - `DELETE /api/v2/runs/{id}` purges the ephemeral run record and evidence held by the run store.
-- `GET /api/v2/models` exposes profile availability and approval state without credentials.
+- `GET /api/v2/models` exposes the non-secret fixed policy without credentials.
 
 Supported intake includes common repository text and code, JSON, CSV, inert HTML, PDF, DOCX, XLSX, PNG, JPEG and WebP. Binary content uses base64. Office archives are checked for unsafe paths, macros, excessive expansion and suspicious compression. Source files, formulas, scripts, links and embedded instructions are not executed.
 
@@ -155,9 +159,9 @@ See [docs/knowledge-base.md](docs/knowledge-base.md) for the runtime manifest an
 - The service is a development skeleton, not a multi-tenant production service.
 - The v2 run store is process-local and in memory. Restarts lose active runs, and horizontal scaling is not supported.
 - Cancellation purges the run-store copy, but run-scoped abort propagation to an already active provider request is not implemented yet.
-- Authentication uses one service bearer token rather than tenant identity and authorization.
-- The legacy deterministic endpoints are not protected by the v2 authentication and rate-limit guard.
-- Aggregate run/provider concurrency, durable queues and financial budgets are not implemented.
+- Authentication and tenant authorization remain production-hardening work.
+- The legacy deterministic endpoint is retained for compatibility and is not the browser assessment path.
+- Run/provider concurrency and financial budgets are enforced per run; durable queues and aggregate service-wide budgets remain future hardening.
 - Production monitoring, centralized audit logging, malware scanning, persistence, incident response and deployment security validation remain future hardening work.
 - Images currently rely on caller-provided sanitized metadata; a trusted image-sanitization service is not integrated.
 - Knowledge taxonomy, identifiers and release content are not finalized.
@@ -173,7 +177,7 @@ Live benchmarking is opt-in because it sends approved packets to configured prov
 BENCHMARK_CONFIRM_LIVE_CALLS=true pnpm run benchmark:models
 ```
 
-Use `BENCHMARK_PROFILE_IDS` to constrain the run. The harness checks structured output and zero-tolerance integrity conditions, but deliberately reports `REQUIRES_HUMAN_LABEL_REVIEW`. Human-labelled precision and high/critical recall must meet the qualification floors before profile IDs are added to `MODEL_PROFILE_APPROVALS`.
+Use `BENCHMARK_PROFILE_IDS` to constrain cost. The harness checks structured output and zero-tolerance integrity conditions, but deliberately reports `REQUIRES_HUMAN_LABEL_REVIEW`. Human-labelled precision and high/critical recall must meet the qualification floors before the fixed route is treated as qualified for decision-ready assessments.
 
 ## Further documentation
 

@@ -104,17 +104,17 @@ function geminiRequest(profile, credential, prompt, schemaName, schema, media = 
 
 export class ModelBudget {
   constructor(options = {}) {
-    this.maxCalls = options.maxCalls ?? 40;
-    this.maxTokens = options.maxTokens ?? 500_000;
-    this.maxMs = options.maxMs ?? 12 * 60 * 1000;
+    this.maxCalls = options.maxCalls ?? 180;
+    this.maxTokens = options.maxTokens ?? 1_500_000;
+    this.maxMs = options.maxMs ?? 15 * 60 * 1000;
     this.startedAt = Date.now();
     this.calls = 0;
     this.tokens = 0;
     this.callsByStage = new Map();
     this.tokensByStage = new Map();
     this.startedAtByStage = new Map();
-    this.maxCallsByStage = options.maxCallsByStage ?? { ROUTING: 2, EXTRACTION: 20, SOLUTION_UNDERSTANDING: 2, DOMAIN_ASSESSMENT: 16, VERIFICATION: 100, ADJUDICATION: 20, SYNTHESIS: 3, FACT_CHECK: 4 };
-    this.maxTokensByStage = options.maxTokensByStage ?? { ROUTING: 20000, EXTRACTION: 200000, SOLUTION_UNDERSTANDING: 100000, DOMAIN_ASSESSMENT: 300000, VERIFICATION: 300000, ADJUDICATION: 120000, SYNTHESIS: 100000, FACT_CHECK: 100000 };
+    this.maxCallsByStage = options.maxCallsByStage ?? { ROUTING: 4, EXTRACTION: 20, SOLUTION_UNDERSTANDING: 2, DOMAIN_ASSESSMENT: 48, VERIFICATION: 160, ADJUDICATION: 32, SYNTHESIS: 3, FACT_CHECK: 4 };
+    this.maxTokensByStage = options.maxTokensByStage ?? { ROUTING: 40000, EXTRACTION: 200000, SOLUTION_UNDERSTANDING: 100000, DOMAIN_ASSESSMENT: 700000, VERIFICATION: 500000, ADJUDICATION: 200000, SYNTHESIS: 150000, FACT_CHECK: 100000 };
     this.maxMsByStage = options.maxMsByStage ?? { ROUTING: 120000, EXTRACTION: 300000, SOLUTION_UNDERSTANDING: 240000, DOMAIN_ASSESSMENT: 600000, VERIFICATION: 600000, ADJUDICATION: 300000, SYNTHESIS: 240000, FACT_CHECK: 240000 };
   }
 

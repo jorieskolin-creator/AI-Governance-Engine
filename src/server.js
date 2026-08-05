@@ -109,7 +109,7 @@ function startCognitiveRun(run, request) {
     }
   }).then(() => runStore.releaseRawEvidence(run)).catch((error) => {
     run.status = "FAILED"; run.stage = "FAILED"; run.failureCode = safeFailureCode(error);
-    run.error = process.env.NODE_ENV === "production" ? "Cognitive analysis could not complete safely." : error.message;
+    run.error = "Cognitive analysis could not complete safely.";
     run.trace.push({ stage: "FAILED", status: "FAILED", at: new Date().toISOString(), failureCode: run.failureCode, error: run.error });
     runStore.releaseRawEvidence(run);
   });

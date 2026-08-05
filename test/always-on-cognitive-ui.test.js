@@ -19,3 +19,9 @@ test("the service exposes an always-on cognitive contract without client credent
   assert.doesNotMatch(server, /COGNITIVE_PIPELINE_ENABLED/);
   assert.doesNotMatch(server, /COGNITIVE_API_TOKEN/);
 });
+
+test("asynchronous provider failures expose a stable limitation instead of provider detail", () => {
+  assert.match(server, /run\.failureCode = safeFailureCode\(error\)/);
+  assert.match(server, /run\.error = "Cognitive analysis could not complete safely\."/);
+  assert.doesNotMatch(server, /run\.error = process\.env\.NODE_ENV/);
+});

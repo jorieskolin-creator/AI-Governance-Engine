@@ -14,6 +14,19 @@ let preparedSources = null;
 let activeRunId = null;
 let intakeQuestionnaire = { version: "unavailable", sections: [], questions: [] };
 let latestSolutionProfile = null;
+let latestDiscoveryRecheck = null;
+const editedIntakeFields = new Set();
+const intakeControlBaseline = new Map();
+const INTAKE_CONTROL_FIELDS = Object.freeze({
+  name: "name", owner: "accountableOwner", purpose: "intendedPurpose", value: "expectedValue",
+  "current-stage": "currentStage", "target-stage": "targetStage", jurisdictions: "jurisdictions", roles: "roles", users: "users",
+  "allowed-uses": "operatingBoundary.allowedUses", "excluded-uses": "operatingBoundary.excludedUses", "boundary-environment": "operatingBoundary.environment",
+  "boundary-users": "operatingBoundary.userScope", "boundary-data": "operatingBoundary.dataScope", "boundary-expiry": "operatingBoundary.expiresAt",
+  "boundary-integrations": "operatingBoundary.integrationScope", "boundary-permissions": "operatingBoundary.permissionScope", "boundary-autonomy": "operatingBoundary.autonomyScope", "boundary-monitoring": "operatingBoundary.monitoringOwner",
+  "data-categories": "data.categories", "current-user-access": "exposure.currentUserAccess", "intended-user-access": "exposure.intendedUserAccess",
+  "production-access": "exposure.productionAccess", consequential: "exposure.consequentialDecisions", "uses-agents": "agent.usesAgents",
+  "takes-actions": "agent.canTakeActions", irreversible: "agent.irreversibleActions", "human-override": "agent.humanOverride"
+});
 
 const $ = (id) => document.getElementById(id);
 const label = (value) => String(value ?? "").replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -28,6 +41,17 @@ const el = (tag, className, text) => {
   return node;
 };
 const badge = (text, tone = text) => el("span", `badge ${tone}`, label(text));
+const INTAKE_FLOW_STEPS = ["UPLOAD", "DETERMINISTIC", "AI_VERIFICATION", "USER_RESOLUTION", "ASSESSMENT"];
+
+function setIntakeFlow(activeStep, { limitedSteps = [] } = {}) {
+  const activeIndex = activeStep === null ? INTAKE_FLOW_STEPS.length : INTAKE_FLOW_STEPS.indexOf(activeStep);
+  for (const node of $("intake-flow")?.querySelectorAll("[data-intake-step]") ?? []) {
+    const index = INTAKE_FLOW_STEPS.indexOf(node.dataset.intakeStep);
+    node.classList.toggle("complete", index < activeIndex);
+    node.classList.toggle("active", index === activeIndex);
+    node.classList.toggle("limited", limitedSteps.includes(node.dataset.intakeStep));
+  }
+}
 
 function stageOptions() {
   for (const id of ["current-stage", "target-stage"]) {
@@ -57,7 +81,8 @@ function renderQuestionnaire() {
   const root = $("intake-questionnaire"); root.replaceChildren();
   $("questionnaire-version").textContent = intakeQuestionnaire.version ?? "Unknown version";
   for (const section of intakeQuestionnaire.sections ?? []) {
-    const details = el("details", "questionnaire-section"); details.open = true;
+    const details = el("details", "questionnaire-section");
+    details.dataset.sectionTitle = section.title;
     details.append(el("summary", "", section.title), el("p", "questionnaire-section-description", section.description));
     const grid = el("div", "questionnaire-grid");
     for (const question of (intakeQuestionnaire.questions ?? []).filter((item) => item.sectionId === section.id)) {
@@ -88,6 +113,14 @@ function renderQuestionnaire() {
       if (event.target.checked && exclusive.includes(event.target.value)) for (const input of card.querySelectorAll('input[type="checkbox"]')) if (input !== event.target) input.checked = false;
       else if (event.target.checked) for (const input of card.querySelectorAll('input[type="checkbox"]')) if (exclusive.includes(input.value)) input.checked = false;
     }
+    const card = event.target.closest(".question-card");
+    if (card) {
+      const question = (intakeQuestionnaire.questions ?? []).find((item) => item.id === card.dataset.questionId);
+      const answer = question ? collectedQuestionAnswer(question) : { answerState: "UNKNOWN" };
+      card.querySelector(".question-evidence-state").textContent = answer.answerState === "UNKNOWN"
+        ? "Unknown · no information detected or declared"
+        : "Self-Declared · unsupported until documentary evidence is verified";
+    }
     updateQuestionnaireConditions();
   });
   updateQuestionnaireConditions();
@@ -103,6 +136,20 @@ function collectedQuestionAnswer(question) {
   return { answerState: "YES", values };
 }
 
+function questionnaireAnswerRecord(question, now = new Date().toISOString()) {
+  const answer = collectedQuestionAnswer(question);
+  const previous = latestSolutionProfile?.assessmentIntakeFacts?.[question.id];
+  const unchanged = previous && previous.answerState === answer.answerState && JSON.stringify(previous.value === previous.answerState ? [] : previous.value) === JSON.stringify(answer.values);
+  return {
+    ...answer,
+    origin: unchanged ? previous.origin : "SELF_DECLARED",
+    supportStatus: unchanged ? previous.supportStatus : answer.answerState === "UNKNOWN" ? "NOT_CHECKED" : "UNSUPPORTED",
+    sourceUnitIds: unchanged ? previous.sourceUnitIds : [], evidenceLinks: unchanged ? previous.evidenceLinks : [],
+    limitations: answer.answerState === "UNKNOWN" ? ["No answer was detected or declared."] : unchanged ? previous.limitations : ["Self-Declared information is not documentary evidence."],
+    confirmedBy: answer.answerState === "UNKNOWN" ? null : "USER", confirmedAt: answer.answerState === "UNKNOWN" ? null : now
+  };
+}
+
 function updateQuestionnaireConditions() {
   for (const question of intakeQuestionnaire.questions ?? []) {
     const card = document.querySelector(`.question-card[data-question-id="${question.id}"]`);
@@ -112,27 +159,30 @@ function updateQuestionnaireConditions() {
     const visible = !question.showWhen.answerStates || question.showWhen.answerStates.includes(answer.answerState);
     card.classList.toggle("is-conditional-hidden", !visible);
     if (!visible) {
+      card.dataset.conditionAutoHidden = "true";
       const select = card.querySelector("select"); if (select) select.value = "NOT_APPLICABLE";
       for (const input of card.querySelectorAll('input[type="checkbox"]')) input.checked = false;
+    } else if (card.dataset.conditionAutoHidden === "true") {
+      delete card.dataset.conditionAutoHidden;
+      const select = card.querySelector("select"); if (select) select.value = "UNKNOWN";
+      card.querySelector(".question-evidence-state").textContent = "Unknown · no information detected or declared";
     }
+  }
+  for (const details of document.querySelectorAll(".questionnaire-section")) {
+    const cards = [...details.querySelectorAll(".question-card:not(.is-conditional-hidden)")];
+    const actionCount = cards.filter((card) => {
+      const question = (intakeQuestionnaire.questions ?? []).find((item) => item.id === card.dataset.questionId);
+      const answer = question ? questionnaireAnswerRecord(question) : { answerState: "UNKNOWN", supportStatus: "NOT_CHECKED" };
+      return answer.answerState === "UNKNOWN" || ["UNSUPPORTED", "CONFLICTING", "NOT_CHECKED"].includes(answer.supportStatus);
+    }).length;
+    const summary = details.querySelector("summary");
+    if (summary) summary.textContent = `${details.dataset.sectionTitle} · ${actionCount ? `${actionCount} action${actionCount === 1 ? "" : "s"}` : "complete"}`;
   }
 }
 
 function questionnaireAnswers() {
   const now = new Date().toISOString();
-  return Object.fromEntries((intakeQuestionnaire.questions ?? []).map((question) => {
-    const answer = collectedQuestionAnswer(question);
-    const previous = latestSolutionProfile?.assessmentIntakeFacts?.[question.id];
-    const unchanged = previous && previous.answerState === answer.answerState && JSON.stringify(previous.value === previous.answerState ? [] : previous.value) === JSON.stringify(answer.values);
-    return [question.id, {
-      ...answer,
-      origin: unchanged ? previous.origin : "USER_DECLARED",
-      supportStatus: unchanged ? previous.supportStatus : answer.answerState === "UNKNOWN" ? "NOT_CHECKED" : "UNSUPPORTED",
-      sourceUnitIds: unchanged ? previous.sourceUnitIds : [], evidenceLinks: unchanged ? previous.evidenceLinks : [],
-      limitations: answer.answerState === "UNKNOWN" ? ["No answer was detected or declared."] : unchanged ? previous.limitations : ["User declaration is not documentary evidence."],
-      confirmedBy: answer.answerState === "UNKNOWN" ? null : "USER", confirmedAt: answer.answerState === "UNKNOWN" ? null : now
-    }];
-  }));
+  return Object.fromEntries((intakeQuestionnaire.questions ?? []).map((question) => [question.id, questionnaireAnswerRecord(question, now)]));
 }
 
 function fillQuestionnaire(answers = {}) {
@@ -141,12 +191,14 @@ function fillQuestionnaire(answers = {}) {
     const card = document.querySelector(`.question-card[data-question-id="${question.id}"]`); if (!card) continue;
     if (question.type === "SINGLE") card.querySelector("select").value = answer.answerState ?? "UNKNOWN";
     else for (const input of card.querySelectorAll('input[type="checkbox"]')) input.checked = (answer.values ?? []).includes(input.value);
-    card.querySelector(".question-evidence-state").textContent = `${label(answer.supportStatus ?? "NOT_CHECKED")} · ${answer.sourceUnitIds?.length ?? 0} cited source unit(s)`;
+    card.querySelector(".question-evidence-state").textContent = `${label(answer.origin ?? "SELF_DECLARED")} · ${label(answer.supportStatus ?? "NOT_CHECKED")} · ${answer.sourceUnitIds?.length ?? 0} cited source unit(s)`;
   }
   updateQuestionnaireConditions();
 }
 
 function fillDossier(dossier) {
+  editedIntakeFields.clear();
+  latestDiscoveryRecheck = null;
   const boundary = dossier.operatingBoundary ?? {};
   $("name").value = dossier.name ?? ""; $("owner").value = dossier.accountableOwner ?? "";
   $("purpose").value = dossier.intendedPurpose ?? ""; $("value").value = dossier.expectedValue ?? "";
@@ -164,6 +216,52 @@ function fillDossier(dossier) {
   setTri("uses-agents", dossier.agent?.usesAgents); setTri("takes-actions", dossier.agent?.canTakeActions); setTri("irreversible", dossier.agent?.irreversibleActions); setTri("human-override", dossier.agent?.humanOverride);
   setTri("prohibited", dossier.classification?.prohibitedPractice); setTri("high-risk", dossier.classification?.highRiskCandidate);
   fillQuestionnaire(dossier.intakeAnswers ?? {});
+  intakeControlBaseline.clear();
+  for (const controlId of Object.keys(INTAKE_CONTROL_FIELDS)) intakeControlBaseline.set(controlId, intakeControlValue(controlId));
+}
+
+function intakeControlValue(controlId) {
+  if (controlId === "data-categories") return JSON.stringify(checkedValues(controlId).sort());
+  return String($(controlId)?.value ?? "");
+}
+
+function renderIntakeWorkspace(profile, recheck = null) {
+  if (!profile) return;
+  latestDiscoveryRecheck = recheck ?? latestDiscoveryRecheck;
+  const aiByField = new Map((latestDiscoveryRecheck?.candidates ?? []).map((item) => [item.field, item]));
+  for (const [controlId, field] of Object.entries(INTAKE_CONTROL_FIELDS)) {
+    const control = $(controlId); if (!control) continue;
+    const host = control.closest("label") ?? control.closest("fieldset"); if (!host) continue;
+    host.querySelector(`.field-provenance[data-field="${field}"]`)?.remove();
+    const fact = profile.fields[field];
+    const ai = aiByField.get(field);
+    const edited = editedIntakeFields.has(field);
+    const state = edited ? { tone: "self-declared", text: "Self-Declared · changed by user · V&V lifecycle cap applies" }
+      : fact?.status === "CONFLICTING" ? { tone: "conflicting", text: "Conflict · source values require resolution" }
+        : ai?.recommendation === "REVIEW_REWRITE" ? { tone: "review", text: "AI wording proposal available · accepting it becomes Self-Declared" }
+          : ai?.recommendation === "REVIEW_CANDIDATE" ? { tone: "review", text: "AI source-grounded candidate available · user decision required" }
+            : !fact || fact.status === "UNKNOWN" ? { tone: "missing", text: "Missing · submitted material did not establish this information" }
+              : fact.factClass === "OBSERVED" ? { tone: "observed", text: `Source-derived · ${fact.sourceUnitIds?.length ?? 0} cited unit(s) · user confirmation required` }
+                : fact.factClass === "SELF_DECLARED" ? { tone: "self-declared", text: "Self-Declared · documentary support not established" }
+                  : { tone: "missing", text: "Provisional default · verify or provide information" };
+    const note = el("span", `field-provenance ${state.tone}`, state.text); note.dataset.field = field; host.append(note);
+  }
+  const facts = Object.values(profile.fields);
+  const declaredFields = new Set(facts.filter((item) => item.factClass === "SELF_DECLARED").map((item) => item.field));
+  for (const field of editedIntakeFields) declaredFields.add(field);
+  const counts = {
+    observed: facts.filter((item) => item.factClass === "OBSERVED" && item.status !== "CONFLICTING").length,
+    missing: facts.filter((item) => item.status === "UNKNOWN" && !editedIntakeFields.has(item.field)).length,
+    conflicting: facts.filter((item) => item.status === "CONFLICTING").length,
+    declared: declaredFields.size
+  };
+  const summary = $("intake-review-summary"); summary.replaceChildren(
+    el("strong", "", "Review exceptions first"),
+    el("span", "observed", `${counts.observed} source-derived`),
+    el("span", "missing", `${counts.missing} missing`),
+    el("span", "conflicting", `${counts.conflicting} conflicting`),
+    el("span", "self-declared", `${counts.declared} Self-Declared`)
+  );
 }
 
 function dossierFromForm() {
@@ -252,44 +350,76 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
   }
   root.append(grid);
   if (recheck) {
+    const acceptedCount = recheck.candidates?.filter((item) => item.recommendation === "ACCEPT_CURRENT").length ?? 0;
+    const actionCandidates = recheck.candidates?.filter((item) => item.recommendation !== "ACCEPT_CURRENT") ?? [];
     const message = recheck.status === "COMPLETED"
-      ? `AI semantic recheck completed: ${recheck.candidates?.length ?? 0} cited candidate(s) were produced for your review. They do not overwrite this deterministic intake draft.`
+      ? `AI Intake verification completed: ${acceptedCount} current value(s) supported as written; ${actionCandidates.length} field(s) need review or more information. AI proposals do not overwrite the deterministic Intake draft.`
       : recheck.status === "BLOCKED_BY_LOCAL_DLP"
         ? "AI semantic recheck was blocked by local source screening. Missing fields remain unknown until documented or declared by the user."
         : `AI semantic recheck is unavailable: ${label(recheck.failureCode ?? recheck.status)}. The deterministic intake draft remains available.`;
     root.append(el("p", "discovery-recheck-note", message));
-    if (recheck.candidates?.length) {
+    if (actionCandidates.length) {
+      const details = el("details", "discovery-candidate-details");
+      details.append(el("summary", "", `Review ${actionCandidates.length} AI verification exception(s)`));
       const candidates = el("ul", "discovery-candidates");
-      for (const candidate of recheck.candidates) {
-        candidates.append(el("li", "", `${label(candidate.field)}: ${candidate.value ?? "Not found"} (${label(candidate.status)})`));
+      for (const candidate of actionCandidates) {
+        const displayedValue = candidate.value || (candidate.recommendation === "PROVIDE_INFORMATION" ? "Information not found in submitted material" : "No usable proposal");
+        const item = el("li", "", `${label(candidate.field)} · ${label(candidate.recommendation)}: ${displayedValue}. ${candidate.rationale}`);
+        const controlId = Object.entries(INTAKE_CONTROL_FIELDS).find(([, field]) => field === candidate.field)?.[0];
+        const control = controlId ? $(controlId) : null;
+        if (control && ["INPUT", "TEXTAREA"].includes(control.tagName) && ["REVIEW_REWRITE", "REVIEW_CANDIDATE"].includes(candidate.recommendation) && candidate.value) {
+          const apply = el("button", "candidate-apply-button", "Use proposal"); apply.type = "button";
+          apply.addEventListener("click", () => { control.value = candidate.value; control.dispatchEvent(new Event("input", { bubbles: true })); control.focus(); });
+          item.append(apply);
+        }
+        candidates.append(item);
         if (candidate.field?.startsWith("intakeAnswers.")) {
           const questionId = candidate.field.slice("intakeAnswers.".length);
           const card = document.querySelector(`.question-card[data-question-id="${questionId}"]`);
           if (card) {
             card.querySelector(".question-candidate")?.remove();
-            const note = el("div", "question-candidate", `AI candidate: ${candidate.value ?? "Not found"} · ${candidate.sourceUnitIds?.length ?? 0} cited unit(s). Review and select the answer yourself.`);
+            const note = el("div", "question-candidate", `AI verification: ${label(candidate.recommendation)} · ${displayedValue} · ${candidate.sourceUnitIds?.length ?? 0} cited unit(s). Review and select the answer yourself.`);
             card.append(note);
           }
         }
       }
-      root.append(candidates);
+      details.append(candidates);
+      root.append(details);
     }
   }
+  renderIntakeWorkspace(profile, recheck);
   root.classList.remove("hidden");
 }
 
 async function discoverCaseInformation() {
-  $("error").classList.add("hidden"); $("discover-button").disabled = true; $("discovery-status").textContent = "Parsing sources locally on the Engine and building cited facts…";
+  $("error").classList.add("hidden"); $("discover-button").disabled = true; $("assess-button").disabled = true;
+  setIntakeFlow("DETERMINISTIC");
+  $("discovery-status").textContent = "Stage 2 of 5 · Parsing sources locally and building deterministic cited facts…";
   try {
     const prepared = await selectedSources();
     if (!prepared.sources.length) throw new Error("Select a folder or one or more supported files first.");
-    const response = await fetch("/api/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(prepared) });
-    const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Source discovery failed");
-    activeRunId = body.runId;
-    latestSolutionProfile = body.solutionProfile;
-    fillDossier(body.solutionProfile.suggestedDossier); renderDiscovery(body.solutionProfile, body.dlpFindings, body.discoveryRecheck, body.citationIndex);
-    const unresolved = Object.values(body.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED").length;
-    $("discovery-status").textContent = `Draft ready with ${unresolved} unresolved field(s). Confirm or correct it, then start the full evidence-gated AI assessment.`;
+    const preflight = await postJson("/api/v2/runs/preflight", prepared);
+    activeRunId = preflight.runId;
+    latestSolutionProfile = preflight.solutionProfile;
+    fillDossier(preflight.solutionProfile.suggestedDossier);
+    renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, null, preflight.citationIndex);
+    setIntakeFlow("AI_VERIFICATION");
+    $("discovery-status").textContent = "Stage 3 of 5 · Deterministic Intake complete. Running cited AI verification without changing accepted values…";
+
+    let recheck;
+    try {
+      recheck = await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/discover-recheck`);
+    } catch {
+      recheck = { status: "UNAVAILABLE", failureCode: "INTAKE_AI_VERIFICATION_REQUEST_FAILED" };
+    }
+    renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, recheck, preflight.citationIndex);
+    const limited = recheck.status !== "COMPLETED";
+    setIntakeFlow("USER_RESOLUTION", { limitedSteps: limited ? ["AI_VERIFICATION"] : [] });
+    const unresolved = Object.values(preflight.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED").length;
+    $("discovery-status").textContent = limited
+      ? `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). AI verification was ${label(recheck.status).toLowerCase()}; resolve the Intake manually.`
+      : `Stage 4 of 5 · Deterministic and AI verification complete. Resolve ${unresolved} unresolved field(s), then confirm the Intake.`;
+    $("assess-button").disabled = false;
     $("assessment-input").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     $("discovery-status").textContent = "Discovery could not be completed."; $("error").textContent = error.message; $("error").classList.remove("hidden");
@@ -402,6 +532,7 @@ async function loadSample() {
     encoding: "utf8"
   }));
   preparedSources = null; activeRunId = null;
+  $("assess-button").disabled = true; setIntakeFlow("UPLOAD");
   $("folder-summary").textContent = `${sample.sources.length} controlled sample evidence files loaded`;
   $("file-summary").textContent = "No individual files selected";
   $("discovery-status").textContent = "Controlled sample loaded. Discover case information to run the same source-first AI workflow.";
@@ -454,28 +585,25 @@ async function waitForRun(runId) {
 async function runAssessment(event) {
   event.preventDefault(); $("error").classList.add("hidden"); $("progress").classList.remove("hidden"); $("assess-button").disabled = true;
   try {
+    if (!activeRunId) throw new Error("Complete deterministic discovery and AI Intake verification before starting the A–F assessment.");
     const prepared = await selectedSources();
     const dossier = dossierFromForm();
     setProgress("Preparing AI analysis", "Local screening is complete. Redacted evidence will be analysed by the Engine’s configured providers.");
-    if (!activeRunId) {
-      const preflight = await postJson("/api/v2/runs/preflight", { dossier, ...prepared });
-      activeRunId = preflight.runId;
-    } else {
-      const confirmations = {};
-      const now = new Date().toISOString();
-      for (const [field, item] of Object.entries(latestSolutionProfile?.fields ?? {})) {
-        if (item.value !== null && item.value !== "" && (!Array.isArray(item.value) || item.value.length)) confirmations[field] = { confirmed: true, confirmedBy: "USER", confirmedAt: now };
-      }
-      await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, { dossier, confirmations });
+    const confirmations = {};
+    for (const [field, item] of Object.entries(latestSolutionProfile?.fields ?? {})) {
+      if (item.value !== null && item.value !== "" && item.value !== "UNKNOWN" && (!Array.isArray(item.value) || item.value.length)) confirmations[field] = { confirmed: true };
     }
+    await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, { dossier, confirmations });
+    setIntakeFlow("ASSESSMENT");
     await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/execute`);
     await waitForRun(activeRunId);
     const response = await fetch(`/api/v2/runs/${encodeURIComponent(activeRunId)}/result`);
     const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Cognitive result is unavailable");
     renderPackage(body);
+    setIntakeFlow(null);
     activeRunId = null;
   } catch (error) { $("error").textContent = error.message; $("error").classList.remove("hidden"); }
-  finally { $("progress").classList.add("hidden"); $("assess-button").disabled = false; }
+  finally { $("progress").classList.add("hidden"); $("assess-button").disabled = activeRunId === null; }
 }
 
 function download(content, type, suffix) {
@@ -527,7 +655,16 @@ Promise.all([
   renderQuestionnaire();
 }).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; $("knowledge-diagnostics-content").textContent = "Knowledge connection diagnostics are unavailable."; });
 $("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("dossier-form").addEventListener("submit", runAssessment);
+$("dossier-form").addEventListener("input", (event) => {
+  const controlId = event.target.id || event.target.closest("#data-categories")?.id;
+  const field = INTAKE_CONTROL_FIELDS[controlId];
+  if (field && latestSolutionProfile) {
+    if (intakeControlValue(controlId) === intakeControlBaseline.get(controlId)) editedIntakeFields.delete(field);
+    else editedIntakeFields.add(field);
+    renderIntakeWorkspace(latestSolutionProfile, latestDiscoveryRecheck);
+  }
+});
 $("summary-tab").addEventListener("click", () => selectView("summary")); $("workspace-tab").addEventListener("click", () => selectView("workspace"));
 $("print-button").addEventListener("click", printReport); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);
-$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; });
-$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; });
+$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; });
+$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; });

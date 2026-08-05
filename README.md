@@ -63,70 +63,19 @@ The dashboard is served on port `4174` by default. Copy configuration from `.env
 
 The dashboard can upload a codebase folder or individual supported files. **Discover case information** performs local DLP screening, deterministic discovery, and a cited AI semantic recheck. After confirmation, **Confirm intake and start AI analysis** runs the full evidence-gated pipeline. **Load credible sample** follows the same source-first workflow.
 
-## Current deterministic API
+## Confirmed Intake API
 
-`POST /api/assess` accepts the current dossier model and text sources:
+The supported assessment workflow uses the v2 run state machine:
 
-```json
-{
-  "dossier": {
-    "name": "Internal knowledge assistant",
-    "intendedPurpose": "Answer employee questions from approved internal material",
-    "expectedValue": "Reduce repeated support handling",
-    "currentStage": "DESIGN_AND_DEVELOPMENT",
-    "targetStage": "VERIFICATION_AND_VALIDATION",
-    "jurisdictions": ["EU"],
-    "roles": ["DEPLOYER"],
-    "users": ["EMPLOYEES"],
-    "accountableOwner": "Solution owner",
-    "data": {
-      "categories": ["SYNTHETIC", "PUBLIC_NON_PERSONAL"]
-    },
-    "exposure": {
-      "currentUserAccess": "INTERNAL_ONLY",
-      "intendedUserAccess": "INTERNAL_ONLY",
-      "productionAccess": false,
-      "consequentialDecisions": false
-    },
-    "agent": {
-      "usesAgents": true,
-      "canTakeActions": false,
-      "irreversibleActions": false,
-      "humanOverride": true
-    },
-    "classification": {
-      "prohibitedPractice": false,
-      "highRiskCandidate": false
-    },
-    "operatingBoundary": {
-      "allowedUses": ["Internal employee question answering"],
-      "excludedUses": ["Consequential employment decisions"],
-      "environment": "CONTROLLED_PILOT",
-      "userScope": "Named pilot employees",
-      "dataScope": "Synthetic or approved internal content",
-      "integrationScope": "Read-only approved connectors",
-      "permissionScope": "No privileged or irreversible actions",
-      "autonomyScope": "Human-reviewed answers only",
-      "monitoringOwner": "Solution owner",
-      "expiresAt": "2027-01-31"
-    }
-  },
-  "sources": [
-    { "path": "src/assistant.js", "content": "...", "kind": "CODE" },
-    { "path": "test/assistant.test.js", "content": "...", "kind": "TEST" }
-  ]
-}
-```
+1. `POST /api/v2/runs/preflight` parses and screens sources, then builds the deterministic Intake draft.
+2. `POST /api/v2/runs/{runId}/discover-recheck` runs the optional cited AI Intake verification while the run awaits confirmation.
+3. `POST /api/v2/runs/{runId}/confirm` records user resolution and creates the immutable confirmed Intake snapshot.
+4. `POST /api/v2/runs/{runId}/execute` starts A–F assessment from that snapshot.
+5. `GET /api/v2/runs/{runId}` and `GET /api/v2/runs/{runId}/result` expose progress and the result.
 
-Additional deterministic endpoints:
+`POST /api/assess` is retired and returns HTTP 410 because a one-shot request cannot enforce the confirmed Intake boundary. Library-level deterministic assessment functions remain available to tests and internal code, but their output must not be represented as a confirmed v2 pipeline result.
 
-- `POST /api/discover` performs MIME-aware source discovery without requiring a dossier.
-- `GET /api/sample` returns a complete current sample request.
-- `GET /api/knowledge` returns the active sanitized knowledge identity.
-- `GET /api/knowledge/diagnostics` returns structural and referential diagnostics.
-- `GET /api/config` returns the non-secret always-on cognitive mode, contract version, and deployed build revision.
-
-The deterministic package is schema `1.3.0`. It includes the Assessment Intake, field-level solution profile, documentation readiness, source-ingestion record, lifecycle transition boundary and Assurance Summary. Lexical matches remain automated indicators; they are not cognitive verification.
+Supporting read-only endpoints include `GET /api/sample`, `GET /api/knowledge`, `GET /api/knowledge/diagnostics` and `GET /api/config`.
 
 ## Cognitive API and safeguards
 

@@ -2,18 +2,15 @@ import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assessSolution } from "./engine.js";
 import { loadKnowledgeSnapshot, knowledgeManifestView } from "./knowledge/provider.js";
 import { SAMPLE_REQUEST } from "./sample.js";
-import { validateExecutionApproval, validatePreflightInput } from "./cognitive/contracts.js";
+import { validateExecutionApproval } from "./cognitive/contracts.js";
 import { confirmPreflightDossier, createPreflight, publicDiscoveryView, publicPreflightView } from "./cognitive/preflight.js";
-import { parseAndScreenSources } from "./cognitive/source-intake.js";
-import { discoverSolutionProfile } from "./core/solution-profile.js";
 import { executeCognitiveRun } from "./cognitive/pipeline.js";
 import { modelPolicy, publicModelPolicy, requiredGovernanceProviders } from "./cognitive/model-policy.js";
 import { EphemeralRunStore } from "./cognitive/run-store.js";
-import { buildSourceIngestionManifest } from "./core/source-ingestion.js";
 import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
+import { sha256 } from "./core/hash.js";
 import { sanitizeRestrictedValue } from "../public/content-policy.js";
 
 const port = Number(process.env.PORT ?? 4174);
@@ -89,6 +86,11 @@ function automaticApproval(run, policy = modelPolicy()) {
 function startCognitiveRun(run, request) {
   if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive assessment rate limit exceeded"), { statusCode: 429 });
   if (run.status !== "AWAITING_TRANSMISSION_APPROVAL") throw Object.assign(new Error(`Run cannot execute from status ${run.status}`), { statusCode: 409 });
+  if (run.stage !== "INTAKE_CONFIRMED" || !run.confirmedIntake?.hash) throw Object.assign(new Error("A confirmed immutable Intake snapshot is required before execution"), { statusCode: 409 });
+  const { hash: confirmedIntakeHash, ...confirmedIntakePayload } = run.confirmedIntake;
+  if (sha256(confirmedIntakePayload) !== confirmedIntakeHash) throw Object.assign(new Error("The confirmed Intake snapshot failed its integrity check"), { statusCode: 409 });
+  run.dossier = structuredClone(run.confirmedIntake.effectiveDossier);
+  run.solutionProfile = structuredClone(run.confirmedIntake.solutionProfile);
   const blocking = run.dlpFindings.filter((item) => item.blocking);
   if (blocking.length) throw Object.assign(new Error("Preflight contains evidence that cannot be safely transmitted"), { statusCode: 400, blockingFindingIds: blocking.map((item) => item.id) });
   const policy = modelPolicy();
@@ -130,32 +132,6 @@ function publicRunView(run) {
     coverage: run.result?.coverageMatrix?.counts ?? null,
     publicationGate: run.result?.publicationGate?.status ?? null,
     progress: run.trace.map(({ stage, status, at, claimCount, verificationCount, adjudicatedClaimCount, lockedFindingCount, unresolvedClaimCount, coverageComplete }) => ({ stage, status, at, claimCount, verificationCount, adjudicatedClaimCount, lockedFindingCount, unresolvedClaimCount, coverageComplete }))
-  };
-}
-
-async function parsedAssessmentSources(payload) {
-  const values = payload.sources ?? [];
-  if (!values.some((item) => item.mimeType)) {
-    return {
-      sources: values,
-      sourceIngestion: buildSourceIngestionManifest({ submitted: payload.sourceIngestion, parsedSources: values, selectionMode: "LEGACY_OR_SAMPLE" })
-    };
-  }
-  const validated = validatePreflightInput({ sources: values }, { dossierOptional: true });
-  const screened = await parseAndScreenSources(validated.sources, { continueOnError: true });
-  return {
-    sources: screened.sourceUnits.map((unit) => ({
-      path: `${unit.path}#${unit.locator}`,
-      content: unit.media ? "[IMAGE REQUIRES APPROVED MULTIMODAL COGNITIVE DISCOVERY; NO DETERMINISTIC FACT EXTRACTED]" : unit.content,
-      kind: unit.evidenceKind,
-      metadata: {
-        artifactClass: screened.registeredSources.find((item) => item.id === unit.sourceId)?.artifactClass,
-        sourceUnitId: unit.id,
-        locator: unit.locator,
-        originalSource: screened.registeredSources.find((item) => item.id === unit.sourceId)
-      }
-    })),
-    sourceIngestion: buildSourceIngestionManifest({ submitted: payload.sourceIngestion, parsedSources: screened.registeredSources, failedSources: screened.failedSources })
   };
 }
 
@@ -204,6 +180,7 @@ const server = http.createServer(async (request, response) => {
       let discoveryRecheck = { status: "NOT_RUN", policy: "Cited AI recheck runs automatically after local DLP screening when the configured provider route is available." };
       if (run.dlpFindings.some((item) => item.blocking)) {
         discoveryRecheck = { status: "BLOCKED_BY_LOCAL_DLP", policy: "AI recheck was not started because source transmission is blocked by local screening." };
+        run.stage = "INTAKE_AI_VERIFICATION_BLOCKED";
       } else {
         try {
           if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive discovery rate limit exceeded"), { statusCode: 429 });
@@ -211,6 +188,7 @@ const server = http.createServer(async (request, response) => {
           discoveryRecheck = await recheckDiscovery(run, automaticApproval(run, policy), { policy });
         } catch (error) {
           discoveryRecheck = { status: "UNAVAILABLE", failureCode: safeFailureCode(error), policy: "The deterministic intake draft remains available. AI candidates were not used." };
+          run.stage = "INTAKE_AI_VERIFICATION_UNAVAILABLE";
           run.trace.push({ stage: "DISCOVERY_RECHECK", status: "UNAVAILABLE", at: new Date().toISOString(), failureCode: discoveryRecheck.failureCode });
         }
       }
@@ -225,9 +203,7 @@ const server = http.createServer(async (request, response) => {
       });
     }
     if (request.method === "POST" && url.pathname === "/api/assess") {
-      const payload = await readJson(request);
-      const parsed = await parsedAssessmentSources(payload);
-      return sendJson(response, 200, await assessSolution({ ...payload, ...parsed }, { knowledge }));
+      return sendJson(response, 410, { error: "This compatibility endpoint cannot produce a confirmed Intake pipeline result. Use /api/v2/runs/preflight, /confirm and /execute." });
     }
     if (request.method === "GET" && url.pathname === "/api/v2/models") {
       return sendJson(response, 200, { mode: "ALWAYS_ON", profiles: publicModelPolicy(modelPolicy()) });
@@ -246,10 +222,23 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && recheckMatch) {
       const run = runStore.get(recheckMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
+      if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.discoveryRecheck) return sendJson(response, 409, { error: "AI Intake verification is not available from the current run state" });
       const blocking = run.dlpFindings.filter((item) => item.blocking);
-      if (blocking.length) return sendJson(response, 400, { error: "Preflight contains evidence that cannot be safely transmitted", blockingFindingIds: blocking.map((item) => item.id) });
-      if (!rateAllowed(request)) return sendJson(response, 429, { error: "Cognitive discovery rate limit exceeded" });
-      return sendJson(response, 200, await recheckDiscovery(run, automaticApproval(run), { policy: modelPolicy() }));
+      if (blocking.length) {
+        run.stage = "INTAKE_AI_VERIFICATION_BLOCKED";
+        run.discoveryRecheck = { status: "BLOCKED_BY_LOCAL_DLP", policy: "AI verification was not started because source transmission is blocked by local screening.", blockingFindingIds: blocking.map((item) => item.id) };
+        run.trace.push({ stage: "INTAKE_AI_VERIFICATION", status: "BLOCKED", at: new Date().toISOString(), blockingFindingIds: blocking.map((item) => item.id) });
+        return sendJson(response, 200, run.discoveryRecheck);
+      }
+      try {
+        if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive discovery rate limit exceeded"), { statusCode: 429 });
+        return sendJson(response, 200, await recheckDiscovery(run, automaticApproval(run), { policy: modelPolicy() }));
+      } catch (error) {
+        run.stage = "INTAKE_AI_VERIFICATION_UNAVAILABLE";
+        run.discoveryRecheck = { status: "UNAVAILABLE", failureCode: safeFailureCode(error), policy: "The deterministic Intake draft remains available. AI candidates were not used." };
+        run.trace.push({ stage: "INTAKE_AI_VERIFICATION", status: "UNAVAILABLE", at: new Date().toISOString(), failureCode: run.discoveryRecheck.failureCode });
+        return sendJson(response, 200, run.discoveryRecheck);
+      }
     }
     const confirmMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/confirm$/);
     if (request.method === "POST" && confirmMatch) {

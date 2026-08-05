@@ -87,7 +87,7 @@ function documentationMarkup(summary) {
   const doc = summary.documentationAlignment ?? {};
   const unknown = array(doc.unknownFields);
   const conflicts = array(doc.contradictions).map((item) => item.statement);
-  const declaredOnly = array(doc.userDeclaredOnlyFields);
+  const declaredOnly = array(doc.selfDeclaredIntakeFields ?? doc.selfDeclaredOnlyFields ?? doc.userDeclaredOnlyFields);
   const metrics = [
     ["Overall status", label(doc.status ?? "UNKNOWN")],
     ["Deployment-profile completeness", `${doc.satisfiedFieldCount ?? doc.documentedAndConfirmedCount ?? 0} / ${doc.mandatoryFieldCount ?? 0}`],
@@ -96,7 +96,7 @@ function documentationMarkup(summary) {
     ["Source coverage", label(doc.sourceCoverageStatus ?? "SUBMITTED_SCOPE_ONLY")]
   ];
   const issues = [
-    ["Unknown fields", unknown], ["User-declared only", declaredOnly], ["Contradictions", conflicts]
+    ["Unknown fields", unknown], ["Self-Declared only", declaredOnly], ["Contradictions", conflicts]
   ];
   return section("03", "Documentation gate", "Documentation Alignment", `<div class="documentation-summary">${metrics.map(([name, value]) => `<div><span>${escapeHtml(name)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div><div class="documentation-issues">${issues.map(([name, values]) => `<article><h3>${escapeHtml(name)}</h3><p>${values.length ? escapeHtml(values.map(label).join(", ")) : "None recorded"}</p></article>`).join("")}</div>${doc.sandboxRequired ? `<p class="boundary-warning"><strong>Effective boundary:</strong> Isolated Sandbox until the critical documentation conditions are resolved.</p>` : ""}`);
 }

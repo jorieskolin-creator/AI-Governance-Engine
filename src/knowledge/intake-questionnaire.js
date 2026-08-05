@@ -95,3 +95,16 @@ export const INTAKE_QUESTIONNAIRE = Object.freeze({
     ].map(([id, fieldId, prompt], index) => ({ id, sectionId: "RISK", fieldId, type: "SINGLE", prompt, options: ["YES", "NO", "UNKNOWN", "NOT_APPLICABLE", "HUMAN_REVIEW_REQUIRED"], showWhen: index ? { questionId: "GENERAL_PURPOSE_MODEL_PROVIDER", answerStates: ["YES", "HUMAN_REVIEW_REQUIRED"] } : undefined, humanDecisionAuthority: "LEGAL_AND_GOVERNANCE", negativeAnswerRequiresEvidence: true, sourceMappings: [act("Articles 51-55", "Defines classification and obligations for general-purpose models, including systemic risk.")] }))
   ]
 });
+
+export function activeIntakeQuestionIds(answers = {}) {
+  return new Set(INTAKE_QUESTIONNAIRE.questions.filter((question) => {
+    if (!question.showWhen) return true;
+    const parent = answers[question.showWhen.questionId];
+    return !question.showWhen.answerStates || question.showWhen.answerStates.includes(parent?.answerState ?? "UNKNOWN");
+  }).map((question) => question.id));
+}
+
+export function activeIntakeAnswers(answers = {}) {
+  const activeIds = activeIntakeQuestionIds(answers);
+  return Object.fromEntries(Object.entries(answers).filter(([questionId]) => activeIds.has(questionId)));
+}

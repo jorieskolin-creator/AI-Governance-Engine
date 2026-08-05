@@ -103,6 +103,16 @@ export function evaluateHardGates({ dossier, registryFindings, controlAssessment
       requiredEvidenceKinds: ["DOCUMENT", "CONFIGURATION", "HUMAN_REVIEW"]
     });
   }
+  if (documentationReadiness?.selfDeclarationGateRequired) {
+    add({
+      code: "SELF_DECLARED_INTAKE_BOUNDARY", outcome: "BLOCK", title: "Self-declared Intake limits lifecycle progression",
+      basisStatus: "SELF_DECLARED",
+      rationale: "Self-declared Intake information may support work through Verification and Validation, but progression beyond that stage requires source-supported or authorized human-classified information.",
+      authorities: ["SOLUTION_OWNER", "GOVERNANCE"],
+      clearanceCriteria: ["Provide documentary support for every self-declared Intake field", "Verify the updated Intake and reassess the same solution boundary"],
+      requiredEvidenceKinds: ["DOCUMENT", "HUMAN_REVIEW"]
+    });
+  }
   if (documentationReadiness?.sourceCoverageReviewRequired) {
     const deploymentTarget = ["DEPLOYMENT", "OPERATION_AND_MONITORING", "REVIEW_AND_EVALUATION", "RETIREMENT"].includes(dossier.targetStage);
     const risky = sourceIngestion?.items?.filter((item) => ["UNSUPPORTED_SOURCE_LIKE", "PARSE_FAILED", "REJECTED_UNSAFE"].includes(item.disposition)) ?? [];

@@ -2,6 +2,7 @@ import { DISCOVERY_RECHECK_SCHEMA, validateExecutionApproval } from "./contracts
 import { ModelBudget, StructuredModelClient } from "./provider-client.js";
 import { modelPolicy } from "./model-policy.js";
 import { discoveryRecheckPrompt, packetHash, PROMPT_VERSIONS } from "./prompts.js";
+import { activeIntakeQuestionIds } from "../knowledge/intake-questionnaire.js";
 
 const MAX_RECHECK_CHARS = 60_000;
 
@@ -24,8 +25,21 @@ function relevantPackets(run, provider, approval) {
   }).filter((packet) => packet.sourceUnits.length);
 }
 
+function candidateMatchesCurrent(value, currentValue) {
+  const normalized = (item) => String(item ?? "").replaceAll("_", " ").replace(/\s+/g, " ").trim().toLowerCase();
+  if (Array.isArray(currentValue)) {
+    const proposed = String(value ?? "").split(/[,;|\n]/).map(normalized).filter(Boolean).sort();
+    return proposed.join("|") === currentValue.map(normalized).sort().join("|");
+  }
+  if (typeof currentValue === "boolean") return currentValue ? /^(?:yes|true)$/i.test(String(value).trim()) : /^(?:no|false)$/i.test(String(value).trim());
+  return normalized(value) === normalized(currentValue);
+}
+
 export async function recheckDiscovery(run, input, options = {}) {
   if (!run?.solutionProfile) throw new Error("Deterministic discovery must complete before AI recheck");
+  if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.discoveryRecheck) throw new Error("AI Intake verification is not available from the current run state");
+  run.stage = "INTAKE_AI_VERIFICATION_IN_PROGRESS";
+  run.trace.push({ stage: "INTAKE_AI_VERIFICATION", status: "RUNNING", at: new Date().toISOString() });
   const approval = validateExecutionApproval(input, run);
   const providers = commonApprovedProviders(approval);
   if (!providers.length) throw new Error("One provider must be explicitly approved for every discovery packet");
@@ -33,18 +47,55 @@ export async function recheckDiscovery(run, input, options = {}) {
   const profile = policy.choose("SOLUTION_UNDERSTANDING", { allowedProviders: providers });
   const packets = relevantPackets(run, profile.provider, approval);
   if (!packets.length) throw new Error("No approved documentation or configuration packet is available for discovery recheck");
+  const activeQuestionIds = activeIntakeQuestionIds(run.solutionProfile.assessmentIntakeFacts);
   const targetFields = [
-    ...Object.values(run.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED" || item.factClass === "USER_DECLARED").map((item) => ({ field: item.field, currentValue: item.value, status: item.status, factClass: item.factClass })),
-    ...Object.values(run.solutionProfile.assessmentIntakeFacts ?? {}).filter((item) => item.answerState === "UNKNOWN" || !["SUPPORTED", "PARTIAL"].includes(item.supportStatus)).map((item) => ({ field: `intakeAnswers.${item.questionId}`, currentValue: item.value, status: item.supportStatus, factClass: item.origin }))
+    ...Object.values(run.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED" || item.factClass === "SELF_DECLARED").map((item) => ({ field: item.field, currentValue: item.value, status: item.status, factClass: item.factClass })),
+    ...Object.values(run.solutionProfile.assessmentIntakeFacts ?? {}).filter((item) => activeQuestionIds.has(item.questionId) && (item.answerState === "UNKNOWN" || !["SUPPORTED", "PARTIAL"].includes(item.supportStatus))).map((item) => ({ field: `intakeAnswers.${item.questionId}`, currentValue: item.value, status: item.supportStatus, factClass: item.origin }))
   ];
   const client = options.client ?? new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2, maxTokens: 60_000, maxMs: 180_000 }) });
   const generated = await client.generate({ profile, prompt: discoveryRecheckPrompt(targetFields, packets), schemaName: "discovery_recheck", schema: DISCOVERY_RECHECK_SCHEMA, packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.discoveryRecheck });
   const units = new Map(packets.flatMap((packet) => packet.sourceUnits).map((unit) => [unit.id, unit]));
   const targets = new Set(targetFields.map((item) => item.field));
-  const candidates = generated.value.candidates.filter((item) => targets.has(item.field)).map((item) => {
-    const quotesValid = item.status === "NOT_FOUND" || item.evidenceQuotes.length > 0 && item.evidenceQuotes.every((quote) => units.has(quote.sourceUnitId) && units.get(quote.sourceUnitId).content.includes(quote.quote));
+  const targetByField = new Map(targetFields.map((item) => [item.field, item]));
+  const rewritableFields = new Set(["intendedPurpose", "expectedValue", "operatingBoundary.allowedUses", "operatingBoundary.excludedUses", "operatingBoundary.userScope", "operatingBoundary.dataScope", "operatingBoundary.integrationScope", "operatingBoundary.permissionScope", "operatingBoundary.autonomyScope"]);
+  const returnedByField = new Map();
+  for (const item of generated.value.candidates.filter((candidate) => targets.has(candidate.field))) {
+    returnedByField.set(item.field, [...(returnedByField.get(item.field) ?? []), item]);
+  }
+  const candidates = targetFields.map(({ field }) => {
+    const returned = returnedByField.get(field) ?? [];
+    if (returned.length !== 1) return {
+      field,
+      status: returned.length ? "REJECTED_UNSUPPORTED" : "NOT_FOUND",
+      recommendation: returned.length ? "RESOLVE_CONFLICT" : "PROVIDE_INFORMATION",
+      value: "",
+      sourceUnitIds: [],
+      evidenceQuotes: [],
+      rationale: returned.length ? "The AI verifier returned duplicate results for this field." : "The AI verifier did not return the required field result.",
+      limitations: [returned.length ? "Duplicate AI results were rejected and require user resolution." : "No AI result was returned; the information remains unknown until documented or declared by the user."]
+    };
+    const item = returned[0];
+    const exactQuoteIds = new Set();
+    const quotesValid = item.status === "NOT_FOUND"
+      ? item.evidenceQuotes.length === 0 && item.sourceUnitIds.length === 0
+      : item.evidenceQuotes.length > 0 && item.evidenceQuotes.every((quote) => {
+        if (!quote.quote.trim() || !units.has(quote.sourceUnitId) || !units.get(quote.sourceUnitId).content.includes(quote.quote)) return false;
+        exactQuoteIds.add(quote.sourceUnitId);
+        return true;
+      });
     const idsValid = item.sourceUnitIds.every((id) => units.has(id));
-    return { ...item, status: quotesValid && idsValid ? item.status : "REJECTED_UNSUPPORTED", limitations: quotesValid && idsValid ? ["AI candidate requires user confirmation and does not establish documentary assurance."] : ["The model output did not reproduce an exact approved source quote."] };
+    const citedIds = new Set(item.sourceUnitIds);
+    const citationCoverageValid = citedIds.size === exactQuoteIds.size && [...citedIds].every((id) => exactQuoteIds.has(id));
+    const supportedResultHasEvidence = item.status === "NOT_FOUND" || item.sourceUnitIds.length > 0;
+    const target = targetByField.get(field);
+    const currentMissing = target.currentValue === null || target.currentValue === undefined || target.currentValue === "" || target.currentValue === "UNKNOWN" || Array.isArray(target.currentValue) && target.currentValue.length === 0;
+    const recommendationValid = item.status === "NOT_FOUND" ? item.recommendation === "PROVIDE_INFORMATION" && item.value === ""
+      : item.status === "CONFLICTING" ? item.recommendation === "RESOLVE_CONFLICT" && exactQuoteIds.size >= 2
+        : item.recommendation === "ACCEPT_CURRENT" ? !currentMissing && target.status !== "CONFLICTING" && candidateMatchesCurrent(item.value, target.currentValue)
+          : item.recommendation === "REVIEW_REWRITE" ? !currentMissing && rewritableFields.has(field) && item.value.trim() !== "" && !candidateMatchesCurrent(item.value, target.currentValue)
+            : item.recommendation === "REVIEW_CANDIDATE" && currentMissing && item.value.trim() !== "";
+    const valid = quotesValid && idsValid && citationCoverageValid && supportedResultHasEvidence && recommendationValid;
+    return { ...item, status: valid ? item.status : "REJECTED_UNSUPPORTED", recommendation: valid ? item.recommendation : "RESOLVE_CONFLICT", limitations: valid ? ["AI verification is advisory, requires user confirmation and cannot change the deterministic Intake draft."] : ["The model output failed citation or recommendation validation and was rejected."] };
   });
   run.transmissionManifest ??= [];
   run.transmissionManifest.push({
@@ -57,6 +108,7 @@ export async function recheckDiscovery(run, input, options = {}) {
     transmittedAt: new Date().toISOString()
   });
   run.discoveryRecheck = { status: "COMPLETED", provider: profile.provider, configuredModel: profile.model, targetFields: targetFields.map((item) => item.field), candidates, trace: generated.trace };
+  run.stage = "INTAKE_AI_VERIFICATION_COMPLETED";
   run.trace.push({ stage: "DISCOVERY_RECHECK", status: "COMPLETED", at: new Date().toISOString(), candidateCount: candidates.length, outputHash: generated.trace.outputHash });
   return run.discoveryRecheck;
 }

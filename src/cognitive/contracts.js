@@ -142,10 +142,11 @@ export const DISCOVERY_RECHECK_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["field", "status", "value", "sourceUnitIds", "evidenceQuotes", "rationale"],
+        required: ["field", "status", "recommendation", "value", "sourceUnitIds", "evidenceQuotes", "rationale"],
         properties: {
           field: { type: "string" },
           status: { type: "string", enum: ["CANDIDATE", "CONFLICTING", "NOT_FOUND"] },
+          recommendation: { type: "string", enum: ["ACCEPT_CURRENT", "REVIEW_REWRITE", "REVIEW_CANDIDATE", "PROVIDE_INFORMATION", "RESOLVE_CONFLICT"] },
           value: { type: "string" },
           sourceUnitIds: { type: "array", items: { type: "string" } },
           evidenceQuotes: { type: "array", items: { type: "object", additionalProperties: false, required: ["sourceUnitId", "quote"], properties: { sourceUnitId: { type: "string" }, quote: { type: "string" } } } },

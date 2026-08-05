@@ -1,11 +1,11 @@
 import { LIFECYCLE_STAGES } from "../contracts.js";
 import { sha256, stableId } from "./hash.js";
-import { INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
+import { activeIntakeQuestionIds, INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
 
-export const SOLUTION_FACT_CLASSES = Object.freeze(["OBSERVED", "INFERRED", "USER_DECLARED"]);
+export const SOLUTION_FACT_CLASSES = Object.freeze(["OBSERVED", "INFERRED", "SELF_DECLARED"]);
 export const SOLUTION_FACT_STATUSES = Object.freeze(["CANDIDATE", "CONFIRMED", "CONFLICTING", "UNKNOWN"]);
 export const SUPPORT_STRENGTHS = Object.freeze(["EXPLICIT", "DERIVED", "WEAK"]);
-export const INTAKE_FACT_ORIGINS = Object.freeze(["OBSERVED", "AI_CANDIDATE", "USER_DECLARED", "HUMAN_CLASSIFIED"]);
+export const INTAKE_FACT_ORIGINS = Object.freeze(["OBSERVED", "AI_CANDIDATE", "SELF_DECLARED", "HUMAN_CLASSIFIED"]);
 export const INTAKE_SUPPORT_STATUSES = Object.freeze(["SUPPORTED", "PARTIAL", "UNSUPPORTED", "CONFLICTING", "NOT_CHECKED"]);
 
 const criticalFields = new Set(["name", "intendedPurpose", "accountableOwner", "jurisdictions", "currentStage", "classification.prohibitedPractice"]);
@@ -64,7 +64,7 @@ function fact(field, value, options = {}) {
     id: stableId("solution-fact", { field, value, sourceUnitIds: options.sourceUnitIds ?? [] }),
     field,
     value: empty ? null : value,
-    factClass: options.factClass ?? (empty ? "INFERRED" : "USER_DECLARED"),
+    factClass: options.factClass ?? (empty ? "INFERRED" : "SELF_DECLARED"),
     status: options.status ?? (empty ? "UNKNOWN" : "CANDIDATE"),
     supportStrength: options.supportStrength ?? (empty ? "WEAK" : "DERIVED"),
     sourceUnitIds: unique(options.sourceUnitIds ?? []),
@@ -106,35 +106,108 @@ function explicitMatches(sources, value, field) {
 }
 
 function labelledValue(sources, labels) {
-  const pattern = new RegExp(`(?:${labels.join("|")})\\s*[:=\\-]\\s*([^\\n\\r|]{2,180})`, "i");
+  const entry = labelledEntry(sources, labels);
+  if (!entry) return null;
+  if (entry.conflict) return { value: null, sourceUnitIds: entry.sourceUnitIds, candidates: entry.candidates, conflict: true };
+  const candidate = entry.text;
+  return candidate && !/^(?:and|or|but|based|because|which|that|if|when|where)\b/i.test(candidate)
+    ? { value: candidate, sourceUnitIds: entry.sourceUnitIds }
+    : null;
+}
+
+const escaped = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const words = (value) => String(value).replaceAll("_", " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\s+/g, " ").trim();
+
+function labelledEntry(sources, labels) {
+  const pattern = new RegExp(`^\\s*(?:[-*]\\s*)?(?:${labels.map(escaped).join("|")})\\s*\\??\\s*[:=\\-]\\s*(.+?)\\s*$`, "i");
+  const entries = [];
   for (const source of sources.filter((item) => item.artifactClass === "DOCUMENTATION")) {
-    const match = source.content.match(pattern);
-    const candidate = match?.[1]?.trim();
-    if (candidate && !/^(?:and|or|but|based|because|which|that|if|when|where)\b/i.test(candidate) && candidate.split(/\s+/).length >= 3) return { value: candidate, sourceUnitIds: [source.id] };
+    for (const line of source.content.split(/\r?\n/)) {
+      const match = line.match(pattern);
+      if (match?.[1]?.trim()) entries.push({ text: match[1].trim(), sourceUnitId: source.id });
+    }
   }
-  return null;
+  if (!entries.length) return null;
+  const candidates = unique(entries.map((entry) => entry.text));
+  const normalizedCandidates = unique(candidates.map(normalize));
+  return normalizedCandidates.length > 1
+    ? { text: null, conflict: true, candidates, sourceUnitIds: unique(entries.map((entry) => entry.sourceUnitId)) }
+    : { text: entries[0].text, conflict: false, candidates, sourceUnitIds: unique(entries.map((entry) => entry.sourceUnitId)) };
+}
+
+function detectedEnum(sources, labels, options) {
+  const entry = labelledEntry(sources, labels);
+  if (!entry) return null;
+  if (entry.conflict) return { value: null, sourceUnitIds: entry.sourceUnitIds, candidates: entry.candidates, conflict: true };
+  const normalized = words(entry.text).toLowerCase();
+  const matches = options.map(([canonical, aliases = []]) => [canonical, [canonical, ...aliases].map((item) => words(item).toLowerCase())])
+    .filter(([, aliases]) => aliases.some((alias) => normalized === alias))
+    .sort((a, b) => Math.max(...b[1].map((item) => item.length)) - Math.max(...a[1].map((item) => item.length)));
+  return matches.length ? { value: matches[0][0], sourceUnitIds: entry.sourceUnitIds } : null;
+}
+
+function detectedBoolean(sources, labels) {
+  return detectedEnum(sources, labels, [[true, ["yes", "true"]], [false, ["no", "false"]]]);
+}
+
+function detectedQuestionAnswer(sources, question) {
+  const fieldLabel = words(question.fieldId.split(".").at(-1));
+  const entry = labelledEntry(sources, [words(question.id), fieldLabel, question.prompt.replace(/\?$/, "")]);
+  if (!entry) return null;
+  if (entry.conflict) return { answerState: "HUMAN_REVIEW_REQUIRED", values: [], sourceUnitIds: entry.sourceUnitIds, supportStatus: "CONFLICTING", candidates: entry.candidates };
+  const normalized = words(entry.text).toLowerCase();
+  const options = [...question.options].sort((a, b) => words(b).length - words(a).length);
+  const values = options.filter((option) => {
+    const optionText = words(option).toLowerCase();
+    return normalized === optionText || new RegExp(`(?:^|[^a-z0-9])${escaped(optionText)}(?:$|[^a-z0-9])`, "i").test(normalized);
+  });
+  if (question.type === "SINGLE") {
+    if (values.length > 1) return { answerState: "HUMAN_REVIEW_REQUIRED", values: [], sourceUnitIds: entry.sourceUnitIds, supportStatus: "CONFLICTING", candidates: values };
+    const answerState = values[0] ?? (/^(?:yes|true)$/i.test(normalized) ? "YES" : /^(?:no|false)$/i.test(normalized) ? "NO" : null);
+    return answerState ? { answerState, values: [], sourceUnitIds: entry.sourceUnitIds } : null;
+  }
+  if (!values.length) return null;
+  if (values.length > 1 && values.some((item) => ["UNKNOWN", "NONE_OF_THE_ABOVE"].includes(item))) {
+    return { answerState: "HUMAN_REVIEW_REQUIRED", values: [], sourceUnitIds: entry.sourceUnitIds, supportStatus: "CONFLICTING", candidates: values };
+  }
+  const selected = values.includes("NONE_OF_THE_ABOVE") ? ["NONE_OF_THE_ABOVE"] : values.filter((item) => item !== "UNKNOWN");
+  return {
+    answerState: selected.includes("NONE_OF_THE_ABOVE") ? "NO" : selected.length ? "YES" : "UNKNOWN",
+    values: selected.length ? selected : ["UNKNOWN"],
+    sourceUnitIds: entry.sourceUnitIds
+  };
 }
 
 function detectedName(sources) {
+  const candidates = [];
   for (const source of sources) {
     if (/package\.json$/i.test(source.path)) {
       try {
         const parsed = JSON.parse(source.content);
-        if (typeof parsed.name === "string" && parsed.name.trim()) return { value: parsed.name.trim(), sourceUnitIds: [source.id], strength: "EXPLICIT" };
+        if (typeof parsed.name === "string" && parsed.name.trim()) candidates.push({ value: parsed.name.trim(), sourceUnitId: source.id });
       } catch { /* malformed configuration remains ordinary source evidence */ }
     }
   }
   for (const source of sources.filter((item) => /readme|overview|product/i.test(item.path))) {
     const heading = source.content.match(/^\s*#\s+(.{2,140})$/m);
-    if (heading) return { value: heading[1].trim(), sourceUnitIds: [source.id], strength: "EXPLICIT" };
+    if (heading) candidates.push({ value: heading[1].trim(), sourceUnitId: source.id });
   }
-  return labelledValue(sources, ["solution name", "system name", "product name"]);
+  const labelled = labelledValue(sources, ["solution name", "system name", "product name"]);
+  if (labelled?.conflict) return labelled;
+  if (labelled?.value) for (const sourceUnitId of labelled.sourceUnitIds) candidates.push({ value: labelled.value, sourceUnitId });
+  if (!candidates.length) return null;
+  const canonical = new Map();
+  for (const candidate of candidates) canonical.set(normalizedFieldValue("name", candidate.value), [...(canonical.get(normalizedFieldValue("name", candidate.value)) ?? []), candidate]);
+  if (canonical.size > 1) return { value: null, conflict: true, candidates: unique(candidates.map((item) => item.value)), sourceUnitIds: unique(candidates.map((item) => item.sourceUnitId)) };
+  return { value: candidates[0].value, sourceUnitIds: unique(candidates.map((item) => item.sourceUnitId)), strength: "EXPLICIT" };
 }
 
 function detectedList(sources, labels, values) {
   const found = [];
   const ids = [];
-  const labelled = sources.flatMap((source) => source.content.split(/\r?\n/).filter((line) => new RegExp(`(?:${labels.join("|")})\\s*[:=\\-]`, "i").test(line)).map((line) => ({ source, line })));
+  const labelPattern = new RegExp(`^\\s*(?:[-*]\\s*)?(?:${labels.map(escaped).join("|")})\\s*\\??\\s*[:=\\-]`, "i");
+  const labelled = sources.filter((source) => source.artifactClass === "DOCUMENTATION")
+    .flatMap((source) => source.content.split(/\r?\n/).filter((line) => labelPattern.test(line)).map((line) => ({ source, line })));
   for (const [canonical, pattern] of values) {
     for (const item of labelled) if (pattern.test(item.line)) { found.push(canonical); ids.push(item.source.id); break; }
   }
@@ -143,30 +216,69 @@ function detectedList(sources, labels, values) {
 
 function provisionalDossier(detected) {
   const detectedRoles = detected.roles?.value ?? [];
+  const intakeAnswers = Object.fromEntries(Object.entries(detected.intakeAnswers ?? {}).map(([questionId, answer]) => [questionId, {
+    answerState: answer.answerState,
+    values: answer.values,
+    origin: "OBSERVED",
+    supportStatus: "PARTIAL",
+    sourceUnitIds: answer.sourceUnitIds,
+    evidenceLinks: [],
+    limitations: ["The answer was mechanically located in explicitly labelled source content and requires user confirmation."],
+    confirmedBy: null,
+    confirmedAt: null
+  }]));
+  if (detectedRoles.length && !intakeAnswers.REGULATORY_ROLES) {
+    intakeAnswers.REGULATORY_ROLES = {
+      answerState: "YES", values: detectedRoles, origin: "OBSERVED", supportStatus: "PARTIAL",
+      sourceUnitIds: detected.roles.sourceUnitIds, evidenceLinks: [], limitations: ["Role terminology was mechanically located and still requires legal or governance confirmation."],
+      confirmedBy: null, confirmedAt: null
+    };
+  }
   return {
     name: detected.name?.value ?? "",
     intendedPurpose: detected.intendedPurpose?.value ?? "",
     expectedValue: detected.expectedValue?.value ?? "",
-    currentStage: "UNKNOWN",
-    targetStage: "UNKNOWN",
+    currentStage: detected.currentStage?.value ?? "UNKNOWN",
+    targetStage: detected.targetStage?.value ?? "UNKNOWN",
     jurisdictions: detected.jurisdictions?.value ?? [],
     roles: detected.roles?.value ?? [],
     users: detected.users?.value ?? [],
     accountableOwner: detected.accountableOwner?.value ?? "",
-    data: { categories: [], personalData: null, specialCategoryData: null, productionData: null },
-    exposure: { currentUserAccess: "UNKNOWN", intendedUserAccess: "UNKNOWN", externalUsers: null, productionAccess: null, consequentialDecisions: null },
-    agent: { usesAgents: null, canTakeActions: null, irreversibleActions: null, humanOverride: null },
-    classification: { prohibitedPractice: null, highRiskCandidate: null },
-    intakeAnswers: detectedRoles.length ? {
-      REGULATORY_ROLES: {
-        answerState: "YES", values: detectedRoles, origin: "OBSERVED", supportStatus: "PARTIAL",
-        sourceUnitIds: detected.roles.sourceUnitIds, evidenceLinks: [], limitations: ["Role terminology was mechanically located and still requires legal or governance confirmation."],
-        confirmedBy: null, confirmedAt: null
-      }
-    } : {},
+    data: {
+      categories: detected.dataCategories?.value ?? [],
+      personalData: detected.personalData?.value ?? null,
+      specialCategoryData: detected.specialCategoryData?.value ?? null,
+      productionData: detected.productionData?.value ?? null
+    },
+    exposure: {
+      currentUserAccess: detected.currentUserAccess?.value ?? "UNKNOWN",
+      intendedUserAccess: detected.intendedUserAccess?.value ?? "UNKNOWN",
+      externalUsers: null,
+      productionAccess: detected.productionAccess?.value ?? null,
+      consequentialDecisions: detected.consequentialDecisions?.value ?? null
+    },
+    agent: {
+      usesAgents: detected.usesAgents?.value ?? null,
+      canTakeActions: detected.canTakeActions?.value ?? null,
+      irreversibleActions: detected.irreversibleActions?.value ?? null,
+      humanOverride: detected.humanOverride?.value ?? null
+    },
+    classification: {
+      prohibitedPractice: detected.prohibitedPractice?.value ?? null,
+      highRiskCandidate: detected.highRiskCandidate?.value ?? null
+    },
+    intakeAnswers,
     operatingBoundary: {
-      allowedUses: [], excludedUses: [], environment: "ISOLATED_SANDBOX", userScope: "", dataScope: "", integrationScope: "",
-      permissionScope: "", autonomyScope: "", monitoringOwner: "", expiresAt: null
+      allowedUses: detected.allowedUses?.value ? [detected.allowedUses.value] : [],
+      excludedUses: detected.excludedUses?.value ? [detected.excludedUses.value] : [],
+      environment: detected.environment?.value ?? "ISOLATED_SANDBOX",
+      userScope: detected.userScope?.value ?? "",
+      dataScope: detected.dataScope?.value ?? "",
+      integrationScope: detected.integrationScope?.value ?? "",
+      permissionScope: detected.permissionScope?.value ?? "",
+      autonomyScope: detected.autonomyScope?.value ?? "",
+      monitoringOwner: detected.monitoringOwner?.value ?? "",
+      expiresAt: detected.expiresAt?.value ?? null
     }
   };
 }
@@ -218,17 +330,88 @@ function addSemanticContradictions(dossier, facts, contradictions) {
   }
 }
 
-export function discoverSolutionProfile(rawSources, declaredDossier = null, confirmation = {}) {
+export function discoverSolutionProfile(rawSources, declaredDossier = null, confirmation = {}, options = {}) {
   const sources = sourceText(rawSources);
   const discoveryTime = new Date().toISOString();
+  const lifecycleOptions = LIFECYCLE_STAGES.map((stage) => [stage, [words(stage)]]);
+  const accessOptions = [
+    ["INTERNAL_ONLY", ["internal only", "internal users"]],
+    ["EXTERNAL_WITH_SOLUTION_OWNER", ["external with solution owner"]],
+    ["CONTROLLED_EXTERNAL_PILOT", ["controlled external pilot"]],
+    ["RESTRICTED_CUSTOMER_USE", ["restricted customer use"]],
+    ["PUBLIC_ACCESS", ["public access", "public"]],
+    ["EXTERNAL_UNSPECIFIED", ["external unspecified", "external"]],
+    ["UNKNOWN", ["unknown"]]
+  ];
+  const intakeAnswers = Object.fromEntries(INTAKE_QUESTIONNAIRE.questions.map((question) => [question.id, detectedQuestionAnswer(sources, question)]).filter(([, answer]) => answer));
   const detected = {
     name: detectedName(sources),
     intendedPurpose: labelledValue(sources, ["intended purpose", "purpose", "mission"]),
     expectedValue: labelledValue(sources, ["expected value", "business value", "expected outcome", "outcome"]),
     accountableOwner: labelledValue(sources, ["accountable owner", "system owner", "solution owner", "product owner"]),
-    jurisdictions: detectedList(sources, ["jurisdictions?", "deployment countries", "operating countries"], [["FI", /\b(?:Finland|Finnish|FI|FIN)\b/i], ["EU", /\b(?:European Union|EU|EEA)\b/i]]),
-    roles: detectedList(sources, ["regulatory roles?", "ai act roles?", "roles"], [["PROVIDER", /\bprovider\b/i], ["DEPLOYER", /\bdeployer\b/i], ["IMPORTER", /\bimporter\b/i], ["DISTRIBUTOR", /\bdistributor\b/i]]),
-    users: detectedList(sources, ["users", "affected groups", "user groups"], [["EMPLOYEES", /\b(?:employees?|internal users?|staff)\b/i], ["CUSTOMERS", /\b(?:customers?|end users?|consumers?)\b/i]])
+    currentStage: detectedEnum(sources, ["current lifecycle stage", "current stage", "lifecycle stage"], lifecycleOptions),
+    targetStage: detectedEnum(sources, ["target lifecycle stage", "target stage", "requested stage"], lifecycleOptions),
+    jurisdictions: detectedList(sources, ["jurisdiction", "jurisdictions", "deployment countries", "operating countries"], [["FI", /\b(?:Finland|Finnish|FI|FIN)\b/i], ["EU", /\b(?:European Union|EU|EEA)\b/i]]),
+    roles: detectedList(sources, ["regulatory role", "regulatory roles", "ai act role", "ai act roles", "roles"], [["PROVIDER", /\bprovider\b/i], ["DEPLOYER", /\bdeployer\b/i], ["IMPORTER", /\bimporter\b/i], ["DISTRIBUTOR", /\bdistributor\b/i]]),
+    users: detectedList(sources, ["users", "affected groups", "user groups"], [["EMPLOYEES", /\b(?:employees?|internal users?|staff)\b/i], ["CUSTOMERS", /\b(?:customers?|end users?|consumers?)\b/i]]),
+    dataCategories: detectedList(sources, ["data categories", "approved data classes"], [
+      ["SYNTHETIC", /\b(?:synthetic|simulated)\b/i], ["PUBLIC_NON_PERSONAL", /\bpublic[-_ ]non[-_ ]personal(?:[-_ ]data)?\b/i], ["ANONYMIZED", /\banonymi[sz]ed\b/i],
+      ["PSEUDONYMIZED", /\bpseudonymi[sz]ed\b/i], ["CLEANED_APPROVED_PRODUCTION", /\bcleaned (?:and )?approved production\b/i], ["RAW_PRODUCTION", /\braw production\b/i],
+      ["PERSONAL_DATA", /(?<!non[-_ ])\bpersonal[-_ ]data\b/i], ["SPECIAL_CATEGORY_DATA", /\bspecial[-_ ]category[-_ ]data\b/i], ["CONFIDENTIAL_OR_PROPRIETARY", /\b(?:confidential|proprietary)\b/i]
+    ]),
+    personalData: detectedBoolean(sources, ["personal data"]),
+    specialCategoryData: detectedBoolean(sources, ["special category data", "special-category data"]),
+    productionData: detectedBoolean(sources, ["production data"]),
+    currentUserAccess: detectedEnum(sources, ["current user access"], accessOptions),
+    intendedUserAccess: detectedEnum(sources, ["intended user access", "target user access"], accessOptions),
+    productionAccess: detectedBoolean(sources, ["production access"]),
+    consequentialDecisions: detectedBoolean(sources, ["consequential decisions", "consequential decision support"]),
+    usesAgents: detectedBoolean(sources, ["uses agents", "agent use"]),
+    canTakeActions: detectedBoolean(sources, ["can take actions", "action taking"]),
+    irreversibleActions: detectedBoolean(sources, ["irreversible actions"]),
+    humanOverride: detectedBoolean(sources, ["human override"]),
+    prohibitedPractice: detectedBoolean(sources, ["prohibited practice candidate", "prohibited practice"]),
+    highRiskCandidate: detectedBoolean(sources, ["high risk candidate", "high-risk candidate"]),
+    allowedUses: labelledValue(sources, ["allowed uses", "approved uses"]),
+    excludedUses: labelledValue(sources, ["excluded uses", "prohibited uses"]),
+    environment: detectedEnum(sources, ["operating environment", "environment"], [
+      ["ISOLATED_SANDBOX", ["isolated sandbox", "sandbox"]], ["CONTROLLED_PILOT", ["controlled pilot", "pilot"]], ["PRODUCTION", ["production"]], ["UNKNOWN", ["unknown"]]
+    ]),
+    userScope: labelledValue(sources, ["user scope"]),
+    dataScope: labelledValue(sources, ["data scope"]),
+    integrationScope: labelledValue(sources, ["integration scope"]),
+    permissionScope: labelledValue(sources, ["permission scope"]),
+    autonomyScope: labelledValue(sources, ["autonomy scope"]),
+    monitoringOwner: labelledValue(sources, ["monitoring owner"]),
+    expiresAt: labelledValue(sources, ["boundary expiry", "expires at", "expiry"]),
+    intakeAnswers
+  };
+  const detectedByField = {
+    ...detected,
+    "operatingBoundary.allowedUses": detected.allowedUses?.value ? { ...detected.allowedUses, value: [detected.allowedUses.value] } : detected.allowedUses,
+    "operatingBoundary.excludedUses": detected.excludedUses?.value ? { ...detected.excludedUses, value: [detected.excludedUses.value] } : detected.excludedUses,
+    "operatingBoundary.environment": detected.environment,
+    "operatingBoundary.userScope": detected.userScope,
+    "operatingBoundary.dataScope": detected.dataScope,
+    "operatingBoundary.integrationScope": detected.integrationScope,
+    "operatingBoundary.permissionScope": detected.permissionScope,
+    "operatingBoundary.autonomyScope": detected.autonomyScope,
+    "operatingBoundary.monitoringOwner": detected.monitoringOwner,
+    "operatingBoundary.expiresAt": detected.expiresAt,
+    "data.categories": detected.dataCategories,
+    "data.personalData": detected.personalData,
+    "data.specialCategoryData": detected.specialCategoryData,
+    "data.productionData": detected.productionData,
+    "exposure.currentUserAccess": detected.currentUserAccess,
+    "exposure.intendedUserAccess": detected.intendedUserAccess,
+    "exposure.productionAccess": detected.productionAccess,
+    "exposure.consequentialDecisions": detected.consequentialDecisions,
+    "agent.usesAgents": detected.usesAgents,
+    "agent.canTakeActions": detected.canTakeActions,
+    "agent.irreversibleActions": detected.irreversibleActions,
+    "agent.humanOverride": detected.humanOverride,
+    "classification.prohibitedPractice": detected.prohibitedPractice,
+    "classification.highRiskCandidate": detected.highRiskCandidate
   };
   const dossier = declaredDossier ?? provisionalDossier(detected);
   const flattened = flattenDossier(dossier);
@@ -237,53 +420,69 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
   const provisionalDefaults = new Set(["currentStage", "targetStage", "operatingBoundary.environment"]);
   for (const [field, value] of Object.entries(flattened)) {
     const direct = explicitMatches(sources, value, field);
-    const discovery = detected[field];
+    const discovery = detectedByField[field];
     const discoveredIds = discovery && normalizedFieldValue(field, discovery.value) === normalizedFieldValue(field, value) ? discovery.sourceUnitIds : [];
     const sourceUnitIds = unique([...direct, ...discoveredIds]);
     const userConfirmed = confirmation[field]?.confirmed === true;
-    const hasValue = value !== undefined && value !== null && value !== "" && (!Array.isArray(value) || value.length > 0);
-    const conflictsWithDetected = Boolean(declaredDossier && discovery && normalizedFieldValue(field, discovery.value) && normalizedFieldValue(field, discovery.value) !== normalizedFieldValue(field, value));
+    const userEdited = confirmation[field]?.userEdited === true;
+    const priorFact = userEdited ? null : confirmation[field]?.priorFact;
+    const hasValue = value !== undefined && value !== null && value !== "" && value !== "UNKNOWN" && (!Array.isArray(value) || value.length > 0);
+    const conflictingCandidates = discovery?.conflict === true;
+    const conflictsWithDetected = conflictingCandidates || Boolean(declaredDossier && !direct.length && discovery && normalizedFieldValue(field, discovery.value) && normalizedFieldValue(field, discovery.value) !== normalizedFieldValue(field, value));
     const lifecycleUnknown = ["currentStage", "targetStage"].includes(field) && dossier.lifecycleDeclaration?.[field] === "UNKNOWN";
     const provisionalUnknown = lifecycleUnknown || (!declaredDossier && provisionalDefaults.has(field) && !sourceUnitIds.length);
     if (conflictsWithDetected) contradictions.push({
       id: stableId("solution-contradiction", { field, declaredValue: value, observedValue: discovery.value, sourceUnitIds: discovery.sourceUnitIds }),
-      field, declaredValue: value, observedValue: discovery.value, sourceUnitIds: discovery.sourceUnitIds,
+      field, declaredValue: value, observedValue: discovery.value, observedCandidates: discovery.candidates ?? [], sourceUnitIds: discovery.sourceUnitIds,
       severity: criticalFields.has(field) ? "HIGH" : "MEDIUM",
       statement: `${field} differs between the submitted declaration and source evidence.`
     });
     facts[field] = fact(field, value, {
-      factClass: sourceUnitIds.length ? "OBSERVED" : provisionalUnknown ? "INFERRED" : hasValue ? "USER_DECLARED" : "INFERRED",
-      status: conflictsWithDetected ? "CONFLICTING" : provisionalUnknown ? "UNKNOWN" : sourceUnitIds.length && (declaredDossier || userConfirmed) ? "CONFIRMED" : sourceUnitIds.length || hasValue ? "CANDIDATE" : "UNKNOWN",
-      supportStrength: sourceUnitIds.length ? "EXPLICIT" : hasValue ? "DERIVED" : "WEAK",
-      sourceUnitIds: unique([...sourceUnitIds, ...(conflictsWithDetected ? discovery.sourceUnitIds : [])]),
-      confirmedBy: userConfirmed ? confirmation[field].confirmedBy ?? "USER" : declaredDossier && sourceUnitIds.length ? "DOSSIER_SUBMISSION" : null,
-      confirmedAt: userConfirmed ? confirmation[field].confirmedAt ?? discoveryTime : declaredDossier && sourceUnitIds.length ? discoveryTime : null,
-      limitations: conflictsWithDetected ? ["User confirmation cannot erase the contradictory observed candidate."] : sourceUnitIds.length ? [] : hasValue ? ["The value is declared but not located in the submitted source material."] : ["No value was detected or declared."]
+      factClass: userEdited ? "SELF_DECLARED" : priorFact?.factClass ?? (sourceUnitIds.length ? "OBSERVED" : provisionalUnknown || !hasValue ? "INFERRED" : "SELF_DECLARED"),
+      status: conflictsWithDetected ? "CONFLICTING" : provisionalUnknown || !hasValue ? "UNKNOWN" : userEdited ? "CANDIDATE" : userConfirmed && priorFact?.factClass === "OBSERVED" ? "CONFIRMED" : priorFact?.status ?? (sourceUnitIds.length && (declaredDossier || userConfirmed) ? "CONFIRMED" : "CANDIDATE"),
+      supportStrength: priorFact?.supportStrength ?? (sourceUnitIds.length ? "EXPLICIT" : hasValue ? "DERIVED" : "WEAK"),
+      sourceUnitIds: unique([...(priorFact?.sourceUnitIds ?? sourceUnitIds), ...(conflictsWithDetected ? discovery.sourceUnitIds : [])]),
+      confirmedBy: userEdited ? confirmation[field].confirmedBy ?? "USER" : userConfirmed ? confirmation[field].confirmedBy ?? "USER" : declaredDossier && sourceUnitIds.length ? "DOSSIER_SUBMISSION" : null,
+      confirmedAt: userEdited ? confirmation[field].confirmedAt ?? discoveryTime : userConfirmed ? confirmation[field].confirmedAt ?? discoveryTime : declaredDossier && sourceUnitIds.length ? discoveryTime : null,
+      limitations: conflictsWithDetected ? ["User confirmation cannot erase the contradictory observed candidate."] : userEdited ? ["The user changed the discovered value; the resulting value is self-declared even when similar source text exists."] : priorFact?.limitations ?? (sourceUnitIds.length ? [] : hasValue ? ["The value is self-declared but not located in the submitted source material."] : ["No value was detected or declared."])
     });
-    if (conflictsWithDetected) facts[field].candidates = [{ value, factClass: "USER_DECLARED" }, { value: discovery.value, factClass: "OBSERVED", sourceUnitIds: discovery.sourceUnitIds }];
+    if (conflictsWithDetected) facts[field].candidates = conflictingCandidates
+      ? discovery.candidates.map((candidate) => ({ value: candidate, factClass: "OBSERVED", sourceUnitIds: discovery.sourceUnitIds }))
+      : [{ value, factClass: "SELF_DECLARED" }, { value: discovery.value, factClass: "OBSERVED", sourceUnitIds: discovery.sourceUnitIds }];
   }
   addSemanticContradictions(dossier, facts, contradictions);
   const assessmentIntakeFacts = Object.fromEntries(INTAKE_QUESTIONNAIRE.questions.map((question) => {
-    const answer = dossier.intakeAnswers?.[question.id] ?? {};
+    const sourceAnswer = intakeAnswers[question.id];
+    const dossierAnswer = dossier.intakeAnswers?.[question.id];
+    const sourceMatchesDossier = !declaredDossier || !dossierAnswer || sourceAnswer?.answerState === dossierAnswer.answerState
+      && normalizedFieldValue(question.fieldId, sourceAnswer?.values ?? []) === normalizedFieldValue(question.fieldId, dossierAnswer.values ?? []);
+    const sourceConflict = Boolean(sourceAnswer && dossierAnswer && !sourceMatchesDossier);
+    const discoveredAnswer = sourceMatchesDossier ? sourceAnswer : null;
+    const answer = discoveredAnswer && dossierAnswer && options.trustedIntakeProvenance === true
+      ? { ...discoveredAnswer, origin: dossierAnswer.origin ?? "OBSERVED", supportStatus: dossierAnswer.supportStatus ?? discoveredAnswer.supportStatus, evidenceLinks: dossierAnswer.evidenceLinks ?? [], limitations: dossierAnswer.limitations ?? [], confirmedBy: dossierAnswer.confirmedBy ?? null, confirmedAt: dossierAnswer.confirmedAt ?? null }
+      : discoveredAnswer ?? dossierAnswer ?? {};
     const answerState = answer.answerState ?? "UNKNOWN";
     const values = answer.values ?? [];
+    const trustedAnswer = Boolean(discoveredAnswer) || options.trustedIntakeProvenance === true;
+    const acceptedSourceUnitIds = sourceConflict ? unique(sourceAnswer.sourceUnitIds ?? []) : trustedAnswer ? unique(answer.sourceUnitIds ?? []) : [];
     const item = {
-      id: stableId("assessment-intake-fact", { questionId: question.id, answerState, values, sourceUnitIds: answer.sourceUnitIds ?? [] }),
+      id: stableId("assessment-intake-fact", { questionId: question.id, answerState, values, sourceUnitIds: acceptedSourceUnitIds }),
       questionId: question.id,
       fieldId: question.fieldId,
       value: values.length ? values : answerState,
       answerState,
-      origin: answer.origin ?? "USER_DECLARED",
-      supportStatus: answer.supportStatus ?? (answerState === "UNKNOWN" ? "NOT_CHECKED" : "UNSUPPORTED"),
-      evidenceLinks: answer.evidenceLinks ?? [],
-      sourceUnitIds: unique(answer.sourceUnitIds ?? []),
+      origin: discoveredAnswer ? "OBSERVED" : trustedAnswer && answer.origin !== "USER_DECLARED" ? answer.origin ?? "SELF_DECLARED" : "SELF_DECLARED",
+      supportStatus: sourceConflict ? "CONFLICTING" : trustedAnswer ? answer.supportStatus ?? (discoveredAnswer ? "PARTIAL" : answerState === "UNKNOWN" ? "NOT_CHECKED" : "UNSUPPORTED") : answerState === "UNKNOWN" ? "NOT_CHECKED" : "UNSUPPORTED",
+      evidenceLinks: trustedAnswer ? answer.evidenceLinks ?? [] : [],
+      sourceUnitIds: acceptedSourceUnitIds,
       requirementMappings: question.sourceMappings ?? [],
-      limitations: unique([...(answer.limitations ?? []), ...(answerState !== "UNKNOWN" && !(answer.sourceUnitIds?.length) ? ["The answer is declared but is not supported by submitted evidence."] : [])]),
-      confirmedBy: answer.confirmedBy ?? null,
-      confirmedAt: answer.confirmedAt ?? null,
+      limitations: unique([...(sourceConflict ? ["The user answer differs from explicitly labelled source evidence; both candidates require resolution."] : trustedAnswer ? answer.limitations ?? (discoveredAnswer ? ["The answer was mechanically located in explicitly labelled source content and requires user confirmation."] : []) : ["Client-supplied provenance is not trusted; the answer is treated as self-declared."]), ...(answerState !== "UNKNOWN" && !(trustedAnswer && answer.sourceUnitIds?.length) && !sourceConflict ? ["The answer is declared but is not supported by submitted evidence."] : [])]),
+      confirmedBy: trustedAnswer ? answer.confirmedBy ?? null : answerState === "UNKNOWN" ? null : "SUBMITTER",
+      confirmedAt: trustedAnswer ? answer.confirmedAt ?? null : null,
       negativeAnswerRequiresEvidence: question.negativeAnswerRequiresEvidence === true,
       humanDecisionAuthority: question.humanDecisionAuthority
     };
+    if (sourceConflict) item.candidates = [{ answerState, values, origin: "SELF_DECLARED" }, { answerState: sourceAnswer.answerState, values: sourceAnswer.values, origin: "OBSERVED", sourceUnitIds: sourceAnswer.sourceUnitIds }];
     return [question.id, { ...item, hash: sha256(item) }];
   }));
   const profile = {
@@ -335,12 +534,12 @@ export function buildDocumentationReadiness(profile, targetStage, sourceIngestio
         : item.factClass === "OBSERVED" && item.status === "CONFIRMED" ? "DOCUMENTED_AND_CONFIRMED"
           : item.factClass === "OBSERVED" ? "OBSERVED"
             : item.factClass === "INFERRED" ? "INFERRED"
-              : "USER_DECLARED_ONLY";
+              : "SELF_DECLARED_ONLY";
   }
   const values = Object.values(statuses);
   const unknownFields = Object.entries(statuses).filter(([, value]) => value === "UNKNOWN").map(([field]) => field);
   const conflictingFields = Object.entries(statuses).filter(([, value]) => value === "CONFLICTING").map(([field]) => field);
-  const userDeclaredOnlyFields = Object.entries(statuses).filter(([, value]) => value === "USER_DECLARED_ONLY").map(([field]) => field);
+  const selfDeclaredOnlyFields = Object.entries(statuses).filter(([, value]) => value === "SELF_DECLARED_ONLY").map(([field]) => field);
   const sourceSupportedFields = Object.entries(statuses).filter(([, value]) => ["DOCUMENTED_AND_CONFIRMED", "OBSERVED"].includes(value)).map(([field]) => field);
   const confirmedFields = Object.entries(statuses).filter(([, value]) => value === "DOCUMENTED_AND_CONFIRMED").map(([field]) => field);
   const notApplicableFields = Object.entries(statuses).filter(([, value]) => value === "NOT_APPLICABLE").map(([field]) => field);
@@ -349,9 +548,15 @@ export function buildDocumentationReadiness(profile, targetStage, sourceIngestio
   const missingImplementationScope = deploymentTarget && implementationSourceCount === 0;
   const sourceCoverageReviewRequired = sourceIngestion?.coverageStatus === "INCOMPLETE_REVIEW_REQUIRED" && !sourceIngestion?.humanCoverageAcceptance;
   const questionFacts = Object.values(profile.assessmentIntakeFacts ?? {});
-  const questionnaireUnknowns = questionFacts.filter((item) => ["UNKNOWN", "HUMAN_REVIEW_REQUIRED"].includes(item.answerState)).map((item) => item.questionId);
-  const unsupportedNegativeAnswers = questionFacts.filter((item) => ["NO", "NOT_APPLICABLE"].includes(item.answerState) && item.negativeAnswerRequiresEvidence && !["SUPPORTED", "PARTIAL"].includes(item.supportStatus) && item.origin !== "HUMAN_CLASSIFIED").map((item) => item.questionId);
-  const questionnaireConflicts = questionFacts.filter((item) => item.supportStatus === "CONFLICTING").map((item) => item.questionId);
+  const relevantQuestionIds = activeIntakeQuestionIds(profile.assessmentIntakeFacts);
+  const questionnaireUnknowns = questionFacts.filter((item) => relevantQuestionIds.has(item.questionId) && ["UNKNOWN", "HUMAN_REVIEW_REQUIRED"].includes(item.answerState)).map((item) => item.questionId);
+  const unsupportedNegativeAnswers = questionFacts.filter((item) => relevantQuestionIds.has(item.questionId) && ["NO", "NOT_APPLICABLE"].includes(item.answerState) && item.negativeAnswerRequiresEvidence && !["SUPPORTED", "PARTIAL"].includes(item.supportStatus) && item.origin !== "HUMAN_CLASSIFIED").map((item) => item.questionId);
+  const questionnaireConflicts = questionFacts.filter((item) => relevantQuestionIds.has(item.questionId) && item.supportStatus === "CONFLICTING").map((item) => item.questionId);
+  const selfDeclaredQuestionIds = questionFacts.filter((item) => relevantQuestionIds.has(item.questionId) && item.answerState !== "UNKNOWN" && item.origin === "SELF_DECLARED").map((item) => item.questionId);
+  const selfDeclaredProfileFields = Object.values(profile.fields).filter((item) => item.factClass === "SELF_DECLARED" && item.status !== "UNKNOWN" && item.value !== null).map((item) => item.field);
+  const selfDeclaredIntakeFields = unique([...selfDeclaredProfileFields, ...selfDeclaredQuestionIds.map((id) => `intakeAnswers.${id}`)]);
+  const maximumLifecycleStage = selfDeclaredIntakeFields.length ? "VERIFICATION_AND_VALIDATION" : null;
+  const targetExceedsSelfDeclarationBoundary = maximumLifecycleStage !== null && LIFECYCLE_STAGES.indexOf(targetStage) > LIFECYCLE_STAGES.indexOf(maximumLifecycleStage);
   const incompleteForDeployment = values.some((value) => !["DOCUMENTED_AND_CONFIRMED", "NOT_APPLICABLE"].includes(value)) || missingImplementationScope || sourceCoverageReviewRequired || questionnaireUnknowns.length > 0 || unsupportedNegativeAnswers.length > 0 || questionnaireConflicts.length > 0;
   const materialContradictions = profile.contradictions.filter((item) => ["HIGH", "CRITICAL"].includes(item.severity));
   const criticalQuestionIds = new Set(["AI_SYSTEM_QUALIFICATION", "PROHIBITED_PRACTICE_CATEGORIES", "EU_MARKET_OR_SERVICE", "EU_ESTABLISHED_ACTOR", "EU_OUTPUT_USED", "ANNEX_III_USE_AREAS"]);
@@ -362,7 +567,13 @@ export function buildDocumentationReadiness(profile, targetStage, sourceIngestio
     mandatoryFieldCount: deployRequiredFields.length,
     documentedAndConfirmedCount: confirmedFields.length,
     satisfiedFieldCount: confirmedFields.length + notApplicableFields.length,
-    sourceSupportedFields, confirmedFields, notApplicableFields, userDeclaredOnlyFields, unknownFields, conflictingFields,
+    sourceSupportedFields, confirmedFields, notApplicableFields, selfDeclaredOnlyFields,
+    userDeclaredOnlyFields: selfDeclaredOnlyFields,
+    selfDeclaredQuestionIds,
+    selfDeclaredIntakeFields,
+    maximumLifecycleStage,
+    selfDeclarationGateRequired: targetExceedsSelfDeclarationBoundary,
+    unknownFields, conflictingFields,
     implementationSourceCount,
     missingImplementationScope,
     contradictions: profile.contradictions,
@@ -391,6 +602,9 @@ export function buildAssessmentIntake(dossier, profile, documentationReadiness, 
     const key = `${entry.id}:${entry.sha256}`;
     if (!seenSources.has(key)) { seenSources.add(key); provenance.push(entry); }
   }
+  const activeQuestionIds = activeIntakeQuestionIds(profile.assessmentIntakeFacts);
+  const allQuestionFacts = Object.values(profile.assessmentIntakeFacts ?? {});
+  const activeQuestionFacts = allQuestionFacts.filter((item) => activeQuestionIds.has(item.questionId));
   const intake = {
     version: "assessment-intake-1.3.0",
     identity: { name: dossier.name, accountableOwner: dossier.accountableOwner },
@@ -404,8 +618,9 @@ export function buildAssessmentIntake(dossier, profile, documentationReadiness, 
     questionnaire: {
       id: INTAKE_QUESTIONNAIRE.id,
       version: INTAKE_QUESTIONNAIRE.version,
-      answers: Object.values(profile.assessmentIntakeFacts ?? {}),
-      humanClassificationQuestions: Object.values(profile.assessmentIntakeFacts ?? {}).filter((item) => item.answerState === "HUMAN_REVIEW_REQUIRED" || item.supportStatus === "CONFLICTING").map((item) => item.questionId)
+      answers: activeQuestionFacts,
+      inactiveAnswers: allQuestionFacts.filter((item) => !activeQuestionIds.has(item.questionId)).map((item) => ({ ...item, active: false })),
+      humanClassificationQuestions: activeQuestionFacts.filter((item) => item.answerState === "HUMAN_REVIEW_REQUIRED" || item.supportStatus === "CONFLICTING").map((item) => item.questionId)
     },
     sourceProvenance: provenance,
     sourceIngestion,

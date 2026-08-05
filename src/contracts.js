@@ -104,7 +104,7 @@ export const DATA_CATEGORIES = Object.freeze([
 ]);
 
 export const INTAKE_ANSWER_STATES = Object.freeze(["YES", "NO", "UNKNOWN", "NOT_APPLICABLE", "HUMAN_REVIEW_REQUIRED"]);
-export const INTAKE_FACT_ORIGINS = Object.freeze(["OBSERVED", "AI_CANDIDATE", "USER_DECLARED", "HUMAN_CLASSIFIED"]);
+export const INTAKE_FACT_ORIGINS = Object.freeze(["OBSERVED", "AI_CANDIDATE", "SELF_DECLARED", "USER_DECLARED", "HUMAN_CLASSIFIED"]);
 export const INTAKE_SUPPORT_STATUSES = Object.freeze(["SUPPORTED", "PARTIAL", "UNSUPPORTED", "CONFLICTING", "NOT_CHECKED"]);
 
 export const STATE_WEIGHT = Object.freeze({
@@ -151,10 +151,11 @@ function validateIntakeAnswers(value) {
     const answerState = answer.answerState ?? "UNKNOWN";
     enumValue(answerState, INTAKE_ANSWER_STATES, `dossier.intakeAnswers.${questionId}.answerState`);
     const values = optionalStringArray(answer.values, `dossier.intakeAnswers.${questionId}.values`);
+    const origin = answer.origin === "USER_DECLARED" ? "SELF_DECLARED" : answer.origin;
     entries[questionId] = {
       answerState,
       values,
-      origin: INTAKE_FACT_ORIGINS.includes(answer.origin) ? answer.origin : "USER_DECLARED",
+      origin: INTAKE_FACT_ORIGINS.includes(origin) ? origin : "SELF_DECLARED",
       supportStatus: INTAKE_SUPPORT_STATUSES.includes(answer.supportStatus) ? answer.supportStatus : "NOT_CHECKED",
       sourceUnitIds: optionalStringArray(answer.sourceUnitIds, `dossier.intakeAnswers.${questionId}.sourceUnitIds`),
       evidenceLinks: Array.isArray(answer.evidenceLinks) ? sanitizeRestrictedValue(structuredClone(answer.evidenceLinks)) : [],

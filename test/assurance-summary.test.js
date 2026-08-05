@@ -38,6 +38,8 @@ test("v1 includes complete case context and a deterministic lifecycle boundary",
 test("deployment targets use the production boundary label", async () => {
   const result = await assessSolution(request({ dossier: { targetStage: "DEPLOYMENT" } }));
   assert.equal(result.transitionBoundary.label, "Deterministic Production Boundary");
+  assert.equal(result.transitionBoundary.maximumLifecycleStage, "VERIFICATION_AND_VALIDATION");
+  assert.ok(result.hardGates.some((item) => item.code === "SELF_DECLARED_INTAKE_BOUNDARY" && item.outcome === "BLOCK"));
   assert.ok(["PROGRESSION_BLOCKED", "HUMAN_DECISION_REQUIRED", "CURRENT_STAGE_ONLY", "CONDITIONALLY_ALLOWED", "PROGRESSION_ALLOWED"].includes(result.transitionBoundary.status));
 });
 

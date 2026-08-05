@@ -6,7 +6,7 @@ import { createPreflight, confirmPreflightDossier } from "../src/cognitive/prefl
 import { parseAndScreenSources } from "../src/cognitive/source-intake.js";
 import { jurisdictionScope } from "../src/core/jurisdictions.js";
 import { validateDossier } from "../src/contracts.js";
-import { discoverSolutionProfile } from "../src/core/solution-profile.js";
+import { buildDocumentationReadiness, discoverSolutionProfile } from "../src/core/solution-profile.js";
 import { classifyUploadPath, provisionalIngestionManifest, resolveUploadMimeType } from "../public/upload-types.js";
 import { buildSourceIngestionManifest } from "../src/core/source-ingestion.js";
 import { INTAKE_QUESTIONNAIRE } from "../src/knowledge/intake-questionnaire.js";
@@ -70,6 +70,106 @@ test("generic FI and provider occurrences do not become contextual intake facts"
   const labelled = discoverSolutionProfile([{ id: "unit-case", path: "case.md", artifactClass: "DOCUMENTATION", content: "Jurisdictions: Finland, EU\nRegulatory roles: Provider\nUsers: Employees" }]);
   assert.deepEqual(labelled.suggestedDossier.jurisdictions.sort(), ["EU", "FI"]);
   assert.deepEqual(labelled.suggestedDossier.roles, ["PROVIDER"]);
+});
+
+test("explicitly labelled documentation populates deterministic Intake facts with source provenance", () => {
+  const profile = discoverSolutionProfile([{ id: "unit-profile", path: "case-profile.md", artifactClass: "DOCUMENTATION", content: `
+Solution name: Claims Assistant
+Intended purpose: Help authorized reviewers summarize insurance claims
+Current lifecycle stage: Qualification and Registration
+Target lifecycle stage: Verification and Validation
+Data categories: Synthetic, personal data
+Personal data: Yes
+Special category data: No
+Current user access: Internal only
+Intended user access: Controlled external pilot
+Production access: No
+Uses agents: Yes
+Can take actions: No
+Human override: Yes
+Operating environment: Isolated sandbox
+AI system qualification: Yes
+Regulatory roles: Provider, Deployer` }]);
+
+  assert.equal(profile.suggestedDossier.name, "Claims Assistant");
+  assert.equal(profile.suggestedDossier.currentStage, "QUALIFICATION_AND_REGISTRATION");
+  assert.equal(profile.suggestedDossier.targetStage, "VERIFICATION_AND_VALIDATION");
+  assert.deepEqual(profile.suggestedDossier.data.categories, ["SYNTHETIC", "PERSONAL_DATA"]);
+  assert.equal(profile.suggestedDossier.data.personalData, true);
+  assert.equal(profile.suggestedDossier.data.specialCategoryData, false);
+  assert.equal(profile.suggestedDossier.exposure.currentUserAccess, "INTERNAL_ONLY");
+  assert.equal(profile.suggestedDossier.exposure.intendedUserAccess, "CONTROLLED_EXTERNAL_PILOT");
+  assert.equal(profile.suggestedDossier.operatingBoundary.environment, "ISOLATED_SANDBOX");
+  for (const field of ["name", "intendedPurpose", "currentStage", "targetStage", "data.categories", "data.personalData", "exposure.currentUserAccess", "agent.usesAgents", "operatingBoundary.environment"]) {
+    assert.equal(profile.fields[field].factClass, "OBSERVED", field);
+    assert.deepEqual(profile.fields[field].sourceUnitIds, ["unit-profile"], field);
+  }
+  assert.equal(profile.assessmentIntakeFacts.AI_SYSTEM_QUALIFICATION.origin, "OBSERVED");
+  assert.equal(profile.assessmentIntakeFacts.AI_SYSTEM_QUALIFICATION.supportStatus, "PARTIAL");
+  assert.deepEqual(profile.assessmentIntakeFacts.REGULATORY_ROLES.sourceUnitIds, ["unit-profile"]);
+});
+
+test("deterministic Intake discovery rejects narrative, code labels and non-canonical enum values", () => {
+  const profile = discoverSolutionProfile([
+    { id: "unit-narrative", path: "overview.md", artifactClass: "DOCUMENTATION", content: "The intended purpose could eventually be public access, but this has not been agreed." },
+    { id: "unit-code", path: "src/config.js", artifactClass: "PRODUCTION_CODE", content: "// Intended purpose: Approve customer claims\n// Personal data: Yes\n// Current user access: Public" },
+    { id: "unit-invalid", path: "status.md", artifactClass: "DOCUMENTATION", content: "Current user access: Internal only during pilot\nProduction access: Not decided\nAI system qualification: Probably" }
+  ]);
+
+  assert.equal(profile.fields.intendedPurpose.status, "UNKNOWN");
+  assert.equal(profile.fields["data.personalData"].status, "UNKNOWN");
+  assert.equal(profile.fields["exposure.currentUserAccess"].status, "UNKNOWN");
+  assert.equal(profile.fields["exposure.productionAccess"].status, "UNKNOWN");
+  assert.equal(profile.assessmentIntakeFacts.AI_SYSTEM_QUALIFICATION.answerState, "UNKNOWN");
+});
+
+test("conflicting labelled Intake entries remain unresolved and retain all candidates", () => {
+  const profile = discoverSolutionProfile([
+    { id: "unit-a", path: "owner-a.md", artifactClass: "DOCUMENTATION", content: "Accountable owner: Product Team" },
+    { id: "unit-b", path: "owner-b.md", artifactClass: "DOCUMENTATION", content: "Accountable owner: Risk Team" }
+  ]);
+
+  assert.equal(profile.suggestedDossier.accountableOwner, "");
+  assert.equal(profile.fields.accountableOwner.status, "CONFLICTING");
+  assert.deepEqual(profile.fields.accountableOwner.candidates.map((candidate) => candidate.value), ["Product Team", "Risk Team"]);
+  assert.deepEqual(profile.contradictions[0].sourceUnitIds, ["unit-a", "unit-b"]);
+});
+
+test("ambiguous labelled options and overlapping category names fail closed", () => {
+  const profile = discoverSolutionProfile([{ id: "unit-ambiguous", path: "template.md", artifactClass: "DOCUMENTATION", content: `
+AI system qualification: YES / NO / UNKNOWN
+Prohibited practice categories: NONE_OF_THE_ABOVE, SOCIAL_SCORING
+Data categories: public non-personal data` }]);
+  assert.equal(profile.assessmentIntakeFacts.AI_SYSTEM_QUALIFICATION.answerState, "HUMAN_REVIEW_REQUIRED");
+  assert.equal(profile.assessmentIntakeFacts.AI_SYSTEM_QUALIFICATION.supportStatus, "CONFLICTING");
+  assert.equal(profile.assessmentIntakeFacts.PROHIBITED_PRACTICE_CATEGORIES.answerState, "HUMAN_REVIEW_REQUIRED");
+  assert.deepEqual(profile.suggestedDossier.data.categories, ["PUBLIC_NON_PERSONAL"]);
+  for (const value of ["UNKNOWN, NONE_OF_THE_ABOVE", "UNKNOWN, SOCIAL_SCORING"]) {
+    const exclusive = discoverSolutionProfile([{ id: `unit-${value}`, path: "exclusive.md", artifactClass: "DOCUMENTATION", content: `Prohibited practice categories: ${value}` }]);
+    assert.equal(exclusive.assessmentIntakeFacts.PROHIBITED_PRACTICE_CATEGORIES.answerState, "HUMAN_REVIEW_REQUIRED", value);
+    assert.equal(exclusive.assessmentIntakeFacts.PROHIBITED_PRACTICE_CATEGORIES.supportStatus, "CONFLICTING", value);
+  }
+});
+
+test("conflicting solution names do not depend on source upload order", () => {
+  const sources = [
+    { id: "unit-package", path: "packages/worker/package.json", artifactClass: "CONFIGURATION", content: JSON.stringify({ name: "worker-service" }) },
+    { id: "unit-readme", path: "README.md", artifactClass: "DOCUMENTATION", content: "# Governance Workspace" }
+  ];
+  for (const ordered of [sources, [...sources].reverse()]) {
+    const profile = discoverSolutionProfile(ordered);
+    assert.equal(profile.fields.name.status, "CONFLICTING");
+    assert.deepEqual(new Set(profile.fields.name.candidates.map((item) => item.value)), new Set(["worker-service", "Governance Workspace"]));
+  }
+});
+
+test("a Self-Declared boundary expiry activates the Verification and Validation cap", () => {
+  const dossier = validateDossier({ ...structuredClone(SAMPLE_REQUEST.dossier), targetStage: "DEPLOYMENT", operatingBoundary: { ...structuredClone(SAMPLE_REQUEST.dossier.operatingBoundary), expiresAt: "2027-12-31" } });
+  const profile = discoverSolutionProfile([], dossier, { "operatingBoundary.expiresAt": { userEdited: true } });
+  const readiness = buildDocumentationReadiness(profile, dossier.targetStage);
+  assert.ok(readiness.selfDeclaredIntakeFields.includes("operatingBoundary.expiresAt"));
+  assert.equal(readiness.maximumLifecycleStage, "VERIFICATION_AND_VALIDATION");
+  assert.equal(readiness.selfDeclarationGateRequired, true);
 });
 
 test("data categories and access modes derive compatibility facts without conflating current and intended exposure", async () => {
@@ -232,7 +332,7 @@ test("missing critical documentation enforces an isolated sandbox without invent
   assert.equal(result.hardGates.some((item) => item.code === "DOCUMENTATION_ALIGNMENT_REQUIRED"), false);
 });
 
-test("deployment documentation gate clears only when the complete intake is source-supported", async () => {
+test("client-asserted questionnaire provenance cannot clear the deployment boundary", async () => {
   const input = sampleRequest();
   input.dossier.targetStage = "DEPLOYMENT";
   input.dossier.intakeAnswers = completeHumanClassifications();
@@ -241,8 +341,9 @@ test("deployment documentation gate clears only when the complete intake is sour
     { path: "src/assistant.js", kind: "CODE", content: "export function answer(question) { return { question, requiresHumanReview: true }; }" }
   ];
   const result = await assessSolution(input);
-  assert.equal(result.documentationReadiness.deploymentReady, true, JSON.stringify(result.documentationReadiness));
-  assert.equal(result.hardGates.some((item) => item.code === "DOCUMENTATION_ALIGNMENT_REQUIRED"), false);
+  assert.equal(result.documentationReadiness.deploymentReady, false);
+  assert.ok(result.documentationReadiness.selfDeclaredQuestionIds.length > 0);
+  assert.ok(result.hardGates.some((item) => item.code === "SELF_DECLARED_INTAKE_BOUNDARY"));
 });
 
 test("deployment alignment cannot be claimed when no implementation source was assessed", async () => {
@@ -265,6 +366,48 @@ test("HTML is parsed inertly and source-first preflight can be confirmed later",
   await confirmPreflightDossier(run, { dossier: sampleRequest().dossier, confirmations: {} });
   assert.equal(run.status, "AWAITING_TRANSMISSION_APPROVAL");
   assert.ok(run.registeredSources.some((item) => item.path === "intended-use-dossier.json"));
+});
+
+test("confirming empty Intake defaults does not manufacture Self-Declared edits", async () => {
+  const run = await createPreflight({ sources: [{ path: "case.md", mimeType: "text/markdown", encoding: "utf8", content: "# Intake case" }] });
+  const dossier = validateDossier(run.solutionProfile.suggestedDossier);
+  await confirmPreflightDossier(run, { dossier });
+  assert.notEqual(run.solutionProfile.fields["operatingBoundary.allowedUses"].factClass, "SELF_DECLARED");
+  assert.notEqual(run.solutionProfile.fields["data.categories"].factClass, "SELF_DECLARED");
+  assert.notEqual(run.solutionProfile.fields["operatingBoundary.environment"].factClass, "SELF_DECLARED");
+  assert.notEqual(run.solutionProfile.fields["exposure.currentUserAccess"].factClass, "SELF_DECLARED");
+  assert.equal(run.solutionProfile.fields["exposure.currentUserAccess"].status, "UNKNOWN");
+});
+
+test("a changed questionnaire answer cannot retain observed provenance from the client", async () => {
+  const run = await createPreflight({ sources: [{ path: "case.md", mimeType: "text/markdown", encoding: "utf8", content: "Regulatory roles: Provider" }] });
+  const dossier = validateDossier(run.solutionProfile.suggestedDossier);
+  dossier.intakeAnswers.REGULATORY_ROLES = {
+    ...dossier.intakeAnswers.REGULATORY_ROLES,
+    answerState: "YES", values: ["DEPLOYER"], origin: "OBSERVED", supportStatus: "SUPPORTED"
+  };
+  await confirmPreflightDossier(run, { dossier });
+  const answer = run.solutionProfile.assessmentIntakeFacts.REGULATORY_ROLES;
+  assert.equal(answer.origin, "SELF_DECLARED");
+  assert.equal(answer.supportStatus, "CONFLICTING");
+  assert.ok(answer.sourceUnitIds.length > 0);
+  assert.deepEqual(answer.candidates.map((item) => item.values), [["DEPLOYER"], ["PROVIDER"]]);
+});
+
+test("confirmation stamps an unchanged observed questionnaire answer on the server", async () => {
+  const run = await createPreflight({ sources: [{ path: "case.md", mimeType: "text/markdown", encoding: "utf8", content: "AI system qualification: Yes" }] });
+  const dossier = validateDossier(run.solutionProfile.suggestedDossier);
+  await confirmPreflightDossier(run, { dossier });
+  const answer = run.solutionProfile.assessmentIntakeFacts.AI_SYSTEM_QUALIFICATION;
+  assert.equal(answer.origin, "OBSERVED");
+  assert.equal(answer.confirmedBy, "USER");
+  assert.ok(answer.confirmedAt);
+});
+
+test("Intake confirmation cannot race an in-progress AI verification", async () => {
+  const run = await createPreflight({ sources: [{ path: "case.md", mimeType: "text/markdown", encoding: "utf8", content: "# Intake case" }] });
+  run.stage = "INTAKE_AI_VERIFICATION_IN_PROGRESS";
+  await assert.rejects(() => confirmPreflightDossier(run, { dossier: run.solutionProfile.suggestedDossier }), /verification is in progress/i);
 });
 
 test("explicit false values remain No while absent values remain Unknown in the case profile", async () => {

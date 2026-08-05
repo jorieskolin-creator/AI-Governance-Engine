@@ -1,6 +1,6 @@
 import { classifyArtifact, HUMAN_AUTHORITIES } from "../contracts.js";
 import { sha256, stableId } from "./hash.js";
-import { INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
+import { activeIntakeAnswers, INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
 
 const SECRET_PATTERNS = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
@@ -171,7 +171,7 @@ export function dossierEvidence(dossier, now = new Date()) {
   }));
   const questions = new Map(INTAKE_QUESTIONNAIRE.questions.map((item) => [item.id, item]));
   const sectionDomains = { SYSTEM: ["A", "C"], ACTOR: ["A", "F"], RISK: ["A", "F"], PROHIBITED: ["A", "E", "F"], TRANSPARENCY: ["E", "F"] };
-  const intakeEvidence = Object.entries(dossier.intakeAnswers ?? {}).filter(([, answer]) => answer.answerState !== "UNKNOWN" || answer.confirmedAt).map(([questionId, answer]) => {
+  const intakeEvidence = Object.entries(activeIntakeAnswers(dossier.intakeAnswers ?? {})).filter(([, answer]) => answer.answerState !== "UNKNOWN" || answer.confirmedAt).map(([questionId, answer]) => {
     const question = questions.get(questionId);
     const excerpt = `${question?.prompt ?? questionId}: ${answer.values?.length ? answer.values.join(", ") : answer.answerState}`;
     return {

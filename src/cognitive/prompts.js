@@ -4,7 +4,7 @@ import { sha256, stableStringify } from "../core/hash.js";
 export const PROMPT_VERSIONS = Object.freeze({
   solution: "solution-understanding-2.1.0",
   solutionVerification: "solution-fact-verification-3.0.0",
-  discoveryRecheck: "discovery-recheck-1.1.0",
+  discoveryRecheck: "discovery-recheck-1.2.0",
   imageExtraction: "image-extraction-2.0.0",
   routing: "semantic-routing-2.0.0",
   domain: "domain-assessment-3.0.0",
@@ -81,9 +81,11 @@ END_SOURCE_PACKET`;
 export function discoveryRecheckPrompt(targetFields, packets) {
   return `${TRUST_PREAMBLE}
 
-Task: recheck only the unresolved or conflicting Assessment Intake fields listed below. Return a candidate only when the supplied source explicitly and contextually supports the field. A generic keyword occurrence is not support. Short jurisdiction codes such as FI count only in a labelled jurisdiction, deployment, contract, customer, or processing context. Regulatory roles require an explicit role statement. Product-name variants may be treated as aliases only when the source connects them to the same repository or product. Use NOT_FOUND when the information is genuinely unavailable.
+Task: verify only the Assessment Intake fields listed below. This is Intake verification, not an A-F assessment, legal classification, risk decision, readiness decision or approval. Return exactly one result for every target field and no result for any other field. A generic keyword occurrence is not support. Short jurisdiction codes such as FI count only in a labelled jurisdiction, deployment, contract, customer, or processing context. Regulatory roles require an explicit role statement. Product-name variants may be treated as aliases only when the source connects them to the same repository or product.
 
-Every CANDIDATE or CONFLICTING result must cite at least one supplied source-unit ID and one exact short quote copied from that unit. Return field values as concise display text; never rewrite the dossier or decide legal classification.
+Use ACCEPT_CURRENT when the current value is clear and contextually supported as written. Use REVIEW_REWRITE only when a source-grounded wording improvement would make the same meaning clearer; intendedPurpose is the primary field where this can be useful. A rewrite must preserve the source meaning and is only a proposal for the user. Use REVIEW_CANDIDATE when a missing value can be proposed from explicit source content. Use PROVIDE_INFORMATION with NOT_FOUND and an empty value when the sources do not answer the field. Use RESOLVE_CONFLICT with CONFLICTING when supplied sources materially disagree. Do not infer or rewrite legal classifications, questionnaire determinations, lifecycle authority, or risk conclusions.
+
+Every result other than NOT_FOUND must cite at least one supplied source-unit ID and one exact short quote copied from that unit. Return field values as concise display text. The Engine will validate citations and will not apply any returned value automatically.
 
 TARGET_FIELDS
 ${stableStringify(targetFields)}

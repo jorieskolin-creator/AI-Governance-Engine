@@ -38,16 +38,43 @@ test("questionnaire defaults remain unknown and unsupported negative answers can
   assert.equal(readiness.deploymentReady, false);
 });
 
+test("legacy user declarations normalize to Self-Declared provenance", () => {
+  const dossier = validateDossier({ intakeAnswers: {
+    AI_SYSTEM_QUALIFICATION: { answerState: "YES", origin: "USER_DECLARED", supportStatus: "UNSUPPORTED" }
+  } });
+  assert.equal(dossier.intakeAnswers.AI_SYSTEM_QUALIFICATION.origin, "SELF_DECLARED");
+});
+
+test("Self-Declared Intake deterministically caps progression at Verification and Validation", () => {
+  const dossier = validateDossier({ currentStage: "VERIFICATION_AND_VALIDATION", targetStage: "DEPLOYMENT", intakeAnswers: {
+    AI_SYSTEM_QUALIFICATION: { answerState: "YES", origin: "SELF_DECLARED", supportStatus: "UNSUPPORTED" }
+  } });
+  const readiness = buildDocumentationReadiness(discoverSolutionProfile([], dossier), dossier.targetStage);
+  assert.equal(readiness.maximumLifecycleStage, "VERIFICATION_AND_VALIDATION");
+  assert.equal(readiness.selfDeclarationGateRequired, true);
+  assert.ok(readiness.selfDeclaredIntakeFields.includes("intakeAnswers.AI_SYSTEM_QUALIFICATION"));
+});
+
+test("inactive conditional questions do not create Intake unknowns", () => {
+  const answers = completeAnswers();
+  answers.GENERAL_PURPOSE_MODEL_PROVIDER = { answerState: "NO", values: [], origin: "HUMAN_CLASSIFIED", supportStatus: "SUPPORTED" };
+  delete answers.SYSTEMIC_RISK_MODEL;
+  const dossier = validateDossier({ currentStage: "DESIGN_AND_DEVELOPMENT", targetStage: "VERIFICATION_AND_VALIDATION", intakeAnswers: answers });
+  const readiness = buildDocumentationReadiness(discoverSolutionProfile([], dossier, {}, { trustedIntakeProvenance: true }), dossier.targetStage);
+  assert.equal(readiness.questionnaireUnknowns.includes("SYSTEMIC_RISK_MODEL"), false);
+});
+
 test("confirmed questionnaire answers become declared audit evidence without creating assurance", () => {
   const dossier = validateDossier({ currentStage: "DESIGN_AND_DEVELOPMENT", targetStage: "VERIFICATION_AND_VALIDATION", intakeAnswers: completeAnswers() });
   const evidence = dossierEvidence(dossier);
   const intakeEvidence = evidence.filter((item) => item.signal === "intake-declaration");
-  assert.equal(intakeEvidence.length, INTAKE_QUESTIONNAIRE.questions.length);
+  assert.equal(intakeEvidence.length, INTAKE_QUESTIONNAIRE.questions.length - 1);
   assert.ok(intakeEvidence.every((item) => item.assuranceState === "DECLARED" && item.eligibleForAssurance === false));
   const profile = discoverSolutionProfile([], dossier);
   const readiness = buildDocumentationReadiness(profile, dossier.targetStage);
   const intake = buildAssessmentIntake(dossier, profile, readiness, []);
-  assert.equal(intake.questionnaire.answers.length, INTAKE_QUESTIONNAIRE.questions.length);
+  assert.equal(intake.questionnaire.answers.length, INTAKE_QUESTIONNAIRE.questions.length - 1);
+  assert.equal(intake.questionnaire.inactiveAnswers[0].questionId, "SYSTEMIC_RISK_MODEL");
 });
 
 test("restricted identifiers are removed from evidence packets, persistent values and report HTML", async () => {

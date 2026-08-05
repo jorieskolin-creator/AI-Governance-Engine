@@ -59,6 +59,9 @@ export function buildTransitionBoundary({ dossier, gates, domains, readiness, hu
   if (documentationReadiness?.sandboxRequired) {
     prohibitedUses.push(boundaryItem("Do not use production access, uncontrolled external users, consequential decisions, or unapproved sensitive data while documentation remains incomplete.", basis({ ruleIds: ["RULE-BOUNDARY-DOCUMENTATION-SANDBOX"] })));
   }
+  if (documentationReadiness?.maximumLifecycleStage) {
+    prohibitedUses.push(boundaryItem(`Do not progress beyond ${label(documentationReadiness.maximumLifecycleStage)} while Intake information remains self-declared.`, basis({ ruleIds: ["RULE-BOUNDARY-SELF-DECLARED-INTAKE"] })));
+  }
   for (const gate of gates.filter((item) => item.outcome === "BLOCK")) {
     prohibitedUses.push(boundaryItem(`Do not progress until “${gate.title}” is resolved.`, basis({
       gateIds: [gate.id], evidenceIds: gate.evidenceIds, controlIds: gate.controlIds, ruleIds: gate.ruleIds
@@ -91,6 +94,7 @@ export function buildTransitionBoundary({ dossier, gates, domains, readiness, hu
   const boundary = {
     currentStage: dossier.currentStage,
     targetStage: dossier.targetStage,
+    maximumLifecycleStage: documentationReadiness?.maximumLifecycleStage ?? null,
     label: ["DEPLOYMENT", "OPERATION_AND_MONITORING"].includes(dossier.targetStage) ? "Deterministic Production Boundary" : "Deterministic Lifecycle Transition Boundary",
     status,
     headline: boundaryHeadline(status, dossier),

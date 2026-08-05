@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createPreflight, publicPreflightView } from "../src/cognitive/preflight.js";
+import { confirmPreflightDossier, createPreflight, publicPreflightView } from "../src/cognitive/preflight.js";
 import { validateExecutionApproval } from "../src/cognitive/contracts.js";
 import { executeCognitiveRun } from "../src/cognitive/pipeline.js";
 import { modelPolicy } from "../src/cognitive/model-policy.js";
@@ -67,23 +67,81 @@ test("preflight redacts secrets and keeps prompt-like source text inert", async 
   assert.ok(view.packets.every((item) => item.transmissionState === "PENDING_APPROVAL"));
 });
 
+test("a supplied dossier still requires confirmation and produces an immutable effective Intake snapshot", async () => {
+  const run = await createPreflight(preflightInput([{ path: "README.md", mimeType: "text/markdown", content: "# Intake case" }]));
+  assert.equal(run.status, "AWAITING_INTAKE_CONFIRMATION");
+  assert.equal(run.stage, "DETERMINISTIC_DISCOVERY_COMPLETED");
+  assert.equal(run.registeredSources.some((item) => item.path === "intended-use-dossier.json"), false);
+  await confirmPreflightDossier(run, { dossier: structuredClone(SAMPLE_REQUEST.dossier), confirmations: {} });
+  assert.equal(run.stage, "INTAKE_CONFIRMED");
+  assert.ok(run.confirmedIntake.hash);
+  assert.notStrictEqual(run.confirmedIntake.effectiveDossier, run.dossier);
+  assert.equal(Object.hasOwn(run.confirmedIntake.effectiveDossier.intakeAnswers, "SYSTEMIC_RISK_MODEL"), false);
+  await assert.rejects(() => confirmPreflightDossier(run, { dossier: structuredClone(SAMPLE_REQUEST.dossier) }), /not awaiting intake confirmation/i);
+});
+
 test("AI discovery recheck returns quote-grounded candidates without overwriting deterministic facts", async () => {
   const run = await createPreflight({ sources: [{ path: "README.md", mimeType: "text/markdown", content: "# FinOps Engine\nSolution name: FinOps Engine\nIntended purpose: Assess FinOps evidence for governance decisions." }] });
   const unit = run.packets[0].sourceUnits[0];
   const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ profile }) => ({
-    value: { candidates: [{ field: "name", status: "CANDIDATE", value: "FinOps Engine", sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote: "Solution name: FinOps Engine" }], rationale: "The product name is explicitly labelled." }] },
+    value: { candidates: [
+      { field: "name", status: "CANDIDATE", recommendation: "ACCEPT_CURRENT", value: "FinOps Engine", sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote: "Solution name: FinOps Engine" }], rationale: "The product name is explicitly labelled." },
+      { field: "intendedPurpose", status: "CANDIDATE", recommendation: "REVIEW_REWRITE", value: "Assess FinOps evidence to support governance decisions", sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote: "Intended purpose: Assess FinOps evidence for governance decisions." }], rationale: "The rewrite clarifies that the solution supports rather than makes governance decisions." }
+    ] },
     responseModel: profile.model, usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
   }) });
   const before = structuredClone(run.solutionProfile);
   const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
   const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
   assert.equal(result.candidates[0].status, "CANDIDATE");
+  assert.equal(result.candidates[0].recommendation, "ACCEPT_CURRENT");
+  assert.equal(result.candidates.find((item) => item.field === "intendedPurpose").recommendation, "REVIEW_REWRITE");
+  assert.ok(result.candidates.some((item) => item.status === "NOT_FOUND" && item.recommendation === "PROVIDE_INFORMATION"));
+  assert.equal(result.targetFields.includes("intakeAnswers.SYSTEMIC_RISK_MODEL"), false);
+  assert.equal(run.stage, "INTAKE_AI_VERIFICATION_COMPLETED");
+  assert.ok(run.trace.some((item) => item.stage === "INTAKE_AI_VERIFICATION" && item.status === "RUNNING"));
   assert.match(result.candidates[0].limitations[0], /requires user confirmation/i);
   assert.deepEqual(run.solutionProfile, before);
   assert.equal(run.transmissionManifest[0].stage, "DISCOVERY_RECHECK");
   assert.equal(run.transmissionManifest[0].provider, "ANTHROPIC");
   assert.ok(run.transmissionManifest[0].approvedAt);
+  await assert.rejects(() => recheckDiscovery(run, { approvedPackets }, { policy, client }), /not available from the current run state/i);
+});
+
+test("AI Intake verification rejects ACCEPT_CURRENT when the returned value differs", async () => {
+  const run = await createPreflight({ sources: [{ path: "README.md", mimeType: "text/markdown", content: "# Internal Assistant\nSolution name: Internal Assistant" }] });
+  const unit = run.packets[0].sourceUnits[0];
+  const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ profile }) => ({
+    value: { candidates: [{ field: "name", status: "CANDIDATE", recommendation: "ACCEPT_CURRENT", value: "Public Assistant", sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote: "Solution name: Internal Assistant" }], rationale: "Incorrectly claims a different value is current." }] },
+    responseModel: profile.model, usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
+  }) });
+  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
+  const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
+  const candidate = result.candidates.find((item) => item.field === "name");
+  assert.equal(candidate.status, "REJECTED_UNSUPPORTED");
+  assert.equal(candidate.recommendation, "RESOLVE_CONFLICT");
+});
+
+test("AI Intake verification rejects empty and incompletely covered citations", async () => {
+  for (const mode of ["EMPTY_QUOTE", "UNCITED_SOURCE"]) {
+    const run = await createPreflight({ sources: [
+      { path: "README.md", mimeType: "text/markdown", content: "# Internal Assistant\nSolution name: Internal Assistant" },
+      { path: "support.md", mimeType: "text/markdown", content: "Supporting product context." }
+    ] });
+    const units = run.packets.flatMap((packet) => packet.sourceUnits);
+    const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
+    const sourceUnitIds = mode === "UNCITED_SOURCE" ? units.map((unit) => unit.id) : [units[0].id];
+    const quote = mode === "EMPTY_QUOTE" ? "" : "Solution name: Internal Assistant";
+    const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ profile }) => ({
+      value: { candidates: [{ field: "name", status: "CANDIDATE", recommendation: "ACCEPT_CURRENT", value: "Internal Assistant", sourceUnitIds, evidenceQuotes: [{ sourceUnitId: units[0].id, quote }], rationale: "Citation validation adversarial case." }] },
+      responseModel: profile.model, usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
+    }) });
+    const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
+    const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
+    assert.equal(result.candidates.find((item) => item.field === "name").status, "REJECTED_UNSUPPORTED", mode);
+  }
 });
 
 test("v2 accepts only verified claims into the deterministic readiness package", async () => {

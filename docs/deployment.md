@@ -7,8 +7,11 @@
 3. Configure `NODE_ENV=production`.
 4. Configure `VERCEL_KB_MANIFEST_URL` to the immutable, approved Vercel knowledge manifest.
 5. Configure `BLOB_READ_WRITE_TOKEN` only if the Blob objects require bearer authentication.
-6. Optionally set `ALLOWED_ORIGIN` to the Railway public URL.
-7. Deploy. Railway executes `pnpm run check`, starts `pnpm start`, and probes `/health`.
+6. Run the manual `verify-knowledge-manifest` workflow against the same URL, or execute `pnpm run kb:verify-runtime` in an authorized environment.
+7. Optionally set `ALLOWED_ORIGIN` to the Railway public URL.
+8. Deploy. Railway executes `pnpm run check`, starts `pnpm start`, and probes `/health`.
+
+Knowledge Base publication and Engine activation are separate operations. The Maintainer makes an immutable release available; this deployment owns selecting it, restarting safely, and confirming `/api/knowledge` plus `/api/knowledge/diagnostics`. No Engine source checkout or callback is required in the Maintainer pipeline.
 
 ## Always-on cognitive contract
 

@@ -101,6 +101,8 @@ The long-term source of truth is the authoring JSON described in [knowledge-auth
 
 Production startup requires `VERCEL_KB_MANIFEST_URL`; it does not silently fall back to the local bootstrap catalogue. The loader verifies manifest and document hashes plus structural references. Approval and release-governance enforcement will be hardened as the taxonomy and Knowledge Base are finalized.
 
+The Knowledge Base Maintainer is a separate producer. The Engine does not import Maintainer source code or share its database or process state. A Maintainer release is `PUBLISHED` when its immutable artifacts are available; Engine activation happens separately when this deployment selects that manifest. An Engine-owned manual `verify-knowledge-manifest` workflow, or `pnpm run kb:verify-runtime`, verifies an approved published manifest before activation.
+
 See [docs/knowledge-base.md](docs/knowledge-base.md) for the runtime manifest and compilation contract.
 
 ## Intentional current limitations

@@ -1,0 +1,31 @@
+name: verify-knowledge-manifest
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_url:
+        description: Immutable Maintainer runtime-manifest.json HTTPS URL
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_KB_MANIFEST_URL: ${{ inputs.manifest_url }}
+      BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run kb:verify-runtime

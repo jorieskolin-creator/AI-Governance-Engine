@@ -1,8 +1,34 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { sha256 } from "../src/core/hash.js";
 import { loadKnowledgeSnapshot } from "../src/knowledge/provider.js";
 import { evaluateKnowledgeSnapshot } from "../src/knowledge/diagnostics.js";
+
+async function maintainerContractPayload() {
+  const fixture = JSON.parse(await readFile(new URL("./fixtures/maintainer-runtime-1.1.0.json", import.meta.url), "utf8"));
+  const bodies = {};
+  const documents = Object.entries(fixture.collections).map(([type, entries]) => {
+    const url = `https://blob.example/runtime/${fixture.version}/${type}.json`;
+    const body = `${JSON.stringify({ schemaVersion: fixture.collectionSchemaVersion, type, entries })}\n`;
+    bodies[url] = body;
+    return { id: `kb-${type}-${fixture.version}`, type, url, sha256: sha256(body) };
+  });
+  return {
+    manifest: { schemaVersion: fixture.manifestSchemaVersion, version: fixture.version, releaseStatus: fixture.releaseStatus, documents },
+    bodies,
+  };
+}
+
+function installRemoteFetch(t, manifest, bodies = {}) {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async (url) => {
+    const value = String(url);
+    const body = value.endsWith("runtime-manifest.json") ? JSON.stringify(manifest) : bodies[value];
+    return body === undefined ? new Response("missing", { status: 404 }) : new Response(body, { status: 200 });
+  };
+}
 
 test("production fails closed without a Vercel knowledge manifest", async () => {
   await assert.rejects(() => loadKnowledgeSnapshot({ production: true, manifestUrl: "" }), /VERCEL_KB_MANIFEST_URL is required/);
@@ -23,15 +49,48 @@ test("knowledge diagnostics identifies broken cross-document references", () => 
 });
 
 test("remote knowledge documents require an exact SHA-256 match", async (t) => {
-  const originalFetch = globalThis.fetch;
-  t.after(() => { globalThis.fetch = originalFetch; });
   const manifest = {
     schemaVersion: "1.0.0",
     version: "test-1",
     documents: [{ id: "requirements", type: "requirements", url: "https://blob.example/requirements.json", sha256: "0".repeat(64) }]
   };
-  globalThis.fetch = async (url) => new Response(JSON.stringify(url.endsWith("manifest.json") ? manifest : [{ id: "REQ" }]), { status: 200 });
-  await assert.rejects(() => loadKnowledgeSnapshot({ production: true, manifestUrl: "https://blob.example/manifest.json" }), /hash mismatch/);
+  installRemoteFetch(t, manifest, { "https://blob.example/requirements.json": JSON.stringify([{ id: "REQ" }]) });
+  await assert.rejects(() => loadKnowledgeSnapshot({ production: true, manifestUrl: "https://blob.example/runtime-manifest.json" }), /hash mismatch/);
+});
+
+test("malformed and incomplete remote manifests fail closed", async (t) => {
+  installRemoteFetch(t, { schemaVersion: "9.0.0", version: "invalid", documents: [] });
+  await assert.rejects(() => loadKnowledgeSnapshot({ production: true, manifestUrl: "https://blob.example/runtime-manifest.json" }), /Unsupported Vercel knowledge manifest/);
+});
+
+test("a hash-valid manifest missing required collections fails closed", async (t) => {
+  const url = "https://blob.example/runtime/missing/requirements.json";
+  const body = `${JSON.stringify({ schemaVersion: "1.0.0", type: "requirements", entries: [{ id: "REQ-A2" }] })}\n`;
+  const manifest = { schemaVersion: "1.1.0", version: "missing", releaseStatus: "APPROVED", documents: [{ id: "kb-requirements-missing", type: "requirements", url, sha256: sha256(body) }] };
+  installRemoteFetch(t, manifest, { [url]: body });
+  await assert.rejects(() => loadKnowledgeSnapshot({ production: true, manifestUrl: "https://blob.example/runtime-manifest.json" }), /missing normativeSources/);
+});
+
+test("Maintainer manifest 1.1.0 and wrapped collection artifacts are accepted independently", async (t) => {
+  const { manifest, bodies } = await maintainerContractPayload();
+  installRemoteFetch(t, manifest, bodies);
+  const snapshot = await loadKnowledgeSnapshot({ production: true, manifestUrl: "https://blob.example/runtime-manifest.json" });
+  assert.equal(snapshot.source, "VERCEL_BLOB");
+  assert.equal(snapshot.version, "maintainer-contract-fixture-1");
+  assert.equal(snapshot.releaseStatus, "APPROVED");
+  assert.equal(snapshot.documentChecks.length, 6);
+  assert.equal(snapshot.diagnostics.status, "PASS");
+});
+
+test("hash-valid Maintainer artifacts with broken references are rejected", async (t) => {
+  const { manifest, bodies } = await maintainerContractPayload();
+  const requirement = manifest.documents.find((item) => item.type === "requirements");
+  const document = JSON.parse(bodies[requirement.url]);
+  document.entries[0].sourceIds = ["SRC-MISSING"];
+  bodies[requirement.url] = `${JSON.stringify(document)}\n`;
+  requirement.sha256 = sha256(bodies[requirement.url]);
+  installRemoteFetch(t, manifest, bodies);
+  await assert.rejects(() => loadKnowledgeSnapshot({ production: true, manifestUrl: "https://blob.example/runtime-manifest.json" }), /BROKEN_NORMATIVE_SOURCE_REFERENCE/);
 });
 
 test("complete hash-pinned Vercel snapshot is accepted", async (t) => {

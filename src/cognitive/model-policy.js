@@ -93,6 +93,21 @@ export function publicModelPolicy(policy) {
   return policy.profiles.map(({ credentialAvailable, ...profile }) => ({ ...profile, credentialAvailable }));
 }
 
+export function validateGovernanceRouteTopology(policy) {
+  const workhorse = policy.choose("DOMAIN_ASSESSMENT");
+  const verifier = policy.choose("VERIFICATION", { excludeProviders: [workhorse.provider] });
+  const adjudicator = policy.choose("ADJUDICATION", { excludeProviders: [workhorse.provider, verifier.provider] });
+  const solutionReasoner = policy.choose("SOLUTION_UNDERSTANDING");
+  const solutionVerifier = policy.choose("VERIFICATION", { excludeProviders: [solutionReasoner.provider] });
+  const synthesisReasoner = policy.choose("SYNTHESIS");
+  const factChecker = policy.choose("FACT_CHECK", { excludeProviders: [synthesisReasoner.provider] });
+  return {
+    claimFlow: { workhorse: workhorse.provider, verifier: verifier.provider, adjudicator: adjudicator.provider },
+    solutionFlow: { reasoner: solutionReasoner.provider, verifier: solutionVerifier.provider },
+    publicationFlow: { reasoner: synthesisReasoner.provider, qualityChecker: factChecker.provider }
+  };
+}
+
 export function requiredGovernanceProviders(policy) {
   const required = [...new Map(policy.profiles.map((profile) => [profile.approvalRef, profile])).values()];
   const unavailable = required.filter((item) => !item.credentialAvailable);
@@ -103,6 +118,7 @@ export function requiredGovernanceProviders(policy) {
   if (unapproved.length) {
     throw new Error(`Cognitive analysis requires approved production model profiles: ${unapproved.map((item) => item.approvalRef).join(", ")}`);
   }
+  validateGovernanceRouteTopology(policy);
   return [...new Set(required.map((item) => item.provider))];
 }
 

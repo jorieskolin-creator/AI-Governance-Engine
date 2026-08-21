@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { COGNITIVE_PROVIDERS, modelPolicy, requiredGovernanceProviders } from "../src/cognitive/model-policy.js";
+import { COGNITIVE_PROVIDERS, modelPolicy, requiredGovernanceProviders, validateGovernanceRouteTopology } from "../src/cognitive/model-policy.js";
 import {
   normalizeProviderResponse, providerAdapter, serializeProviderRequest
 } from "../src/cognitive/provider-adapters.js";
@@ -84,6 +84,25 @@ test("production routing requires approval of the exact profile and model identi
     QUALITY_CHECKER_FALLBACK_MODEL: "unreviewed-fallback"
   });
   assert.throws(() => noApprovedQualityRoute.choose("VERIFICATION"), /approved production model profile/i);
+});
+
+test("role topology requires independent verification and a third-provider adjudicator", () => {
+  const valid = validateGovernanceRouteTopology(modelPolicy(credentials));
+  assert.deepEqual(valid.claimFlow, { workhorse: "MOONSHOT", verifier: "OPENAI", adjudicator: "XAI" });
+  assert.notEqual(valid.solutionFlow.reasoner, valid.solutionFlow.verifier);
+  assert.notEqual(valid.publicationFlow.reasoner, valid.publicationFlow.qualityChecker);
+
+  const twoProviderPolicy = modelPolicy({
+    ...credentials,
+    WORKHORSE_PROVIDER: "OPENAI", WORKHORSE_MODEL: "workhorse",
+    WORKHORSE_FALLBACK_PROVIDER: "XAI", WORKHORSE_FALLBACK_MODEL: "workhorse-fallback",
+    REASONER_PROVIDER: "OPENAI", REASONER_MODEL: "reasoner",
+    REASONER_FALLBACK_PROVIDER: "XAI", REASONER_FALLBACK_MODEL: "reasoner-fallback",
+    QUALITY_CHECKER_PROVIDER: "XAI", QUALITY_CHECKER_MODEL: "quality",
+    QUALITY_CHECKER_FALLBACK_PROVIDER: "OPENAI", QUALITY_CHECKER_FALLBACK_MODEL: "quality-fallback"
+  });
+  assert.throws(() => validateGovernanceRouteTopology(twoProviderPolicy), /independent route for ADJUDICATION/i);
+  assert.throws(() => requiredGovernanceProviders(twoProviderPolicy), /independent route for ADJUDICATION/i);
 });
 
 test("provider adapters translate one canonical schema without changing it", () => {

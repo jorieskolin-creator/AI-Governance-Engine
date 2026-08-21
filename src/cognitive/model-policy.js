@@ -1,5 +1,7 @@
 import { COGNITIVE_PROVIDERS, providerAdapter } from "./provider-adapters.js";
 
+export const MODEL_POLICY_VIEW_VERSION = "model-policy-view-1.0.0";
+
 const STAGE_DEFINITIONS = Object.freeze([
   { stage: "ROUTING", operationalRole: "WORKHORSE", effort: "low", maxOutputTokens: 4000 },
   { stage: "EXTRACTION", operationalRole: "WORKHORSE", effort: "high", maxOutputTokens: 16000 },

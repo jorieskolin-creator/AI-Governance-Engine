@@ -68,6 +68,7 @@ test("HTTP workflow exposes readiness and fails closed before unapproved provide
 
     const models = await request(baseUrl, "/api/v2/models");
     assert.equal(models.status, 200);
+    assert.equal(models.body.schemaVersion, "model-policy-view-1.0.0");
     assert.equal(models.body.mode, "ALWAYS_ON");
     assert.deepEqual(models.body.readiness, health.body.cognitiveReadiness);
     assert.equal(models.body.roleSlots.length, 6);

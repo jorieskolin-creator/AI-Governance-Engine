@@ -182,7 +182,8 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
   const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: mockTransport });
-  const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
+  const checkpoints = [];
+  const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }), onCheckpoint: async (checkpoint) => checkpoints.push(checkpoint) });
   assert.equal(result.schemaVersion, "2.6.0");
   assert.equal(result.cognitive.contractVersion, "3.1.0");
   assert.equal(result.recommendation.formalApproval, false);
@@ -192,6 +193,25 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   assert.ok(result.cognitive.verificationRecords.every((item) => item.status === "SUPPORTED"));
   assert.ok(result.evidence.filter((item) => item.signal === "verified-control-evidence").every((item) => item.assuranceState === "DECLARED"));
   assert.ok(result.cognitive.modelExecutionTrace.every((item) => !JSON.stringify(item).includes("test")));
+  assert.equal(checkpoints.length, 13);
+  assert.ok(run.stepLedger.records.every((item) => ["COMPLETED", "PARTIAL", "FAILED", "SKIPPED"].includes(item.status)));
+});
+
+test("a durable checkpoint failure stops execution before the next provider call", async () => {
+  const run = await createPreflight(preflightInput(broadGovernanceSource()));
+  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
+  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  let providerCalls = 0;
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: async (request) => { providerCalls += 1; return mockTransport(request); } });
+  await assert.rejects(executeCognitiveRun(run, {
+    policy,
+    client,
+    budget: client.budget,
+    knowledge: await loadKnowledgeSnapshot({ production: false }),
+    onCheckpoint: async () => { throw new Error("checkpoint unavailable"); }
+  }), /checkpoint unavailable/i);
+  assert.equal(providerCalls, 0);
 });
 
 test("single-provider approval fails closed for cross-provider verification", async () => {

@@ -72,6 +72,8 @@ export class EphemeralRunStore {
     return true;
   }
 
+  renewLease(id) { return Boolean(this.get(id) && this.leases.has(id)); }
+
   releaseLease(id) { this.leases.delete(id); }
 
   sweep() {

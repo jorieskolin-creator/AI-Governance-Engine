@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { invariant } from "../contracts.js";
 import { sha256 } from "../core/hash.js";
 import { EphemeralRunStore } from "./run-store.js";
+import { validateCognitiveStepLedger } from "./orchestration.js";
 
 export const DURABLE_RUN_STATE_VERSION = "durable-run-state-1.0.0";
 
@@ -22,10 +23,21 @@ function assertProviderPacketIsSafe(unit) {
 
 export function serializeDurableRun(run, now = new Date()) {
   invariant(run?.id && run.createdAt && run.expiresAt, "A valid run is required for durable serialization");
-  for (const packet of run.packets ?? []) for (const unit of packet.sourceUnits ?? []) assertProviderPacketIsSafe(unit);
+  if (run.stepLedger) validateCognitiveStepLedger(run.stepLedger);
   const durableRun = structuredClone(run);
   durableRun.localSourceUnits = [];
   delete durableRun.persistence;
+  for (const packet of durableRun.packets ?? []) {
+    for (const unit of packet.sourceUnits ?? []) {
+      if (unit.media) unit.media.data = "";
+      if (unit.evidenceKind === "DERIVED_MODEL_OUTPUT") {
+        unit.content = "";
+        unit.transmissionState = "PURGED";
+        unit.durableContentState = "MODEL_DERIVED_CONTENT_EXCLUDED";
+      }
+      assertProviderPacketIsSafe(unit);
+    }
+  }
   if (run.status === "AWAITING_INTAKE_CONFIRMATION") {
     durableRun.dossier = null;
     durableRun.solutionProfile = null;
@@ -55,6 +67,7 @@ export function deserializeDurableRun(envelope) {
   invariant(sha256(payload) === stateHash, "Durable run state failed its integrity check");
   invariant(payload.run?.id && Array.isArray(payload.run.localSourceUnits) && payload.run.localSourceUnits.length === 0, "Durable run state contains invalid local evidence");
   const run = structuredClone(payload.run);
+  if (run.stepLedger) validateCognitiveStepLedger(run.stepLedger);
   if (run.approvedIntake) deepFreeze(run.approvedIntake);
   run.persistence = { recovered: true, checkpointedAt: payload.checkpointedAt, rawEvidenceAvailable: false };
   if (run.status === "AWAITING_INTAKE_CONFIRMATION") {
@@ -163,6 +176,15 @@ export class PostgresRunStore {
       parameters
     );
     if (result.rowCount !== 1 && versionClause) this.runs.delete(id);
+    return result.rowCount === 1;
+  }
+
+  async renewLease(id) {
+    const leaseExpiresAt = new Date(this.now().getTime() + this.leaseMs).toISOString();
+    const result = await this.pool.query(
+      "UPDATE governance_runs SET lease_expires_at = $3, updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL AND lease_owner = $2 RETURNING id",
+      [id, this.instanceId, leaseExpiresAt]
+    );
     return result.rowCount === 1;
   }
 

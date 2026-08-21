@@ -14,6 +14,7 @@ import { sanitizeRestrictedValue } from "../public/content-policy.js";
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./intake/field-registry.js";
 import { validateApprovedIntakeSnapshot } from "./intake/contracts.js";
 import { createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "./intake/acquired-facts.js";
+import { createCognitiveStepLedger } from "./cognitive/orchestration.js";
 
 const port = Number(process.env.PORT ?? 4174);
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
@@ -106,6 +107,7 @@ async function startCognitiveRun(run, request) {
   run.dossier = structuredClone(run.approvedIntake.effectiveDossier);
   run.solutionProfile = structuredClone(run.approvedIntake.solutionProfile);
   run.approval = approval;
+  run.stepLedger = createCognitiveStepLedger();
   for (const packet of run.packets) packet.transmissionState = "APPROVED";
   run.status = "RUNNING";
   run.stage = "COGNITIVE_EXECUTION_QUEUED";
@@ -117,6 +119,10 @@ async function startCognitiveRun(run, request) {
       await executeCognitiveRun(run, {
         knowledge,
         policy,
+        onCheckpoint: async () => {
+          if (!await runStore.renewLease(run.id)) throw new Error("Cognitive execution lease could not be renewed");
+          await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+        },
         domainConcurrency: positiveEnvNumber("COGNITIVE_MAX_CONCURRENCY", 3),
         budgets: {
           maxCalls: positiveEnvNumber("COGNITIVE_MAX_CALLS_PER_RUN", 180),
@@ -148,6 +154,10 @@ function publicRunView(run) {
     runId: run.id, status: run.status, stage: run.stage, createdAt: run.createdAt, expiresAt: run.expiresAt,
     completedAt: run.completedAt ?? null, resultAvailable: Boolean(run.result), error: run.error, failureCode: run.failureCode ?? null,
     solutionProfile: run.solutionProfile,
+    stepLedger: run.stepLedger ? {
+      schemaVersion: run.stepLedger.schemaVersion,
+      records: run.stepLedger.records.map(({ step, sequence, status, attempt, startedAt, completedAt }) => ({ step, sequence, status, attempt, startedAt, completedAt }))
+    } : null,
     cognitiveContractVersion: run.result?.cognitive?.contractVersion ?? cognitiveContractVersion,
     domainProgress,
     coverage: run.result?.coverageMatrix?.counts ?? null,

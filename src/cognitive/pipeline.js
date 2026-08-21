@@ -18,6 +18,7 @@ import {
   createDerivedSourceUnit, evaluatePublicationGate, evidenceLinksForClaim, lockAdjudicatedClaim, assessmentWorkItems,
   normalizeSolutionCandidates, validateClaimMappings, validateFactCheckCompleteness
 } from "./integrity.js";
+import { completeCognitiveStep, createCognitiveStepLedger, startCognitiveStep } from "./orchestration.js";
 
 const HIGH_INTEGRITY = new Set(["HIGH", "CRITICAL"]);
 const unique = (values) => [...new Set(values.filter(Boolean))];
@@ -49,6 +50,16 @@ function stage(run, name, status, detail = {}) {
   if (run.cancelled) throw new Error("Cognitive run was cancelled or expired");
   run.stage = name;
   run.trace.push({ stage: name, status, at: new Date().toISOString(), ...detail });
+}
+
+async function beginOrchestrationStep(run, step, onCheckpoint) {
+  startCognitiveStep(run.stepLedger, step);
+  await onCheckpoint({ step, status: "RUNNING" });
+}
+
+async function finishOrchestrationStep(run, step, status, detail, onCheckpoint) {
+  completeCognitiveStep(run.stepLedger, step, status, detail);
+  await onCheckpoint({ step, status });
 }
 
 function approvedProviderSet(run, packets = []) {
@@ -295,10 +306,13 @@ export async function executeCognitiveRun(run, options = {}) {
   const failedStages = []; const verificationRecords = []; const findingLockRecords = []; const adjudicatedClaims = []; const unresolvedClaims = []; const reanalysisTrace = []; const integrityIncidents = [];
   const claimRecords = new Map(); let claims = []; let lockedFindings = []; let derivedSourceUnits = [];
   run.status = "RUNNING"; run.transmissionManifest = [];
+  run.stepLedger ??= createCognitiveStepLedger();
+  const onCheckpoint = options.onCheckpoint ?? (async () => {});
 
   const imageUnits = allUnits(run.packets).filter((unit) => unit.media?.data);
   if (imageUnits.length) {
     stage(run, "MULTIMODAL_EXTRACTION", "RUNNING");
+    await beginOrchestrationStep(run, "MULTIMODAL_EXTRACTION", onCheckpoint);
     for (const unit of imageUnits) {
       const packet = run.packets.find((item) => item.sourceUnits.includes(unit));
       try {
@@ -310,12 +324,17 @@ export async function executeCognitiveRun(run, options = {}) {
         derivedSourceUnits.push(derived); packet.sourceUnits.push(derived);
       } catch (error) { failedStages.push(`MULTIMODAL_EXTRACTION:${unit.id}`); run.trace.push({ stage: "MULTIMODAL_EXTRACTION", status: "UNIT_FAILED", at: new Date().toISOString(), sourceUnitId: unit.id, error: error.message }); }
     }
-    stage(run, "MULTIMODAL_EXTRACTION", failedStages.some((item) => item.startsWith("MULTIMODAL")) ? "PARTIAL" : "COMPLETED", { derivedSourceUnitCount: derivedSourceUnits.length });
-  }
+    const multimodalStatus = failedStages.some((item) => item.startsWith("MULTIMODAL")) ? "PARTIAL" : "COMPLETED";
+    const multimodalDetail = { derivedSourceUnitCount: derivedSourceUnits.length };
+    stage(run, "MULTIMODAL_EXTRACTION", multimodalStatus, multimodalDetail);
+    await finishOrchestrationStep(run, "MULTIMODAL_EXTRACTION", multimodalStatus, multimodalDetail, onCheckpoint);
+  } else await finishOrchestrationStep(run, "MULTIMODAL_EXTRACTION", "SKIPPED", { reason: "NO_MEDIA_UNITS" }, onCheckpoint);
 
   const sourceUnits = allUnits(run.packets);
   stage(run, "SOLUTION_UNDERSTANDING", "RUNNING");
+  await beginOrchestrationStep(run, "SOLUTION_UNDERSTANDING", onCheckpoint);
   let solutionModel;
+  let solutionStepStatus;
   try {
     const solutionProfile = chooseForPackets(policy, "SOLUTION_UNDERSTANDING", run, run.packets, { requireAll: false });
     const solutionPackets = transmittedPackets(run, solutionProfile.provider); recordTransmission(run, "SOLUTION_UNDERSTANDING", solutionProfile, solutionPackets);
@@ -336,13 +355,17 @@ export async function executeCognitiveRun(run, options = {}) {
       }
     } else solutionModel = applySolutionFactVerification(candidate, { factResults: [] }, null);
     stage(run, "SOLUTION_UNDERSTANDING", "COMPLETED", { outputHash: solutionModel.hash, verifiedFactCount: solutionModel.verifiedFacts.length, unresolvedFactCount: solutionModel.unresolvedFacts.length });
+    solutionStepStatus = "COMPLETED";
   } catch (error) {
     failedStages.push("SOLUTION_UNDERSTANDING");
     solutionModel = { id: stableId("solution-model", run.dossier), status: "DETERMINISTIC_DOSSIER_ONLY", declared: run.dossier, candidateFacts: [], verifiedFacts: [], unresolvedFacts: [], facts: [], contradictions: [], unknowns: ["Cognitive solution understanding failed."], limitations: [error.message], hash: sha256(run.dossier) };
     stage(run, "SOLUTION_UNDERSTANDING", "FAILED", { error: error.message });
+    solutionStepStatus = "FAILED";
   }
+  await finishOrchestrationStep(run, "SOLUTION_UNDERSTANDING", solutionStepStatus, { outputHash: solutionModel.hash }, onCheckpoint);
 
   stage(run, "PACKET_ROUTING", "RUNNING"); const routing = localRouting(sourceUnits);
+  await beginOrchestrationStep(run, "PACKET_ROUTING", onCheckpoint);
   if (routing.ambiguous.length) {
     try {
       const ambiguousPackets = run.packets.map((packet) => ({ ...packet, sourceUnits: packet.sourceUnits.filter((unit) => routing.ambiguous.includes(unit)) })).filter((packet) => packet.sourceUnits.length);
@@ -355,8 +378,10 @@ export async function executeCognitiveRun(run, options = {}) {
     for (const unit of routing.ambiguous) if (!routing.routes.has(unit.id)) routing.routes.set(unit.id, Object.keys(DOMAINS));
   }
   stage(run, "PACKET_ROUTING", "COMPLETED", { ambiguousCount: routing.ambiguous.length });
+  await finishOrchestrationStep(run, "PACKET_ROUTING", "COMPLETED", { ambiguousCount: routing.ambiguous.length }, onCheckpoint);
 
   stage(run, "DOMAIN_ASSESSMENT", "RUNNING");
+  await beginOrchestrationStep(run, "DOMAIN_ASSESSMENT", onCheckpoint);
   const domainResults = await mapLimitSettled(Object.keys(DOMAINS), options.domainConcurrency ?? 3, async (domain) => {
     stage(run, `DOMAIN_${domain}`, "RUNNING");
     const workItems = assessmentWorkItems(knowledge, run.dossier, domain);
@@ -396,9 +421,13 @@ export async function executeCognitiveRun(run, options = {}) {
   for (const claim of claims) claimRecords.set(claim.id, claim);
   const coverageMatrix = buildAssessmentCoverageMatrix(knowledge, run.dossier, claims, domainResults);
   if (!coverageMatrix.complete) failedStages.push("ASSESSMENT_COVERAGE_INCOMPLETE");
-  stage(run, "DOMAIN_ASSESSMENT", domainResults.some((item) => item.status === "FAILED") ? "PARTIAL" : "COMPLETED", { claimCount: claims.length, coverageComplete: coverageMatrix.complete });
+  const domainStepStatus = domainResults.some((item) => item.status === "FAILED") ? "PARTIAL" : "COMPLETED";
+  const domainStepDetail = { claimCount: claims.length, coverageComplete: coverageMatrix.complete };
+  stage(run, "DOMAIN_ASSESSMENT", domainStepStatus, domainStepDetail);
+  await finishOrchestrationStep(run, "DOMAIN_ASSESSMENT", domainStepStatus, domainStepDetail, onCheckpoint);
 
   stage(run, "EVIDENCE_VERIFICATION", "RUNNING");
+  await beginOrchestrationStep(run, "EVIDENCE_VERIFICATION", onCheckpoint);
   for (const originalClaim of claims) {
     let claim = originalClaim; const history = []; const citedUnits = () => claim.sourceUnitIds.map((id) => sourceUnits.find((unit) => unit.id === id)).filter(Boolean);
     const localInvalid = localInvalidVerification(claim, sourceUnits);
@@ -443,7 +472,9 @@ export async function executeCognitiveRun(run, options = {}) {
     const { lockRecord, finding } = lockAdjudicatedClaim(claim, adjudicated, sourceUnits); findingLockRecords.push(lockRecord);
     if (finding) lockedFindings.push(finding); else unresolvedClaims.push({ id: stableId("unresolved-claim", { claimId: claim.id, adjudicatedId: adjudicated.id }), claimId: claim.id, adjudicatedClaimId: adjudicated.id, statement: claim.statement, severity: claim.severity, domains: claim.domains, status: adjudicated.status, reasons: unique([...adjudicated.mappingIssues, ...lockRecord.issues]) });
   }
-  stage(run, "EVIDENCE_VERIFICATION", "COMPLETED", { verificationCount: verificationRecords.length, adjudicatedClaimCount: adjudicatedClaims.length, lockedFindingCount: lockedFindings.length, unresolvedClaimCount: unresolvedClaims.length });
+  const verificationDetail = { verificationCount: verificationRecords.length, adjudicatedClaimCount: adjudicatedClaims.length, lockedFindingCount: lockedFindings.length, unresolvedClaimCount: unresolvedClaims.length };
+  stage(run, "EVIDENCE_VERIFICATION", "COMPLETED", verificationDetail);
+  await finishOrchestrationStep(run, "EVIDENCE_VERIFICATION", "COMPLETED", verificationDetail, onCheckpoint);
 
   const scanner = localScannerArtifacts(run, now);
   const buildProvisional = async () => {
@@ -453,14 +484,21 @@ export async function executeCognitiveRun(run, options = {}) {
   };
   let provisional = await buildProvisional(); let synthesis = deterministicNarrative(provisional, lockedFindings); let factCheck = { supported: false, itemResults: [], limitation: "Model synthesis was not completed." }; let factCheckIntegrity = { valid: false }; let synthesisProvider = null;
 
+  stage(run, "CONTROLLED_SYNTHESIS", "RUNNING");
+  await beginOrchestrationStep(run, "CONTROLLED_SYNTHESIS", onCheckpoint);
+  let synthesisStepStatus;
   try {
-    stage(run, "CONTROLLED_SYNTHESIS", "RUNNING"); const profile = chooseForPackets(policy, "SYNTHESIS", run, [], { requireAll: false }); synthesisProvider = profile.provider; recordTransmission(run, "CONTROLLED_SYNTHESIS", profile, [], false);
+    const profile = chooseForPackets(policy, "SYNTHESIS", run, [], { requireAll: false }); synthesisProvider = profile.provider; recordTransmission(run, "CONTROLLED_SYNTHESIS", profile, [], false);
     const generated = await client.generate({ profile, prompt: synthesisPrompt({ solutionModel, lockedFindings, deterministic: provisional, actions: provisional.actions }), schemaName: "readiness_synthesis", schema: SYNTHESIS_SCHEMA, packetHash: provisional.packageHash, promptVersion: PROMPT_VERSIONS.synthesis });
-    const sanitized = sanitizeSynthesis(generated.value, provisional, lockedFindings); synthesis = sanitized; integrityIncidents.push(...sanitized.integrityIncidents); stage(run, "CONTROLLED_SYNTHESIS", "COMPLETED");
-  } catch (error) { failedStages.push("CONTROLLED_SYNTHESIS"); stage(run, "CONTROLLED_SYNTHESIS", "FAILED", { error: error.message }); }
+    const sanitized = sanitizeSynthesis(generated.value, provisional, lockedFindings); synthesis = sanitized; integrityIncidents.push(...sanitized.integrityIncidents); stage(run, "CONTROLLED_SYNTHESIS", "COMPLETED"); synthesisStepStatus = "COMPLETED";
+  } catch (error) { failedStages.push("CONTROLLED_SYNTHESIS"); stage(run, "CONTROLLED_SYNTHESIS", "FAILED", { error: error.message }); synthesisStepStatus = "FAILED"; }
+  await finishOrchestrationStep(run, "CONTROLLED_SYNTHESIS", synthesisStepStatus, null, onCheckpoint);
 
+  stage(run, "FINAL_FACT_CHECK", "RUNNING");
+  await beginOrchestrationStep(run, "FINAL_FACT_CHECK", onCheckpoint);
+  let factCheckStepStatus;
   try {
-    stage(run, "FINAL_FACT_CHECK", "RUNNING"); const checked = await runFactCheck({ client, policy, run, synthesis, lockedFindings, provisional, excludeProviders: synthesisProvider ? [synthesisProvider] : [] }); factCheck = checked.value;
+    const checked = await runFactCheck({ client, policy, run, synthesis, lockedFindings, provisional, excludeProviders: synthesisProvider ? [synthesisProvider] : [] }); factCheck = checked.value;
     let applied = applyFactCheck(synthesis, factCheck, true); synthesis = applied.synthesis; factCheckIntegrity = applied.integrity;
     const groundingTriggers = applied.triggers.filter((item) => item.issueType === "REFERENCE_OR_GROUNDING_ERROR" && item.affectedFindingIds.length);
     if (groundingTriggers.length) {
@@ -493,10 +531,11 @@ export async function executeCognitiveRun(run, options = {}) {
       factCheck = repairedCheck.value; applied = applyFactCheck(synthesis, factCheck, false); synthesis = applied.synthesis; factCheckIntegrity = applied.integrity;
       for (const trigger of applied.triggers) reanalysisTrace.push({ id: stableId("reanalysis", trigger), trigger: trigger.issueType, itemId: trigger.itemId, status: trigger.issueType === "NARRATIVE_WORDING_ERROR" && factCheckIntegrity.valid ? "RESOLVED" : "QUARANTINED", rationale: trigger.rationale });
     }
-    stage(run, "FINAL_FACT_CHECK", "COMPLETED", { supported: factCheck.supported, integrityValid: factCheckIntegrity.valid });
+    stage(run, "FINAL_FACT_CHECK", "COMPLETED", { supported: factCheck.supported, integrityValid: factCheckIntegrity.valid }); factCheckStepStatus = "COMPLETED";
   } catch (error) {
-    failedStages.push("FINAL_FACT_CHECK"); synthesis = { ...deterministicNarrative(provisional, lockedFindings), quarantine: { status: "QUARANTINED", items: [{ text: "Generated prose was discarded because the fact-check stage failed.", reason: error.message }] } }; factCheckIntegrity = { valid: false, error: error.message }; stage(run, "FINAL_FACT_CHECK", "FAILED", { error: error.message });
+    failedStages.push("FINAL_FACT_CHECK"); synthesis = { ...deterministicNarrative(provisional, lockedFindings), quarantine: { status: "QUARANTINED", items: [{ text: "Generated prose was discarded because the fact-check stage failed.", reason: error.message }] } }; factCheckIntegrity = { valid: false, error: error.message }; stage(run, "FINAL_FACT_CHECK", "FAILED", { error: error.message }); factCheckStepStatus = "FAILED";
   }
+  await finishOrchestrationStep(run, "FINAL_FACT_CHECK", factCheckStepStatus, { supported: factCheck.supported, integrityValid: factCheckIntegrity.valid }, onCheckpoint);
 
   const cognitiveCoverage = { required: true, complete: failedStages.length === 0 && coverageMatrix.complete, failedStages: unique(failedStages), domainCount: Object.keys(DOMAINS).length, assessedDomainCount: domainResults.filter((item) => item.status === "COMPLETED").length, claimCount: claimRecords.size, verifiedClaimCount: lockedFindings.length, coverageMatrix };
   const publicationGate = evaluatePublicationGate({ coverageMatrix, findingLockRecords, unresolvedClaims, factCheckIntegrity, narrative: synthesis, actionGroundingRecords: provisional.actionGroundingRecords, integrityIncidents, reanalysisTrace });

@@ -40,6 +40,12 @@ class FakePool {
       if (this.lease.get(parameters[0])?.owner === parameters[1]) this.lease.delete(parameters[0]);
       return { rowCount: 1, rows: [] };
     }
+    if (normalized.includes("SET lease_expires_at = $3")) {
+      const lease = this.lease.get(parameters[0]);
+      if (!lease || lease.owner !== parameters[1]) return { rowCount: 0, rows: [] };
+      lease.expiresAt = parameters[2];
+      return { rowCount: 1, rows: [{ id: parameters[0] }] };
+    }
     if (normalized.includes("SET state = NULL")) {
       const row = this.rows.get(parameters[0]); if (!row || row.deleted) return { rowCount: 0, rows: [] };
       row.deleted = true; row.state = null; row.status = parameters[1]; this.lease.delete(parameters[0]);
@@ -72,6 +78,23 @@ test("durable run checkpoints exclude raw evidence and fail closed under tamperi
   const unsafe = structuredClone(run);
   unsafe.packets[0].sourceUnits[0] = { ...unsafe.packets[0].sourceUnits[0], derivation: undefined, content: rawMarker };
   assert.throws(() => serializeDurableRun(unsafe), /non-summary source unit/i);
+
+  const transientMedia = structuredClone(run);
+  transientMedia.packets[0].sourceUnits[0].media = { mimeType: "image/png", data: rawMarker };
+  const mediaEnvelope = serializeDurableRun(transientMedia);
+  assert.doesNotMatch(JSON.stringify(mediaEnvelope), new RegExp(rawMarker));
+  assert.equal(mediaEnvelope.run.packets[0].sourceUnits[0].media.data, "");
+
+  const modelDerived = structuredClone(run.packets[0].sourceUnits[0]);
+  modelDerived.id = "derived-model-unit";
+  modelDerived.evidenceKind = "DERIVED_MODEL_OUTPUT";
+  modelDerived.derivation = { type: "MODEL_MULTIMODAL_EXTRACTION" };
+  modelDerived.content = rawMarker;
+  transientMedia.packets[0].sourceUnits.push(modelDerived);
+  const derivedEnvelope = serializeDurableRun(transientMedia);
+  const persistedDerived = derivedEnvelope.run.packets[0].sourceUnits.find((unit) => unit.id === modelDerived.id);
+  assert.equal(persistedDerived.content, "");
+  assert.equal(persistedDerived.durableContentState, "MODEL_DERIVED_CONTENT_EXCLUDED");
 });
 
 test("approved Intake checkpoints recover without raw evidence and retain user approval", async () => {
@@ -97,10 +120,12 @@ test("Postgres run leases are exclusive and recovered in-progress work never aut
   const run = await createPreflight({ sources: [{ path: "case.md", mimeType: "text/markdown", content: "# Case" }] });
   await first.create(run);
   assert.equal(await first.acquireLease(run.id), true);
+  assert.equal(await first.renewLease(run.id), true);
 
   const second = new PostgresRunStore({ pool, instanceId: "worker-b" });
   await second.get(run.id);
   assert.equal(await second.acquireLease(run.id), false);
+  assert.equal(await second.renewLease(run.id), false);
   await first.releaseLease(run.id);
   assert.equal(await second.acquireLease(run.id), true);
   await second.releaseLease(run.id);

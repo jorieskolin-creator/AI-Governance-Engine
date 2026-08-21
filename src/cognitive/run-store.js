@@ -1,6 +1,8 @@
 export class EphemeralRunStore {
   constructor(options = {}) {
+    this.kind = "MEMORY";
     this.runs = new Map();
+    this.leases = new Set();
     this.now = options.now ?? (() => new Date());
     this.sweepIntervalMs = options.sweepIntervalMs ?? 60_000;
     this.timer = setInterval(() => this.sweep(), this.sweepIntervalMs);
@@ -42,6 +44,7 @@ export class EphemeralRunStore {
     }
     run.status = reason;
     this.runs.delete(id);
+    this.leases.delete(id);
     return true;
   }
 
@@ -60,6 +63,16 @@ export class EphemeralRunStore {
       unit.transmissionState = "PURGED";
     }
   }
+
+  checkpoint(run) { return run; }
+
+  acquireLease(id) {
+    if (!this.get(id) || this.leases.has(id)) return false;
+    this.leases.add(id);
+    return true;
+  }
+
+  releaseLease(id) { this.leases.delete(id); }
 
   sweep() {
     const now = this.now().getTime();

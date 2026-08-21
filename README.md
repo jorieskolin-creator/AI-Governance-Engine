@@ -11,6 +11,7 @@ The repository is suitable for controlled development and calibration. It is not
 ## Implemented foundation
 
 - Source-first intake registers, classifies and hashes submitted artifacts and records exclusions in a content-addressed Source Ingestion Manifest.
+- Optional PostgreSQL orchestration persists content-hashed safe checkpoints and uses worker leases to serialize mutation and execution. Raw source units are never written to the orchestration database.
 - Evidence acquisition uses versioned lanes. Raw documents, code, configuration, tabular values and image pixels remain local and are replaced in provider-eligible packets by validated summaries containing only controlled enums, coarse dimensions, lineage references and explicit limitations. A separate `acquired-fact-package-1.0.0` withholds free text, dates, unknowns, conflicts and policy-excluded fields; users may explicitly select only eligible controlled values for an optional proposal request.
 - Deterministic assessment evaluates six governance domains across seven lifecycle stages.
 - Evidence coverage, control assurance, residual risk and hard-gate status remain separate concepts.
@@ -89,7 +90,7 @@ The browser calls the normal cognitive path automatically. Provider credentials 
 - `POST /api/v2/runs/{id}/execute` records the fixed server-side route and starts the run.
 - `GET /api/v2/runs/{id}` returns progress.
 - `GET /api/v2/runs/{id}/result` returns `ReadinessPackageV2` schema `2.5.0`.
-- `DELETE /api/v2/runs/{id}` purges the ephemeral run record and evidence held by the run store.
+- `DELETE /api/v2/runs/{id}` purges the run record and evidence held by the active run store.
 - `GET /api/v2/models` exposes the non-secret fixed policy without credentials.
 
 Supported intake includes common repository text and code, JSON, CSV, inert HTML, PDF, DOCX, XLSX, PNG, JPEG and WebP. Binary content uses base64. Office archives are checked for unsafe paths, macros, excessive expansion and suspicious compression. Source files, formulas, scripts, links and embedded instructions are not executed. Documents enter `DOCUMENT_LOCAL_ANALYSIS`; code/configuration enter `CODE_CONFIGURATION_LOCAL_ANALYSIS`; CSV/XLSX enter `TABULAR_LOCAL_ANALYSIS`; images enter `MEDIA_LOCAL_METADATA`. Raw content, cell values and pixels remain process-local. Provider packets contain only schema-validated deterministic summaries plus the user-approved canonical Intake. Document summaries expose controlled topic and risk signals, not text, names, values or quotes, and therefore cannot establish documentary claims or control effectiveness.
@@ -109,7 +110,8 @@ See [docs/knowledge-base.md](docs/knowledge-base.md) for the runtime manifest an
 ## Intentional current limitations
 
 - The service is a development skeleton, not a multi-tenant production service.
-- The v2 run store is process-local and in memory. Restarts lose active runs, and horizontal scaling is not supported.
+- Without `DATABASE_URL`, the v2 run store remains process-local and restarts lose active runs. With PostgreSQL, approved Intake and terminal safe state are recoverable; pre-approval recovery requires source re-upload because raw evidence is deliberately excluded, and interrupted provider execution is never resumed automatically.
+- PostgreSQL worker leases prevent concurrent mutation and duplicate execution starts, but durable queue scheduling, lease renewal for unusually long runs, and automatic interrupted-run replay remain future orchestration milestones.
 - Cancellation purges the run-store copy, but run-scoped abort propagation to an already active provider request is not implemented yet.
 - Authentication and tenant authorization remain production-hardening work.
 - The legacy deterministic endpoint is retained for compatibility and is not the browser assessment path.

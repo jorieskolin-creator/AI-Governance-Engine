@@ -51,6 +51,7 @@ flowchart LR
 - Deterministic acquisition and GenAI may create candidates, but only the user can resolve fields and approve the immutable Intake revision that analysis consumes.
 - Deterministic acquisition runs without provider transmission. Optional GenAI Intake proposals require a separate explicit user request after the safe summary package is available for review; skipping proposals does not block user resolution or final Intake approval.
 - Acquired facts are denied by default at the proposal boundary. Only user-selected, registry-eligible controlled facts enter a proposal packet; rejected IDs, ineligible values, stale package hashes and any package-integrity failure fail closed. Proposal acceptance and decline remain reversible until the user performs final approval.
+- When PostgreSQL is configured, `durable-run-state-1.0.0` checkpoints only provider-eligible deterministic summaries, approved canonical Intake, orchestration status, traces and result state. Local source units and media bytes are structurally excluded. A content hash detects checkpoint corruption; optimistic versions reject stale writers; and a database lease serializes proposal, confirmation and execution mutations.
 - Missing critical case information enforces an `ISOLATED_SANDBOX` operating boundary. Deployment and operation require every applicable intake field to be documented, confirmed, and aligned with implementation.
 - Known-irrelevant source exclusions remain visible but do not block progression. Unsupported source-like, failed, or unsafe evidence creates `SOURCE_COVERAGE_INCOMPLETE`; early work remains sandboxed and Deployment or later progression fails closed until the gap has scoped, attributable coverage.
 - `HUMAN_VALIDATED` and `FORMALLY_APPROVED` require a non-engine actor identifier plus an allow-listed authority.
@@ -62,7 +63,7 @@ flowchart LR
 
 ## Deployment boundary
 
-Railway can run the current single-process deployment skeleton and serve the dashboard/API. The application has no database, but it is not operationally stateless: v2 run state and raw evidence are held in process memory, so restarts lose active runs and horizontal scaling is not supported. Vercel hosts immutable, versioned knowledge documents and their manifest. In production mode, the engine fails closed when it cannot load the manifest or validate every document hash.
+Railway can run the current service and dashboard/API with an optional PostgreSQL `DATABASE_URL`. Raw evidence remains process-local even when PostgreSQL is enabled. Approved Intake and safe terminal checkpoints can recover after restart; a pre-approval checkpoint instead enters `RECOVERY_REQUIRES_REUPLOAD`, and an interrupted active run enters `RECOVERY_REQUIRES_USER_RESTART` rather than replaying provider calls. This is durable checkpointing and lease ownership, not yet a complete distributed queue. Vercel hosts immutable, versioned knowledge documents and their manifest. In production mode, the engine fails closed when it cannot load the manifest or validate every document hash.
 
 The canonical readiness package is the sole output contract. PDF, HTML, or a later external governance connector should render or transfer that package rather than calculate a second result.
 

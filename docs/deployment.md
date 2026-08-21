@@ -9,7 +9,9 @@
 5. Configure `BLOB_READ_WRITE_TOKEN` only if the Blob objects require bearer authentication.
 6. Run the manual `verify-knowledge-manifest` workflow against the same URL, or execute `pnpm run kb:verify-runtime` in an authorized environment.
 7. Optionally set `ALLOWED_ORIGIN` to the Railway public URL.
-8. Deploy. Railway executes `pnpm run check`, starts `pnpm start`, and probes `/health`.
+8. Provision PostgreSQL and set `DATABASE_URL` when durable safe-run checkpoints are required. Startup idempotently applies `db/migrations/001_governance_runs.sql`.
+9. Keep `COGNITIVE_RUN_LEASE_MS` longer than `COGNITIVE_MAX_RUN_MS`; the defaults are 20 and 15 minutes respectively.
+10. Deploy. Railway executes `pnpm run check`, starts `pnpm start`, and probes `/health`.
 
 Knowledge Base publication and Engine activation are separate operations. The Maintainer makes an immutable release available; this deployment owns selecting it, restarting safely, and confirming `/api/knowledge` plus `/api/knowledge/diagnostics`. No Engine source checkout or callback is required in the Maintainer pipeline.
 
@@ -27,8 +29,8 @@ Before decision-ready use:
 
 The service will not run pilot profiles in production. Packet/provider approval is enforced for each actual transmission rather than requiring one provider for the complete dossier. A run fails closed when cross-provider verification cannot be performed, mandatory assessment coverage is incomplete, a required model stage fails, the approved model identity changes, or a global/per-stage model budget is exhausted.
 
-The pilot run store is in memory. Raw evidence expires after 60 minutes and is purged after success, failure, cancellation, or timeout. A Railway restart invalidates in-progress runs and requires re-upload. Persisting packages or queues is a later production-hardening step, not part of this vertical slice.
+Without `DATABASE_URL`, the development run store is in memory. With PostgreSQL, the service stores hash-validated safe checkpoints and coordinates mutation through expiring worker leases. Raw source units, uploaded file contents and media bytes are never persisted in PostgreSQL: they expire after 60 minutes and are purged after success, failure, cancellation or timeout. Consequently, restart before user approval requires re-upload. Approved Intake and completed results can recover, while an interrupted provider run fails closed for explicit user restart rather than automatically duplicating calls.
 
 `/health` returns the active knowledge version, manifest hash, source, and entry counts. A missing, unreachable, malformed, incomplete, or hash-invalid production knowledge snapshot prevents startup.
 
-No database is required for the MVP. If readiness packages later require persistence, store the canonical package and source hashes separately from uploaded source content, apply tenant isolation, retention, encryption, and access-control requirements, and record human decisions as append-only events.
+PostgreSQL remains optional for local development. Production integration must additionally apply tenant isolation, encryption, backup and retention policies, database authorization, operational migration controls and append-only human-decision auditing. The current schema establishes durable checkpoints and leases; it does not claim those enterprise platform controls.

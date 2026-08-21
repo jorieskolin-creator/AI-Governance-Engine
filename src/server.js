@@ -8,7 +8,7 @@ import { validateExecutionApproval } from "./cognitive/contracts.js";
 import { confirmPreflightDossier, createPreflight, publicDiscoveryView, publicPreflightView } from "./cognitive/preflight.js";
 import { executeCognitiveRun } from "./cognitive/pipeline.js";
 import { modelPolicy, publicModelPolicy, requiredGovernanceProviders } from "./cognitive/model-policy.js";
-import { EphemeralRunStore } from "./cognitive/run-store.js";
+import { createRunStore } from "./cognitive/run-persistence.js";
 import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
 import { sanitizeRestrictedValue } from "../public/content-policy.js";
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./intake/field-registry.js";
@@ -31,7 +31,7 @@ const contentTypes = { ".html": "text/html; charset=utf-8", ".js": "text/javascr
 
 const knowledge = await loadKnowledgeSnapshot();
 validateQuestionnaireAgainstRegistry(knowledge.intakeQuestionnaire);
-const runStore = new EphemeralRunStore();
+const runStore = await createRunStore();
 const rateWindows = new Map();
 
 function sendJson(response, status, value) {
@@ -86,39 +86,57 @@ function automaticApproval(run, policy = modelPolicy()) {
   return validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
 }
 
-function startCognitiveRun(run, request) {
+async function startCognitiveRun(run, request) {
   if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive assessment rate limit exceeded"), { statusCode: 429 });
   if (run.status !== "AWAITING_TRANSMISSION_APPROVAL") throw Object.assign(new Error(`Run cannot execute from status ${run.status}`), { statusCode: 409 });
   if (run.stage !== "INTAKE_CONFIRMED" || !run.approvedIntake?.snapshotHash) throw Object.assign(new Error("A user-approved immutable Intake snapshot is required before execution"), { statusCode: 409 });
   try { validateApprovedIntakeSnapshot(run.approvedIntake, { acquisitionManifestHash: run.sourceIngestion.manifestHash }); }
   catch (error) { throw Object.assign(error, { statusCode: 409 }); }
-  run.dossier = structuredClone(run.approvedIntake.effectiveDossier);
-  run.solutionProfile = structuredClone(run.approvedIntake.solutionProfile);
   const blocking = run.dlpFindings.filter((item) => item.blocking);
   if (blocking.length) throw Object.assign(new Error("Preflight contains evidence that cannot be safely transmitted"), { statusCode: 400, blockingFindingIds: blocking.map((item) => item.id) });
   const policy = modelPolicy();
-  try { run.approval = automaticApproval(run, policy); }
+  let approval;
+  try { approval = automaticApproval(run, policy); }
   catch (error) {
     error.statusCode ??= 503;
     error.failureCode ??= safeFailureCode(error);
     throw error;
   }
+  if (!await runStore.acquireLease(run.id)) throw Object.assign(new Error("Run execution is already owned by another worker"), { statusCode: 409 });
+  run.dossier = structuredClone(run.approvedIntake.effectiveDossier);
+  run.solutionProfile = structuredClone(run.approvedIntake.solutionProfile);
+  run.approval = approval;
   for (const packet of run.packets) packet.transmissionState = "APPROVED";
-  void executeCognitiveRun(run, {
-    knowledge,
-    policy,
-    domainConcurrency: positiveEnvNumber("COGNITIVE_MAX_CONCURRENCY", 3),
-    budgets: {
-      maxCalls: positiveEnvNumber("COGNITIVE_MAX_CALLS_PER_RUN", 180),
-      maxTokens: positiveEnvNumber("COGNITIVE_MAX_TOKENS_PER_RUN", 1500000),
-      maxMs: positiveEnvNumber("COGNITIVE_MAX_RUN_MS", 900000)
+  run.status = "RUNNING";
+  run.stage = "COGNITIVE_EXECUTION_QUEUED";
+  run.trace.push({ stage: run.stage, status: "QUEUED", at: new Date().toISOString() });
+  try { await runStore.checkpoint(run, { leaseOwner: runStore.instanceId }); }
+  catch (error) { await runStore.releaseLease(run.id); throw error; }
+  void (async () => {
+    try {
+      await executeCognitiveRun(run, {
+        knowledge,
+        policy,
+        domainConcurrency: positiveEnvNumber("COGNITIVE_MAX_CONCURRENCY", 3),
+        budgets: {
+          maxCalls: positiveEnvNumber("COGNITIVE_MAX_CALLS_PER_RUN", 180),
+          maxTokens: positiveEnvNumber("COGNITIVE_MAX_TOKENS_PER_RUN", 1500000),
+          maxMs: positiveEnvNumber("COGNITIVE_MAX_RUN_MS", 900000)
+        }
+      });
+    } catch (error) {
+      run.status = "FAILED"; run.stage = "FAILED"; run.failureCode = safeFailureCode(error);
+      run.error = "Cognitive analysis could not complete safely.";
+      run.trace.push({ stage: "FAILED", status: "FAILED", at: new Date().toISOString(), failureCode: run.failureCode, error: run.error });
     }
-  }).then(() => runStore.releaseRawEvidence(run)).catch((error) => {
-    run.status = "FAILED"; run.stage = "FAILED"; run.failureCode = safeFailureCode(error);
-    run.error = "Cognitive analysis could not complete safely.";
-    run.trace.push({ stage: "FAILED", status: "FAILED", at: new Date().toISOString(), failureCode: run.failureCode, error: run.error });
-    runStore.releaseRawEvidence(run);
-  });
+    try { await runStore.releaseRawEvidence(run, { leaseOwner: runStore.instanceId }); }
+    catch {
+      run.status = "FAILED"; run.stage = "DURABLE_CHECKPOINT_FAILED"; run.failureCode = "ORCHESTRATION_CHECKPOINT_FAILED";
+      run.error = "The terminal run state could not be durably checkpointed.";
+    }
+    try { await runStore.releaseLease(run.id); }
+    catch { /* The lease expires automatically; terminal state already failed closed above. */ }
+  })();
 }
 
 function publicRunView(run) {
@@ -163,7 +181,7 @@ const server = http.createServer(async (request, response) => {
       return response.end();
     }
     if (request.method === "GET" && url.pathname === "/health") {
-      return sendJson(response, 200, { status: "ok", buildRevision, cognitiveContractVersion, knowledge: knowledgeManifestView(knowledge) });
+      return sendJson(response, 200, { status: "ok", buildRevision, cognitiveContractVersion, runStore: runStore.kind, knowledge: knowledgeManifestView(knowledge) });
     }
     if (request.method === "GET" && url.pathname === "/api/sample") return sendJson(response, 200, SAMPLE_REQUEST);
     if (request.method === "GET" && url.pathname === "/api/config") return sendJson(response, 200, {
@@ -180,11 +198,12 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/discover") {
       const payload = await readJson(request);
       const run = await createPreflight({ sources: payload.sources ?? [], sourceIngestion: payload.sourceIngestion });
-      runStore.create(run);
+      await runStore.create(run);
       let discoveryRecheck = { status: "NOT_REQUESTED", policy: "The deterministic Intake is returned without provider transmission. GenAI proposals require a separate explicit user request." };
       if (run.dlpFindings.some((item) => item.blocking)) {
         discoveryRecheck = { status: "BLOCKED_BY_LOCAL_DLP", policy: "AI recheck was not started because source transmission is blocked by local screening." };
         run.stage = "INTAKE_AI_VERIFICATION_BLOCKED";
+        await runStore.checkpoint(run);
       }
       return sendJson(response, 200, {
         runId: run.id,
@@ -204,17 +223,17 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "POST" && url.pathname === "/api/v2/runs/preflight") {
       const run = await createPreflight(await readJson(request));
-      runStore.create(run);
+      await runStore.create(run);
       return sendJson(response, 201, publicPreflightView(run));
     }
     const discoverMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/discover$/);
     if (request.method === "POST" && discoverMatch) {
-      const run = runStore.get(discoverMatch[1]);
+      const run = await runStore.get(discoverMatch[1]);
       return run ? sendJson(response, 200, publicDiscoveryView(run)) : sendJson(response, 404, { error: "Run not found or expired" });
     }
     const recheckMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/discover-recheck$/);
     if (request.method === "POST" && recheckMatch) {
-      const run = runStore.get(recheckMatch[1]);
+      const run = await runStore.get(recheckMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
       if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.discoveryRecheck) return sendJson(response, 409, { error: "AI Intake verification is not available from the current run state" });
       const consent = await readJson(request);
@@ -222,52 +241,63 @@ const server = http.createServer(async (request, response) => {
       if (consent.acquiredFactPackageHash !== run.acquiredFacts?.packageHash) return sendJson(response, 409, { error: "The reviewed acquired fact package is no longer current" });
       validateAcquiredFactPackage(run.acquiredFacts);
       const acquiredFactUnit = createAcquiredFactSelectionUnit(run.acquiredFacts, consent.selectedAcquiredFactIds ?? []);
-      const blocking = run.dlpFindings.filter((item) => item.blocking);
-      if (blocking.length) {
-        run.stage = "INTAKE_AI_VERIFICATION_BLOCKED";
-        run.discoveryRecheck = { status: "BLOCKED_BY_LOCAL_DLP", policy: "AI verification was not started because source transmission is blocked by local screening.", blockingFindingIds: blocking.map((item) => item.id) };
-        run.trace.push({ stage: "INTAKE_AI_VERIFICATION", status: "BLOCKED", at: new Date().toISOString(), blockingFindingIds: blocking.map((item) => item.id) });
-        return sendJson(response, 200, run.discoveryRecheck);
-      }
+      if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run mutation is already owned by another worker" });
       try {
-        if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive discovery rate limit exceeded"), { statusCode: 429 });
-        run.trace.push({ stage: "INTAKE_AI_PROPOSAL_CONSENT", status: "CONFIRMED", purpose: consent.purpose, acquiredFactPackageHash: run.acquiredFacts.packageHash, selectedAcquiredFactIds: consent.selectedAcquiredFactIds ?? [], at: new Date().toISOString(), packetIds: run.packets.map((packet) => packet.id) });
-        return sendJson(response, 200, await recheckDiscovery(run, automaticApproval(run), { policy: modelPolicy(), acquiredFactUnit }));
-      } catch (error) {
-        run.stage = "INTAKE_AI_VERIFICATION_UNAVAILABLE";
-        run.discoveryRecheck = { status: "UNAVAILABLE", failureCode: safeFailureCode(error), policy: "The deterministic Intake draft remains available. AI candidates were not used." };
-        run.trace.push({ stage: "INTAKE_AI_VERIFICATION", status: "UNAVAILABLE", at: new Date().toISOString(), failureCode: run.discoveryRecheck.failureCode });
-        return sendJson(response, 200, run.discoveryRecheck);
-      }
+        const blocking = run.dlpFindings.filter((item) => item.blocking);
+        if (blocking.length) {
+          run.stage = "INTAKE_AI_VERIFICATION_BLOCKED";
+          run.discoveryRecheck = { status: "BLOCKED_BY_LOCAL_DLP", policy: "AI verification was not started because source transmission is blocked by local screening.", blockingFindingIds: blocking.map((item) => item.id) };
+          run.trace.push({ stage: "INTAKE_AI_VERIFICATION", status: "BLOCKED", at: new Date().toISOString(), blockingFindingIds: blocking.map((item) => item.id) });
+          await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          return sendJson(response, 200, run.discoveryRecheck);
+        }
+        try {
+          if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive discovery rate limit exceeded"), { statusCode: 429 });
+          run.trace.push({ stage: "INTAKE_AI_PROPOSAL_CONSENT", status: "CONFIRMED", purpose: consent.purpose, acquiredFactPackageHash: run.acquiredFacts.packageHash, selectedAcquiredFactIds: consent.selectedAcquiredFactIds ?? [], at: new Date().toISOString(), packetIds: run.packets.map((packet) => packet.id) });
+          const discoveryRecheck = await recheckDiscovery(run, automaticApproval(run), { policy: modelPolicy(), acquiredFactUnit });
+          await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          return sendJson(response, 200, discoveryRecheck);
+        } catch (error) {
+          run.stage = "INTAKE_AI_VERIFICATION_UNAVAILABLE";
+          run.discoveryRecheck = { status: "UNAVAILABLE", failureCode: safeFailureCode(error), policy: "The deterministic Intake draft remains available. AI candidates were not used." };
+          run.trace.push({ stage: "INTAKE_AI_VERIFICATION", status: "UNAVAILABLE", at: new Date().toISOString(), failureCode: run.discoveryRecheck.failureCode });
+          await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          return sendJson(response, 200, run.discoveryRecheck);
+        }
+      } finally { await runStore.releaseLease(run.id); }
     }
     const confirmMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/confirm$/);
     if (request.method === "POST" && confirmMatch) {
-      const run = runStore.get(confirmMatch[1]);
+      const run = await runStore.get(confirmMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
-      await confirmPreflightDossier(run, await readJson(request));
-      return sendJson(response, 200, publicPreflightView(run));
+      if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run mutation is already owned by another worker" });
+      try {
+        await confirmPreflightDossier(run, await readJson(request));
+        await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+        return sendJson(response, 200, publicPreflightView(run));
+      } finally { await runStore.releaseLease(run.id); }
     }
     const executeMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/execute$/);
     if (request.method === "POST" && executeMatch) {
-      const run = runStore.get(executeMatch[1]);
+      const run = await runStore.get(executeMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
-      startCognitiveRun(run, request);
+      await startCognitiveRun(run, request);
       return sendJson(response, 202, publicRunView(run));
     }
     const resultMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/result$/);
     if (request.method === "GET" && resultMatch) {
-      const run = runStore.get(resultMatch[1]);
+      const run = await runStore.get(resultMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
       if (!run.result) return sendJson(response, 409, { error: `Result is unavailable while run status is ${run.status}` });
       return sendJson(response, 200, run.result);
     }
     const runMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)$/);
     if (request.method === "GET" && runMatch) {
-      const run = runStore.get(runMatch[1]);
+      const run = await runStore.get(runMatch[1]);
       return run ? sendJson(response, 200, publicRunView(run)) : sendJson(response, 404, { error: "Run not found or expired" });
     }
     if (request.method === "DELETE" && runMatch) {
-      return runStore.purge(runMatch[1], "CANCELLED") ? sendJson(response, 200, { status: "PURGED" }) : sendJson(response, 404, { error: "Run not found or expired" });
+      return await runStore.purge(runMatch[1], "CANCELLED") ? sendJson(response, 200, { status: "PURGED" }) : sendJson(response, 404, { error: "Run not found or expired" });
     }
     if (request.method === "GET" && await serveStatic(url.pathname, response)) return;
     sendJson(response, 404, { error: "Not found" });
@@ -284,5 +314,5 @@ const server = http.createServer(async (request, response) => {
 server.listen(port, "0.0.0.0", () => console.log(`AI Governance Engine listening on ${port}`));
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => { runStore.close(); server.close(() => process.exit(0)); });
+  process.on(signal, () => { server.close(async () => { await runStore.close(); process.exit(0); }); });
 }

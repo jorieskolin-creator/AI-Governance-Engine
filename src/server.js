@@ -13,6 +13,7 @@ import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
 import { sanitizeRestrictedValue } from "../public/content-policy.js";
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./intake/field-registry.js";
 import { validateApprovedIntakeSnapshot } from "./intake/contracts.js";
+import { createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "./intake/acquired-facts.js";
 
 const port = Number(process.env.PORT ?? 4174);
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
@@ -218,6 +219,9 @@ const server = http.createServer(async (request, response) => {
       if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.discoveryRecheck) return sendJson(response, 409, { error: "AI Intake verification is not available from the current run state" });
       const consent = await readJson(request);
       if (consent?.confirmed !== true || consent?.purpose !== "INTAKE_PROPOSALS_FROM_SAFE_SUMMARIES") return sendJson(response, 400, { error: "Explicit confirmation is required before requesting GenAI Intake proposals" });
+      if (consent.acquiredFactPackageHash !== run.acquiredFacts?.packageHash) return sendJson(response, 409, { error: "The reviewed acquired fact package is no longer current" });
+      validateAcquiredFactPackage(run.acquiredFacts);
+      const acquiredFactUnit = createAcquiredFactSelectionUnit(run.acquiredFacts, consent.selectedAcquiredFactIds ?? []);
       const blocking = run.dlpFindings.filter((item) => item.blocking);
       if (blocking.length) {
         run.stage = "INTAKE_AI_VERIFICATION_BLOCKED";
@@ -227,8 +231,8 @@ const server = http.createServer(async (request, response) => {
       }
       try {
         if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive discovery rate limit exceeded"), { statusCode: 429 });
-        run.trace.push({ stage: "INTAKE_AI_PROPOSAL_CONSENT", status: "CONFIRMED", purpose: consent.purpose, at: new Date().toISOString(), packetIds: run.packets.map((packet) => packet.id) });
-        return sendJson(response, 200, await recheckDiscovery(run, automaticApproval(run), { policy: modelPolicy() }));
+        run.trace.push({ stage: "INTAKE_AI_PROPOSAL_CONSENT", status: "CONFIRMED", purpose: consent.purpose, acquiredFactPackageHash: run.acquiredFacts.packageHash, selectedAcquiredFactIds: consent.selectedAcquiredFactIds ?? [], at: new Date().toISOString(), packetIds: run.packets.map((packet) => packet.id) });
+        return sendJson(response, 200, await recheckDiscovery(run, automaticApproval(run), { policy: modelPolicy(), acquiredFactUnit }));
       } catch (error) {
         run.stage = "INTAKE_AI_VERIFICATION_UNAVAILABLE";
         run.discoveryRecheck = { status: "UNAVAILABLE", failureCode: safeFailureCode(error), policy: "The deterministic Intake draft remains available. AI candidates were not used." };

@@ -17,7 +17,7 @@ export const INTAKE_RESOLUTION_STATES = Object.freeze([
   "CONFLICT_REQUIRES_RESOLUTION"
 ]);
 export const INTAKE_VALUE_ORIGINS = Object.freeze(["DETERMINISTIC_ACQUISITION", "USER_DECLARATION", "GENAI_PROPOSAL"]);
-export const APPROVED_INTAKE_SNAPSHOT_VERSION = "approved-intake-snapshot-1.0.0";
+export const APPROVED_INTAKE_SNAPSHOT_VERSION = "approved-intake-snapshot-1.1.0";
 
 const blockingResolutionStates = new Set(["UNREVIEWED", "USER_DECLINED_PROPOSAL", "CONFLICT_REQUIRES_RESOLUTION"]);
 
@@ -128,6 +128,22 @@ function fieldRecord(field, decision, dossier, sourceProfile, discoveryRecheck) 
   let evidenceRefs = [...new Set(prior?.sourceUnitIds ?? [])];
   let limitations = [...new Set(prior?.limitations ?? [])];
   let proposalRef = null;
+  let declinedProposalRef = null;
+  let editedProposalRef = null;
+  if (decision.declinedProposalRef) {
+    const declined = candidateByRef(discoveryRecheck, decision.declinedProposalRef);
+    invariant(field.genAiProposalAllowed && declined?.field === field.id, `${field.id} declined proposal reference is invalid`);
+    invariant(declined.status === "CANDIDATE" && ["REVIEW_REWRITE", "REVIEW_CANDIDATE"].includes(declined.recommendation), `${field.id} declined proposal is not actionable`);
+    declinedProposalRef = declined.id;
+  }
+  if (decision.editedProposalRef) {
+    const edited = candidateByRef(discoveryRecheck, decision.editedProposalRef);
+    invariant(field.genAiProposalAllowed && edited?.field === field.id, `${field.id} edited proposal reference is invalid`);
+    invariant(edited.status === "CANDIDATE" && ["REVIEW_REWRITE", "REVIEW_CANDIDATE"].includes(edited.recommendation), `${field.id} edited proposal is not actionable`);
+    invariant(!declinedProposalRef, `${field.id} cannot edit and decline the same proposal`);
+    editedProposalRef = edited.id;
+  }
+  invariant(!editedProposalRef || decision.resolutionState === "USER_EDITED", `${field.id} edited proposal reference requires a user-edited resolution`);
 
   if (decision.resolutionState === "USER_SELECTED_UNKNOWN") {
     invariant(field.unknownAllowed, `${field.id} does not allow Unknown`);
@@ -141,6 +157,7 @@ function fieldRecord(field, decision, dossier, sourceProfile, discoveryRecheck) 
     valueState = "NOT_APPLICABLE";
     origin = "USER_DECLARATION";
   } else if (decision.resolutionState === "USER_ACCEPTED_PROPOSAL") {
+    invariant(!declinedProposalRef && !editedProposalRef, `${field.id} cannot accept and also edit or decline the same proposal`);
     invariant(field.genAiProposalAllowed, `${field.id} does not allow GenAI proposals`);
     const candidate = candidateByRef(discoveryRecheck, decision.proposalRef);
     invariant(candidate && candidate.field === field.id, `${field.id} proposal reference is invalid`);
@@ -152,6 +169,7 @@ function fieldRecord(field, decision, dossier, sourceProfile, discoveryRecheck) 
     limitations = [...new Set([...(candidate.limitations ?? []), "The value originated as a GenAI proposal and entered Intake only through explicit user acceptance."])];
     proposalRef = candidate.id;
   } else if (decision.resolutionState === "USER_CONFIRMED") {
+    invariant(!editedProposalRef, `${field.id} edited proposal reference requires a user-edited value`);
     invariant(value !== null, `${field.id} cannot confirm an unknown value`);
     invariant(prior && prior.status !== "CONFLICTING" && prior.supportStatus !== "CONFLICTING" && equalValues(previousValue, value), `${field.id} does not match a non-conflicting acquired value`);
     const observed = field.questionId ? prior.origin === "OBSERVED" : prior.factClass === "OBSERVED";
@@ -161,6 +179,7 @@ function fieldRecord(field, decision, dossier, sourceProfile, discoveryRecheck) 
     invariant(decision.resolutionState === "USER_EDITED", `${field.id} resolution is unsupported`);
     invariant(value !== null, `${field.id} edited value cannot be empty`);
     invariant(!equalValues(previousValue, value) || prior?.status === "CONFLICTING" || prior?.supportStatus === "CONFLICTING", `${field.id} was not edited; use USER_CONFIRMED`);
+    if (editedProposalRef) invariant(!proposalValueMatches(candidateByRef(discoveryRecheck, editedProposalRef), value, field), `${field.id} still matches the proposal; use USER_ACCEPTED_PROPOSAL`);
     valueState = "DECLARED";
     origin = "USER_DECLARATION";
     limitations = [...new Set([...limitations, "The user selected or edited this value; conflicting source observations, if any, remain in provenance."])];
@@ -176,7 +195,9 @@ function fieldRecord(field, decision, dossier, sourceProfile, discoveryRecheck) 
     evidenceRefs,
     limitations: limitations.map((item) => sanitizeRestrictedText(String(item))).filter(Boolean),
     explanation: explanation || null,
-    proposalRef
+    proposalRef,
+    declinedProposalRef,
+    editedProposalRef
   };
 }
 
@@ -191,6 +212,12 @@ export function createApprovedIntakeSnapshot({ run, dossier, effectiveDossier, s
   for (const fieldId of Object.keys(resolutions)) invariant(activeIds.has(fieldId), `Resolution supplied for unknown or inactive field: ${fieldId}`);
   invariant(Object.keys(resolutions).length === activeFields.length, "Every active Intake field requires exactly one explicit resolution");
   const fields = activeFields.map((field) => fieldRecord(field, resolutions[field.id], dossier, sourceProfile, run.discoveryRecheck));
+  const proposalRefs = fields.flatMap((field) => [field.proposalRef, field.editedProposalRef, field.declinedProposalRef]).filter(Boolean);
+  const proposalCandidates = proposalRefs.map((proposalRef) => {
+    const candidate = candidateByRef(run.discoveryRecheck, proposalRef);
+    invariant(candidate, `Approved Intake proposal candidate is unavailable: ${proposalRef}`);
+    return { id: candidate.id, fieldId: candidate.field, status: candidate.status, recommendation: candidate.recommendation, proposalHash: sha256(candidate) };
+  });
   const approvedAt = new Date().toISOString();
   const warnings = [];
   if (run.sourceIngestion?.coverageStatus === "INCOMPLETE_REVIEW_REQUIRED") warnings.push("Source-ingestion coverage is incomplete and remains a downstream governance limitation.");
@@ -202,7 +229,13 @@ export function createApprovedIntakeSnapshot({ run, dossier, effectiveDossier, s
     priorRevisionRef: priorRevisionRef ? sanitizeRestrictedText(String(priorRevisionRef)) : null,
     acquisitionManifest: { reference: `run:${run.id}:source-ingestion`, hash: run.sourceIngestion.manifestHash },
     fields,
-    proposalDecisionRefs: fields.filter((field) => field.proposalRef).map((field) => field.proposalRef),
+    proposalDecisionRefs: proposalRefs,
+    proposalCandidates,
+    proposalDecisions: fields.flatMap((field) => [
+      field.proposalRef ? { proposalRef: field.proposalRef, fieldId: field.fieldId, decision: "ACCEPTED" } : null,
+      field.editedProposalRef ? { proposalRef: field.editedProposalRef, fieldId: field.fieldId, decision: "EDITED" } : null,
+      field.declinedProposalRef ? { proposalRef: field.declinedProposalRef, fieldId: field.fieldId, decision: "DECLINED" } : null
+    ].filter(Boolean)),
     warnings,
     limitations: [...new Set(fields.flatMap((field) => field.limitations))],
     approval: { actorRef, confirmedAt: approvedAt, authority: "USER_ONLY" },
@@ -259,11 +292,25 @@ export function validateApprovedIntakeSnapshot(snapshot, options = {}) {
       invariant(equalValues(record.value, expectedValue), `${field.id} does not match the approved dossier`);
     }
     if (record.valueState === "OBSERVED") invariant(record.resolutionState === "USER_CONFIRMED" && record.origin === "DETERMINISTIC_ACQUISITION", `${field.id} has invalid observed provenance`);
-    if (record.resolutionState === "USER_ACCEPTED_PROPOSAL") invariant(record.origin === "GENAI_PROPOSAL" && typeof record.proposalRef === "string" && record.proposalRef, `${field.id} has invalid proposal provenance`);
+    if (record.resolutionState === "USER_ACCEPTED_PROPOSAL") invariant(record.origin === "GENAI_PROPOSAL" && typeof record.proposalRef === "string" && record.proposalRef && record.declinedProposalRef === null && record.editedProposalRef === null, `${field.id} has invalid proposal provenance`);
     else invariant(record.origin !== "GENAI_PROPOSAL" && record.proposalRef === null, `${field.id} has an unexpected proposal reference`);
+    invariant(record.declinedProposalRef === null || typeof record.declinedProposalRef === "string" && record.declinedProposalRef, `${field.id} has an invalid declined proposal reference`);
+    invariant(record.editedProposalRef === null || record.resolutionState === "USER_EDITED" && record.origin === "USER_DECLARATION" && typeof record.editedProposalRef === "string" && record.editedProposalRef, `${field.id} has an invalid edited proposal reference`);
     validateValue(field, record.value, record.valueState);
   }
-  const proposalRefs = snapshot.fields.filter((record) => record.proposalRef).map((record) => record.proposalRef);
+  const proposalDecisions = snapshot.fields.flatMap((record) => [
+    record.proposalRef ? { proposalRef: record.proposalRef, fieldId: record.fieldId, decision: "ACCEPTED" } : null,
+    record.editedProposalRef ? { proposalRef: record.editedProposalRef, fieldId: record.fieldId, decision: "EDITED" } : null,
+    record.declinedProposalRef ? { proposalRef: record.declinedProposalRef, fieldId: record.fieldId, decision: "DECLINED" } : null
+  ].filter(Boolean));
+  const proposalRefs = proposalDecisions.map((decision) => decision.proposalRef);
   invariant(JSON.stringify(snapshot.proposalDecisionRefs) === JSON.stringify(proposalRefs), "The approved Intake proposal decision references are inconsistent");
+  invariant(JSON.stringify(snapshot.proposalDecisions) === JSON.stringify(proposalDecisions), "The approved Intake proposal decisions are inconsistent");
+  invariant(Array.isArray(snapshot.proposalCandidates) && snapshot.proposalCandidates.length === proposalRefs.length, "The approved Intake proposal candidate ledger is inconsistent");
+  for (const [index, proposalRef] of proposalRefs.entries()) {
+    const candidate = snapshot.proposalCandidates[index];
+    const decision = proposalDecisions[index];
+    invariant(candidate?.id === proposalRef && candidate.fieldId === decision.fieldId && candidate.status === "CANDIDATE" && ["REVIEW_REWRITE", "REVIEW_CANDIDATE"].includes(candidate.recommendation) && /^[a-f0-9]{64}$/.test(candidate.proposalHash), "The approved Intake proposal candidate reference is invalid");
+  }
   return snapshot;
 }

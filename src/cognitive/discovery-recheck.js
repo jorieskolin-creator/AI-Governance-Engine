@@ -55,6 +55,7 @@ export async function recheckDiscovery(run, input, options = {}) {
   const policy = options.policy ?? modelPolicy(options.env);
   const profile = policy.choose("SOLUTION_UNDERSTANDING", { allowedProviders: providers });
   const packets = relevantPackets(run, profile.provider, approval);
+  if (options.acquiredFactUnit && packets.length) packets[0] = { ...packets[0], sourceUnits: [...packets[0].sourceUnits, options.acquiredFactUnit] };
   if (!packets.length) throw new Error("No approved evidence packet is available for discovery recheck");
   const activeQuestionIds = activeIntakeQuestionIds(run.solutionProfile.assessmentIntakeFacts);
   const targetFields = [

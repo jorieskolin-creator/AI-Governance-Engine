@@ -19,6 +19,8 @@ let latestDiscoveryRecheck = null;
 let latestDiscoveryContext = null;
 const editedIntakeFields = new Set();
 const acceptedProposalByField = new Map();
+const editedProposalByField = new Map();
+const declinedProposalByField = new Map();
 const intakeControlBaseline = new Map();
 let INTAKE_CONTROL_FIELDS = Object.freeze({});
 
@@ -217,6 +219,8 @@ function fillQuestionnaire(answers = {}) {
 function fillDossier(dossier) {
   editedIntakeFields.clear();
   acceptedProposalByField.clear();
+  editedProposalByField.clear();
+  declinedProposalByField.clear();
   latestDiscoveryRecheck = null;
   const boundary = dossier.operatingBoundary ?? {};
   $("name").value = dossier.name ?? ""; $("owner").value = dossier.accountableOwner ?? "";
@@ -256,6 +260,8 @@ function renderIntakeWorkspace(profile, recheck = null) {
     const ai = aiByField.get(field);
     const edited = editedIntakeFields.has(field);
     const state = acceptedProposalByField.has(field) ? { tone: "review", text: "GenAI proposal selected · editable · becomes a user decision only on final approval" }
+      : editedProposalByField.has(field) ? { tone: "self-declared", text: "GenAI proposal edited by user · treated as Self-Declared, not GenAI-authoritative" }
+      : declinedProposalByField.has(field) ? { tone: "missing", text: "GenAI proposal declined · provide a value or resolve as Unknown / Not Applicable" }
       : edited ? { tone: "self-declared", text: "Self-Declared · changed by user · V&V lifecycle cap applies" }
       : fact?.status === "CONFLICTING" ? { tone: "conflicting", text: "Conflict · source values require resolution" }
         : ai?.recommendation === "REVIEW_REWRITE" ? { tone: "review", text: "AI wording proposal available · accepting it becomes Self-Declared" }
@@ -366,7 +372,9 @@ function intakeResolutions(dossier) {
     decisions[field.id] = {
       resolutionState,
       explanation: answer?.explanation ?? "",
-      proposalRef: resolutionState === "USER_ACCEPTED_PROPOSAL" ? proposal.id : null
+      proposalRef: resolutionState === "USER_ACCEPTED_PROPOSAL" ? proposal.id : null,
+      editedProposalRef: editedProposalByField.get(field.id)?.id ?? null,
+      declinedProposalRef: declinedProposalByField.get(field.id)?.id ?? null
     };
   }
   return decisions;
@@ -440,6 +448,18 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
     const units = el("ul", "discovery-candidates");
     for (const packet of latestDiscoveryContext.packets) for (const unit of packet.preview ?? []) units.append(el("li", "", `${unit.path} · ${unit.locator}: ${unit.excerpt}`));
     safePackage.append(description, units);
+    const eligibleFacts = latestDiscoveryContext.acquiredFacts?.facts?.filter((fact) => fact.genAiEligibility === "ELIGIBLE_CONTROLLED_VALUE") ?? [];
+    if (eligibleFacts.length) {
+      safePackage.append(el("p", "field-hint", "Optional controlled facts are excluded unless you select them below. Free text, unknowns, conflicts and unsupported values cannot be selected."));
+      const selections = el("div", "acquired-fact-selections");
+      for (const fact of eligibleFacts) {
+        const input = document.createElement("input"); input.type = "checkbox"; input.value = fact.id; input.dataset.acquiredFactId = fact.id;
+        input.checked = latestDiscoveryContext.selectedAcquiredFactIds?.includes(fact.id) ?? false;
+        const value = Array.isArray(fact.value) ? fact.value.map(label).join(", ") : typeof fact.value === "boolean" ? (fact.value ? "Yes" : "No") : label(fact.value);
+        const option = document.createElement("label"); option.append(input, document.createTextNode(`${label(fact.fieldId)}: ${value}`)); selections.append(option);
+      }
+      safePackage.append(selections);
+    }
     root.append(safePackage);
   }
   if (recheck) {
@@ -460,15 +480,30 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
         const item = el("li", "", `${label(candidate.field)} · ${label(candidate.recommendation)}: ${displayedValue}. ${candidate.rationale}`);
         const controlId = Object.entries(INTAKE_CONTROL_FIELDS).find(([, field]) => field === candidate.field)?.[0];
         const control = controlId ? $(controlId) : null;
-        if (control && ["INPUT", "TEXTAREA"].includes(control.tagName) && ["REVIEW_REWRITE", "REVIEW_CANDIDATE"].includes(candidate.recommendation) && candidate.value) {
-          const apply = el("button", "candidate-apply-button", "Use proposal"); apply.type = "button";
+        const actionable = candidate.status === "CANDIDATE" && ["REVIEW_REWRITE", "REVIEW_CANDIDATE"].includes(candidate.recommendation) && candidate.value;
+        if (control && ["INPUT", "TEXTAREA"].includes(control.tagName) && actionable) {
+          const apply = el("button", "candidate-apply-button", "Accept proposal"); apply.type = "button";
           apply.addEventListener("click", () => {
+            editedProposalByField.delete(candidate.field);
+            declinedProposalByField.delete(candidate.field);
             acceptedProposalByField.set(candidate.field, candidate);
             control.value = candidate.value;
             control.dispatchEvent(new Event("input", { bubbles: true }));
             control.focus();
           });
           item.append(apply);
+        }
+        if (actionable) {
+          const decline = el("button", "candidate-decline-button", declinedProposalByField.has(candidate.field) ? "Proposal declined" : "Decline proposal"); decline.type = "button";
+          decline.disabled = declinedProposalByField.has(candidate.field);
+          decline.addEventListener("click", () => {
+            acceptedProposalByField.delete(candidate.field);
+            editedProposalByField.delete(candidate.field);
+            declinedProposalByField.set(candidate.field, candidate);
+            decline.textContent = "Proposal declined"; decline.disabled = true;
+            renderIntakeWorkspace(latestSolutionProfile, latestDiscoveryRecheck);
+          });
+          item.append(decline);
         }
         candidates.append(item);
         if (candidate.field?.startsWith("intakeAnswers.")) {
@@ -500,7 +535,7 @@ async function discoverCaseInformation() {
     const preflight = await postJson("/api/v2/runs/preflight", prepared);
     activeRunId = preflight.runId;
     latestSolutionProfile = preflight.solutionProfile;
-    latestDiscoveryContext = { profile: preflight.solutionProfile, dlpFindings: preflight.dlpFindings, citationIndex: preflight.citationIndex, packets: preflight.packets };
+    latestDiscoveryContext = { profile: preflight.solutionProfile, dlpFindings: preflight.dlpFindings, citationIndex: preflight.citationIndex, packets: preflight.packets, acquiredFacts: preflight.acquiredFacts, selectedAcquiredFactIds: [] };
     fillDossier(preflight.solutionProfile.suggestedDossier);
     renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, null, preflight.citationIndex);
     const blocked = preflight.dlpFindings.some((item) => item.blocking);
@@ -526,7 +561,14 @@ async function requestAiProposals() {
   $("discovery-status").textContent = "Stage 3 of 5 · Sending only the reviewable safe summaries for optional GenAI proposals…";
   let recheck;
   try {
-    recheck = await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/discover-recheck`, { confirmed: true, purpose: "INTAKE_PROPOSALS_FROM_SAFE_SUMMARIES" });
+    const selectedAcquiredFactIds = [...document.querySelectorAll("[data-acquired-fact-id]:checked")].map((input) => input.value);
+    latestDiscoveryContext.selectedAcquiredFactIds = selectedAcquiredFactIds;
+    recheck = await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/discover-recheck`, {
+      confirmed: true,
+      purpose: "INTAKE_PROPOSALS_FROM_SAFE_SUMMARIES",
+      acquiredFactPackageHash: latestDiscoveryContext.acquiredFacts.packageHash,
+      selectedAcquiredFactIds
+    });
   } catch {
     recheck = { status: "UNAVAILABLE", failureCode: "INTAKE_AI_VERIFICATION_REQUEST_FAILED" };
   }
@@ -783,7 +825,10 @@ $("dossier-form").addEventListener("input", (event) => {
   const field = INTAKE_CONTROL_FIELDS[controlId];
   if (field && latestSolutionProfile) {
     const acceptedProposal = acceptedProposalByField.get(field);
-    if (acceptedProposal && !sameIntakeValue(acceptedProposal.value, event.target.value)) acceptedProposalByField.delete(field);
+    if (acceptedProposal && !sameIntakeValue(acceptedProposal.value, event.target.value)) {
+      acceptedProposalByField.delete(field);
+      editedProposalByField.set(field, acceptedProposal);
+    }
     if (intakeControlValue(controlId) === intakeControlBaseline.get(controlId)) editedIntakeFields.delete(field);
     else editedIntakeFields.add(field);
     renderIntakeWorkspace(latestSolutionProfile, latestDiscoveryRecheck);

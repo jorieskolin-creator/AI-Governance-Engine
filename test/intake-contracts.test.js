@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { validateDossier } from "../src/contracts.js";
 import { confirmPreflightDossier, createPreflight } from "../src/cognitive/preflight.js";
+import { sha256, stableId } from "../src/core/hash.js";
 import { createIntakeResolutionDraft, validateApprovedIntakeSnapshot } from "../src/intake/contracts.js";
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "../src/intake/field-registry.js";
 import { INTAKE_QUESTIONNAIRE } from "../src/knowledge/intake-questionnaire.js";
@@ -92,4 +93,64 @@ test("the immutable approved snapshot separates observed provenance from user re
   const tampered = structuredClone(run.approvedIntake);
   tampered.fields.find((field) => field.fieldId === "name").value = "Different Assistant";
   assert.throws(() => validateApprovedIntakeSnapshot(tampered), /integrity check/i);
+});
+
+test("accepted, edited and declined GenAI proposals remain distinct user decisions", async () => {
+  const candidateRecord = {
+    field: "intendedPurpose",
+    status: "CANDIDATE",
+    recommendation: "REVIEW_CANDIDATE",
+    value: "Support internal governance reviews",
+    sourceUnitIds: [],
+    limitations: []
+  };
+  const candidate = { id: stableId("intake-proposal", candidateRecord), ...candidateRecord };
+
+  const declinedRun = await createPreflight({ sources: source() });
+  declinedRun.discoveryRecheck = { status: "COMPLETED", candidates: [candidate] };
+  const declinedDossier = validateDossier(declinedRun.solutionProfile.suggestedDossier);
+  const declinedInput = approvalInput(declinedRun, declinedDossier);
+  declinedInput.resolutions.intendedPurpose.declinedProposalRef = candidate.id;
+  await confirmPreflightDossier(declinedRun, declinedInput);
+  const declinedField = declinedRun.approvedIntake.fields.find((field) => field.fieldId === "intendedPurpose");
+  assert.deepEqual({ valueState: declinedField.valueState, resolutionState: declinedField.resolutionState, declinedProposalRef: declinedField.declinedProposalRef }, {
+    valueState: "UNKNOWN", resolutionState: "USER_SELECTED_UNKNOWN", declinedProposalRef: candidate.id
+  });
+  assert.deepEqual(declinedRun.approvedIntake.proposalDecisions, [{ proposalRef: candidate.id, fieldId: "intendedPurpose", decision: "DECLINED" }]);
+
+  const acceptedRun = await createPreflight({ sources: source() });
+  acceptedRun.discoveryRecheck = { status: "COMPLETED", candidates: [candidate] };
+  const acceptedDossier = validateDossier({ ...acceptedRun.solutionProfile.suggestedDossier, intendedPurpose: candidate.value });
+  const acceptedInput = approvalInput(acceptedRun, acceptedDossier);
+  acceptedInput.resolutions.intendedPurpose = { resolutionState: "USER_ACCEPTED_PROPOSAL", proposalRef: candidate.id };
+  await confirmPreflightDossier(acceptedRun, acceptedInput);
+  assert.equal(acceptedRun.approvedIntake.fields.find((field) => field.fieldId === "intendedPurpose").origin, "GENAI_PROPOSAL");
+  assert.equal(acceptedRun.approvedIntake.proposalDecisions[0].decision, "ACCEPTED");
+
+  const editedRun = await createPreflight({ sources: source() });
+  editedRun.discoveryRecheck = { status: "COMPLETED", candidates: [candidate] };
+  const editedDossier = validateDossier({ ...editedRun.solutionProfile.suggestedDossier, intendedPurpose: "User-authored governance purpose" });
+  const editedInput = approvalInput(editedRun, editedDossier);
+  editedInput.resolutions.intendedPurpose.editedProposalRef = candidate.id;
+  await confirmPreflightDossier(editedRun, editedInput);
+  const editedField = editedRun.approvedIntake.fields.find((field) => field.fieldId === "intendedPurpose");
+  assert.deepEqual({ resolutionState: editedField.resolutionState, origin: editedField.origin, proposalRef: editedField.proposalRef }, {
+    resolutionState: "USER_EDITED", origin: "USER_DECLARATION", proposalRef: null
+  });
+  assert.deepEqual(editedRun.approvedIntake.proposalDecisions, [{ proposalRef: candidate.id, fieldId: "intendedPurpose", decision: "EDITED" }]);
+
+  const forgedRun = await createPreflight({ sources: source() });
+  forgedRun.discoveryRecheck = { status: "COMPLETED", candidates: [candidate] };
+  const forgedDossier = validateDossier(forgedRun.solutionProfile.suggestedDossier);
+  const forgedInput = approvalInput(forgedRun, forgedDossier);
+  forgedInput.resolutions.intendedPurpose.declinedProposalRef = "forged-proposal";
+  await assert.rejects(() => confirmPreflightDossier(forgedRun, forgedInput), /declined proposal reference is invalid/i);
+
+  const tampered = structuredClone(declinedRun.approvedIntake);
+  tampered.fields.find((field) => field.fieldId === "intendedPurpose").declinedProposalRef = "forged-proposal";
+  tampered.proposalDecisionRefs[0] = "forged-proposal";
+  tampered.proposalDecisions[0].proposalRef = "forged-proposal";
+  const { snapshotHash: ignored, ...payload } = tampered;
+  tampered.snapshotHash = sha256(payload);
+  assert.throws(() => validateApprovedIntakeSnapshot(tampered), /proposal candidate reference is invalid/i);
 });

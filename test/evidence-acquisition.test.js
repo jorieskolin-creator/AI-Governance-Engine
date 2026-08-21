@@ -10,6 +10,7 @@ import { parseAndScreenSources } from "../src/cognitive/source-intake.js";
 import { sha256 } from "../src/core/hash.js";
 import { validateSourceIngestionManifest } from "../src/core/source-ingestion.js";
 import { CODE_EVIDENCE_SUMMARY_VERSION, validateCodeEvidenceSummary } from "../src/intake/code-evidence.js";
+import { ACQUIRED_FACT_SELECTION_VERSION, createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "../src/intake/acquired-facts.js";
 import { DOCUMENT_EVIDENCE_SUMMARY_VERSION, validateDocumentEvidenceSummary } from "../src/intake/document-evidence.js";
 import { MEDIA_EVIDENCE_SUMMARY_VERSION, validateMediaEvidenceSummary } from "../src/intake/media-evidence.js";
 import { createTabularEvidenceUnit, TABULAR_EVIDENCE_SUMMARY_VERSION, validateTabularEvidenceSummary } from "../src/intake/tabular-evidence.js";
@@ -76,6 +77,75 @@ test("document text prefills Intake locally while only controlled topic signals 
   const { manifestHash: ignored, ...payload } = inconsistent;
   inconsistent.manifestHash = sha256(payload);
   assert.throws(() => validateSourceIngestionManifest(inconsistent), /document acquisition policy is invalid/i);
+});
+
+test("only user-selected controlled acquired facts can enter a GenAI proposal packet", async () => {
+  const privatePurpose = "Assess Project Orchid customer records";
+  const run = await createPreflight({ sources: [{
+    path: "case.md",
+    mimeType: "text/markdown",
+    content: `Intended purpose: ${privatePurpose}\nData categories: PERSONAL_DATA, SYNTHETIC\nCurrent user access: Internal only\nProduction access: No\nUses agents: Yes`
+  }] });
+  const pkg = validateAcquiredFactPackage(run.acquiredFacts);
+  const purpose = pkg.facts.find((fact) => fact.fieldId === "intendedPurpose");
+  const categories = pkg.facts.find((fact) => fact.fieldId === "data.categories");
+  const access = pkg.facts.find((fact) => fact.fieldId === "exposure.currentUserAccess");
+
+  assert.equal(purpose.genAiEligibility, "INELIGIBLE_FREE_TEXT");
+  assert.equal(purpose.value, null);
+  assert.equal(categories.genAiEligibility, "ELIGIBLE_CONTROLLED_VALUE");
+  assert.deepEqual(categories.value, ["SYNTHETIC", "PERSONAL_DATA"]);
+  const unit = createAcquiredFactSelectionUnit(pkg, [categories.id, access.id]);
+  assert.equal(unit.derivation.contractVersion, ACQUIRED_FACT_SELECTION_VERSION);
+  assert.deepEqual(Object.keys(JSON.parse(unit.content).facts[0]).sort(), ["dataType", "fieldId", "id", "value"]);
+  assert.match(unit.content, /PERSONAL_DATA|INTERNAL_ONLY/);
+  assert.doesNotMatch(unit.content, /Project Orchid|customer records/i);
+  assert.throws(() => createAcquiredFactSelectionUnit(pkg, [purpose.id]), /not eligible for GenAI/i);
+
+  const tampered = structuredClone(pkg);
+  tampered.facts.find((fact) => fact.fieldId === "intendedPurpose").value = privatePurpose;
+  assert.throws(() => validateAcquiredFactPackage(tampered), /value disclosure|integrity check/i);
+});
+
+test("a blocking screening result withholds every acquired fact from GenAI selection", async () => {
+  const run = await createPreflight({ sources: [
+    { path: "case.md", mimeType: "text/markdown", content: "Current user access: Internal only" },
+    { path: "screen.png", mimeType: "image/png", encoding: "base64", content: Buffer.from("89504e470d0a1a0a00000000", "hex").toString("base64") }
+  ] });
+
+  assert.ok(run.dlpFindings.some((finding) => finding.blocking));
+  assert.ok(run.acquiredFacts.facts.every((fact) => fact.genAiEligibility === "INELIGIBLE_BLOCKING_SCREENING" && fact.value === null));
+});
+
+test("GenAI proposal transmission contains selected acquired facts but not ineligible free text", async () => {
+  const privatePurpose = "Assess Project Orchid customer records";
+  const run = await createPreflight({ sources: [{
+    path: "case.md",
+    mimeType: "text/markdown",
+    content: `Intended purpose: ${privatePurpose}\nCurrent user access: Internal only`
+  }] });
+  const access = run.acquiredFacts.facts.find((fact) => fact.fieldId === "exposure.currentUserAccess");
+  const acquiredFactUnit = createAcquiredFactSelectionUnit(run.acquiredFacts, [access.id]);
+  const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
+  let transmittedPrompt = "";
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ prompt, profile }) => {
+    transmittedPrompt = prompt;
+    const start = prompt.indexOf("TARGET_FIELDS\n") + "TARGET_FIELDS\n".length;
+    const fields = JSON.parse(prompt.slice(start, prompt.indexOf("\nSOURCE_PACKET", start)));
+    return {
+      value: { candidates: fields.map(({ field }) => ({ field, status: "NOT_FOUND", recommendation: "PROVIDE_INFORMATION", value: "", sourceUnitIds: [], evidenceQuotes: [], rationale: "No additional supported value was found." })) },
+      responseModel: profile.model,
+      usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
+    };
+  } });
+  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
+  await recheckDiscovery(run, { approvedPackets }, { policy, client, acquiredFactUnit });
+
+  assert.match(transmittedPrompt, new RegExp(ACQUIRED_FACT_SELECTION_VERSION));
+  assert.match(transmittedPrompt, /INTERNAL_ONLY/);
+  assert.doesNotMatch(transmittedPrompt, /Project Orchid|customer records/i);
+  assert.equal(run.transmissionManifest[0].containsRawEvidence, false);
+  assert.deepEqual(run.transmissionManifest[0].derivationContracts, [DOCUMENT_EVIDENCE_SUMMARY_VERSION, ACQUIRED_FACT_SELECTION_VERSION]);
 });
 
 test("the acquisition manifest records the code lane, raw handling, derivation and content hash", async () => {

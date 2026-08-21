@@ -6,6 +6,7 @@ import { discoverSolutionProfile, flattenDossier } from "../core/solution-profil
 import { activeIntakeAnswers, INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
 import { buildSourceIngestionManifest } from "../core/source-ingestion.js";
 import { createApprovedIntakeSnapshot } from "../intake/contracts.js";
+import { createAcquiredFactPackage } from "../intake/acquired-facts.js";
 
 const DEFAULT_PACKET_CHARS = 18_000;
 
@@ -43,6 +44,7 @@ export function publicPreflightView(run) {
     })),
     transmissionPolicy: "Only these reviewed packets may be sent to approved providers. Raw documents, code, configuration, tabular values and image pixels remain local; provider packets contain only versioned deterministic summaries and the user-approved Intake.",
     solutionProfile: run.solutionProfile,
+    acquiredFacts: run.acquiredFacts,
     sourceIngestion: run.sourceIngestion,
     discoveryRecheck: run.discoveryRecheck ?? null,
     approvedIntake: run.approvedIntake ? {
@@ -71,6 +73,7 @@ export async function createPreflight(input, options = {}) {
     packets: packetize(screened.sourceUnits, options.maxPacketChars), trace: [], result: null, error: null
   };
   run.solutionProfile = discoverSolutionProfile(screened.localSourceUnits.filter((item) => item.path !== "intended-use-dossier.json"), validated.dossier);
+  run.acquiredFacts = createAcquiredFactPackage(run.solutionProfile, run.dlpFindings);
   run.trace.push({ stage: "PREFLIGHT", status: "COMPLETED", at: now.toISOString(), outputHash: sha256({ manifest: run.registeredSources, dlp: run.dlpFindings, packets: run.packets.map((item) => item.hash) }) });
   return run;
 }
@@ -81,6 +84,7 @@ export function publicDiscoveryView(run) {
     status: run.status,
     stage: run.stage,
     solutionProfile: run.solutionProfile,
+    acquiredFacts: run.acquiredFacts,
     dlpFindings: run.dlpFindings,
     sourceManifest: run.registeredSources,
     sourceIngestion: run.sourceIngestion,

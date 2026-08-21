@@ -11,7 +11,7 @@ The repository is suitable for controlled development and calibration. It is not
 ## Implemented foundation
 
 - Source-first intake registers, classifies and hashes submitted artifacts and records exclusions in a content-addressed Source Ingestion Manifest.
-- Evidence acquisition uses versioned lanes. Raw documents, code, configuration, tabular values and image pixels remain local and are replaced in provider-eligible packets by validated summaries containing only controlled enums, coarse dimensions, lineage references and explicit limitations.
+- Evidence acquisition uses versioned lanes. Raw documents, code, configuration, tabular values and image pixels remain local and are replaced in provider-eligible packets by validated summaries containing only controlled enums, coarse dimensions, lineage references and explicit limitations. A separate `acquired-fact-package-1.0.0` withholds free text, dates, unknowns, conflicts and policy-excluded fields; users may explicitly select only eligible controlled values for an optional proposal request.
 - Deterministic assessment evaluates six governance domains across seven lifecycle stages.
 - Evidence coverage, control assurance, residual risk and hard-gate status remain separate concepts.
 - Missing evidence remains `UNKNOWN`; silence is not interpreted as safety, compliance or absence of an anti-pattern.
@@ -69,8 +69,8 @@ The dashboard can upload a codebase folder or individual supported files. **Disc
 The supported assessment workflow uses the v2 run state machine:
 
 1. `POST /api/v2/runs/preflight` parses and screens sources, then builds the deterministic Intake draft.
-2. After reviewing the safe summary package, `POST /api/v2/runs/{runId}/discover-recheck` with explicit purpose confirmation optionally requests cited GenAI Intake proposals. Skipping this step does not block manual resolution.
-3. `POST /api/v2/runs/{runId}/confirm` requires a resolution for every applicable field plus explicit user approval, then creates the immutable approved Intake snapshot.
+2. After reviewing the safe summary package and optional controlled acquired facts, `POST /api/v2/runs/{runId}/discover-recheck` with explicit purpose confirmation optionally requests cited GenAI Intake proposals. Selected facts cross this boundary only as `acquired-fact-selection-1.0.0`; free text and raw material cannot be selected. Skipping this step does not block manual resolution.
+3. `POST /api/v2/runs/{runId}/confirm` requires a resolution for every applicable field plus explicit user approval, then creates the immutable approved Intake snapshot. Accepted, edited and declined proposal decisions remain distinguishable; declining a proposal does not prevent a manual value, `Unknown`, or field-permitted `Not Applicable` resolution.
 4. `POST /api/v2/runs/{runId}/execute` starts A–F assessment from that snapshot.
 5. `GET /api/v2/runs/{runId}` and `GET /api/v2/runs/{runId}/result` expose progress and the result.
 

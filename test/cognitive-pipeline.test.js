@@ -140,6 +140,22 @@ test("AI Intake verification rejects ACCEPT_CURRENT when the returned value diff
   assert.equal(candidate.recommendation, "RESOLVE_CONFLICT");
 });
 
+test("AI Intake verification excludes fields prohibited by the registered proposal contract", async () => {
+  const run = await createPreflight({ sources: [{ path: "README.md", mimeType: "text/markdown", content: "# Internal Assistant" }] });
+  const unit = run.packets[0].sourceUnits[0];
+  const quote = "document-evidence-summary-1.0.0";
+  assert.match(unit.content, new RegExp(quote));
+  const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ profile }) => ({
+    value: { candidates: [{ field: "currentStage", status: "CANDIDATE", recommendation: "REVIEW_CANDIDATE", value: "DESIGN_AND_DEVELOPMENT", sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote }], rationale: "The registered field does not permit GenAI proposals." }] },
+    responseModel: profile.model, usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
+  }) });
+  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
+  const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
+  assert.equal(result.targetFields.includes("currentStage"), false);
+  assert.equal(result.candidates.some((item) => item.field === "currentStage"), false);
+});
+
 test("AI Intake verification rejects empty and incompletely covered citations", async () => {
   for (const mode of ["EMPTY_QUOTE", "UNCITED_SOURCE"]) {
     const run = await createPreflight({ sources: [

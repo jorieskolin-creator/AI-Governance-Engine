@@ -4,6 +4,7 @@ import { modelPolicy } from "./model-policy.js";
 import { discoveryRecheckPrompt, packetHash, PROMPT_VERSIONS } from "./prompts.js";
 import { activeIntakeQuestionIds } from "../knowledge/intake-questionnaire.js";
 import { stableId } from "../core/hash.js";
+import { intakeField } from "../intake/field-registry.js";
 
 const MAX_RECHECK_CHARS = 60_000;
 
@@ -36,6 +37,20 @@ function candidateMatchesCurrent(value, currentValue) {
   return normalized(value) === normalized(currentValue);
 }
 
+function candidateValueAllowed(fieldId, value) {
+  const field = intakeField(fieldId);
+  const text = String(value ?? "").trim();
+  if (!field?.genAiProposalAllowed || !text) return false;
+  if (field.dataType === "BOOLEAN") return /^(?:yes|no|true|false)$/i.test(text);
+  if (field.dataType === "ENUM") return field.allowedValues.includes(text);
+  if (["ENUM_ARRAY", "STRING_ARRAY"].includes(field.dataType)) {
+    const values = text.split(/[,;|\n]/).map((item) => item.trim()).filter(Boolean);
+    return values.length > 0 && (field.dataType !== "ENUM_ARRAY" || values.every((item) => field.allowedValues.includes(item)));
+  }
+  if (field.dataType === "DATE") return /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(text));
+  return field.dataType === "STRING";
+}
+
 function safeTargetValue(run, fact) {
   const localOnlySources = new Set(run.registeredSources.filter((source) => source.rawContentPolicy === "LOCAL_ONLY").map((source) => source.id));
   const localUnits = new Map((run.localSourceUnits ?? []).map((unit) => [unit.id, unit]));
@@ -59,8 +74,8 @@ export async function recheckDiscovery(run, input, options = {}) {
   if (!packets.length) throw new Error("No approved evidence packet is available for discovery recheck");
   const activeQuestionIds = activeIntakeQuestionIds(run.solutionProfile.assessmentIntakeFacts);
   const targetFields = [
-    ...Object.values(run.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED" || item.factClass === "SELF_DECLARED").map((item) => ({ field: item.field, ...safeTargetValue(run, item), status: item.status, factClass: item.factClass })),
-    ...Object.values(run.solutionProfile.assessmentIntakeFacts ?? {}).filter((item) => activeQuestionIds.has(item.questionId) && (item.answerState === "UNKNOWN" || !["SUPPORTED", "PARTIAL"].includes(item.supportStatus))).map((item) => ({ field: `intakeAnswers.${item.questionId}`, ...safeTargetValue(run, item), status: item.supportStatus, factClass: item.origin }))
+    ...Object.values(run.solutionProfile.fields).filter((item) => intakeField(item.field)?.genAiProposalAllowed && (item.status !== "CONFIRMED" || item.factClass === "SELF_DECLARED")).map((item) => ({ field: item.field, ...safeTargetValue(run, item), status: item.status, factClass: item.factClass })),
+    ...Object.values(run.solutionProfile.assessmentIntakeFacts ?? {}).filter((item) => activeQuestionIds.has(item.questionId) && intakeField(`intakeAnswers.${item.questionId}`)?.genAiProposalAllowed && (item.answerState === "UNKNOWN" || !["SUPPORTED", "PARTIAL"].includes(item.supportStatus))).map((item) => ({ field: `intakeAnswers.${item.questionId}`, ...safeTargetValue(run, item), status: item.supportStatus, factClass: item.origin }))
   ];
   const client = options.client ?? new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2, maxTokens: 60_000, maxMs: 180_000 }) });
   const generated = await client.generate({ profile, prompt: discoveryRecheckPrompt(targetFields, packets), schemaName: "discovery_recheck", schema: DISCOVERY_RECHECK_SCHEMA, packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.discoveryRecheck });
@@ -99,12 +114,13 @@ export async function recheckDiscovery(run, input, options = {}) {
     const supportedResultHasEvidence = item.status === "NOT_FOUND" || item.sourceUnitIds.length > 0;
     const target = targetByField.get(field);
     const currentMissing = target.currentValue === null || target.currentValue === undefined || target.currentValue === "" || target.currentValue === "UNKNOWN" || Array.isArray(target.currentValue) && target.currentValue.length === 0;
+    const candidateValueValid = item.status === "NOT_FOUND" || item.status === "CONFLICTING" || candidateValueAllowed(field, item.value);
     const recommendationValid = item.status === "NOT_FOUND" ? item.recommendation === "PROVIDE_INFORMATION" && item.value === ""
       : item.status === "CONFLICTING" ? item.recommendation === "RESOLVE_CONFLICT" && exactQuoteIds.size >= 2
         : item.recommendation === "ACCEPT_CURRENT" ? !currentMissing && target.status !== "CONFLICTING" && candidateMatchesCurrent(item.value, target.currentValue)
           : item.recommendation === "REVIEW_REWRITE" ? !currentMissing && rewritableFields.has(field) && item.value.trim() !== "" && !candidateMatchesCurrent(item.value, target.currentValue)
             : item.recommendation === "REVIEW_CANDIDATE" && currentMissing && item.value.trim() !== "";
-    const valid = quotesValid && idsValid && citationCoverageValid && supportedResultHasEvidence && recommendationValid;
+    const valid = quotesValid && idsValid && citationCoverageValid && supportedResultHasEvidence && candidateValueValid && recommendationValid;
     return { ...item, status: valid ? item.status : "REJECTED_UNSUPPORTED", recommendation: valid ? item.recommendation : "RESOLVE_CONFLICT", limitations: valid ? ["AI verification is advisory, requires user confirmation and cannot change the deterministic Intake draft."] : ["The model output failed citation or recommendation validation and was rejected."] };
   }).map((candidate) => ({ id: stableId("intake-proposal", candidate), ...candidate }));
   run.transmissionManifest ??= [];

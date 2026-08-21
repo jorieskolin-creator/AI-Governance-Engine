@@ -38,7 +38,8 @@ test("the Intake workspace is exception-focused and marks accepted AI proposals 
   assert.match(app, /editedProposalRef/);
   assert.match(app, /Decline proposal/);
   assert.match(app, /declinedProposalRef/);
-  assert.match(app, /control\.dispatchEvent\(new Event\("input"/);
+  assert.match(app, /applyProposalToIntake/);
+  assert.match(app, /field\.questionId/);
   assert.match(app, /Self-Declared · changed by user · V&V lifecycle cap applies/);
   assert.doesNotMatch(app, /latestSolutionProfile\.fields\[[^\]]+\]\.value\s*=/);
 });

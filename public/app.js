@@ -129,6 +129,15 @@ function renderQuestionnaire() {
       card.querySelector(".question-evidence-state").textContent = answer.answerState === "UNKNOWN"
         ? "Unknown · no information detected or declared"
         : "Self-Declared · unsupported until documentary evidence is verified";
+      const fieldId = `intakeAnswers.${card.dataset.questionId}`;
+      const acceptedProposal = acceptedProposalByField.get(fieldId);
+      const field = intakeFieldRegistry.fields.find((item) => item.id === fieldId);
+      const value = field?.dataType === "ENUM_ARRAY" ? answer.values : answer.answerState;
+      if (acceptedProposal && !proposalMatchesValue(acceptedProposal.value, value)) {
+        acceptedProposalByField.delete(fieldId);
+        editedProposalByField.set(fieldId, acceptedProposal);
+      }
+      renderQuestionProposalDecision(fieldId);
     }
     updateQuestionnaireConditions();
   });
@@ -288,6 +297,7 @@ function renderIntakeWorkspace(profile, recheck = null) {
     el("span", "conflicting", `${counts.conflicting} conflicting`),
     el("span", "self-declared", `${counts.declared} Self-Declared`)
   );
+  for (const question of intakeQuestionnaire.questions ?? []) renderQuestionProposalDecision(`intakeAnswers.${question.id}`);
 }
 
 function dossierFromForm() {
@@ -325,7 +335,57 @@ function sameIntakeValue(left, right) {
 
 function proposalMatchesValue(proposalValue, value) {
   if (Array.isArray(value)) return sameIntakeValue(String(proposalValue ?? "").split(/[,;|\n]/).map((item) => item.trim()).filter(Boolean), value);
+  if (typeof value === "boolean") return value ? /^(?:yes|true)$/i.test(String(proposalValue).trim()) : /^(?:no|false)$/i.test(String(proposalValue).trim());
   return sameIntakeValue(proposalValue, value);
+}
+
+function proposalFieldValue(field, value) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  if (field.dataType === "BOOLEAN") {
+    if (/^(?:yes|true)$/i.test(text)) return true;
+    if (/^(?:no|false)$/i.test(text)) return false;
+    return null;
+  }
+  if (field.dataType === "ENUM") return field.allowedValues.includes(text) ? text : null;
+  if (["ENUM_ARRAY", "STRING_ARRAY"].includes(field.dataType)) {
+    const values = text.split(/[,;|\n]/).map((item) => item.trim()).filter(Boolean);
+    return values.length && (field.dataType !== "ENUM_ARRAY" || values.every((item) => field.allowedValues.includes(item))) ? values : null;
+  }
+  return field.dataType === "STRING" ? text : null;
+}
+
+function renderQuestionProposalDecision(fieldId) {
+  const questionId = fieldId.startsWith("intakeAnswers.") ? fieldId.slice("intakeAnswers.".length) : null;
+  const state = questionId ? document.querySelector(`.question-card[data-question-id="${questionId}"] .question-evidence-state`) : null;
+  if (!state) return;
+  if (acceptedProposalByField.has(fieldId)) state.textContent = "GenAI proposal selected · editable · becomes a user decision only on final approval";
+  else if (editedProposalByField.has(fieldId)) state.textContent = "GenAI proposal edited by user · treated as Self-Declared, not GenAI-authoritative";
+  else if (declinedProposalByField.has(fieldId)) state.textContent = "GenAI proposal declined · provide a value or resolve as Unknown / Not Applicable";
+}
+
+function applyProposalToIntake(field, value) {
+  if (field.questionId) {
+    const card = document.querySelector(`.question-card[data-question-id="${field.questionId}"]`);
+    if (!card) return false;
+    if (field.dataType === "ENUM") {
+      const select = card.querySelector("select"); if (!select) return false;
+      select.value = value; select.dispatchEvent(new Event("change", { bubbles: true })); select.focus();
+    } else {
+      const inputs = [...card.querySelectorAll('input[type="checkbox"]')];
+      for (const input of inputs) input.checked = value.includes(input.value);
+      const changed = inputs.find((input) => input.checked) ?? inputs[0]; if (!changed) return false;
+      changed.dispatchEvent(new Event("change", { bubbles: true })); changed.focus();
+    }
+    return true;
+  }
+  const control = $(field.uiControlId); if (!control) return false;
+  if (field.dataType === "ENUM_ARRAY") {
+    for (const input of control.querySelectorAll('input[type="checkbox"]')) input.checked = value.includes(input.value);
+  } else if (field.dataType === "BOOLEAN") control.value = value ? "YES" : "NO";
+  else control.value = Array.isArray(value) ? value.join(", ") : value;
+  control.dispatchEvent(new Event("input", { bubbles: true })); control.focus();
+  return true;
 }
 
 function dossierPathValue(dossier, path) {
@@ -478,18 +538,16 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
       for (const candidate of actionCandidates) {
         const displayedValue = candidate.value || (candidate.recommendation === "PROVIDE_INFORMATION" ? "Information not found in submitted material" : "No usable proposal");
         const item = el("li", "", `${label(candidate.field)} · ${label(candidate.recommendation)}: ${displayedValue}. ${candidate.rationale}`);
-        const controlId = Object.entries(INTAKE_CONTROL_FIELDS).find(([, field]) => field === candidate.field)?.[0];
-        const control = controlId ? $(controlId) : null;
-        const actionable = candidate.status === "CANDIDATE" && ["REVIEW_REWRITE", "REVIEW_CANDIDATE"].includes(candidate.recommendation) && candidate.value;
-        if (control && ["INPUT", "TEXTAREA"].includes(control.tagName) && actionable) {
+        const field = intakeFieldRegistry.fields.find((entry) => entry.id === candidate.field);
+        const proposedValue = field ? proposalFieldValue(field, candidate.value) : null;
+        const actionable = field?.genAiProposalAllowed === true && candidate.status === "CANDIDATE" && ["REVIEW_REWRITE", "REVIEW_CANDIDATE"].includes(candidate.recommendation) && proposedValue !== null;
+        if (actionable) {
           const apply = el("button", "candidate-apply-button", "Accept proposal"); apply.type = "button";
           apply.addEventListener("click", () => {
             editedProposalByField.delete(candidate.field);
             declinedProposalByField.delete(candidate.field);
             acceptedProposalByField.set(candidate.field, candidate);
-            control.value = candidate.value;
-            control.dispatchEvent(new Event("input", { bubbles: true }));
-            control.focus();
+            if (!applyProposalToIntake(field, proposedValue)) acceptedProposalByField.delete(candidate.field);
           });
           item.append(apply);
         }
@@ -825,7 +883,8 @@ $("dossier-form").addEventListener("input", (event) => {
   const field = INTAKE_CONTROL_FIELDS[controlId];
   if (field && latestSolutionProfile) {
     const acceptedProposal = acceptedProposalByField.get(field);
-    if (acceptedProposal && !sameIntakeValue(acceptedProposal.value, event.target.value)) {
+    const currentValue = dossierPathValue(dossierFromForm(), field);
+    if (acceptedProposal && !proposalMatchesValue(acceptedProposal.value, currentValue)) {
       acceptedProposalByField.delete(field);
       editedProposalByField.set(field, acceptedProposal);
     }

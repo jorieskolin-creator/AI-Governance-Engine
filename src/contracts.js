@@ -1,4 +1,5 @@
 import { sanitizeRestrictedText, sanitizeRestrictedValue } from "../public/content-policy.js";
+import { INTAKE_QUESTIONNAIRE } from "./knowledge/intake-questionnaire.js";
 
 export const DOMAINS = Object.freeze({
   A: "Purpose, context, value, roles and AI classification",
@@ -145,8 +146,10 @@ function optionalStringArray(value, field) {
 function validateIntakeAnswers(value) {
   invariant(value === undefined || (value && typeof value === "object" && !Array.isArray(value)), "dossier.intakeAnswers must be an object");
   const entries = {};
+  const questionIds = new Set(INTAKE_QUESTIONNAIRE.questions.map((question) => question.id));
   for (const [questionId, answer] of Object.entries(value ?? {})) {
     invariant(/^[A-Z0-9][A-Z0-9_-]{2,80}$/.test(questionId), `Invalid intake question ID: ${questionId}`);
+    invariant(questionIds.has(questionId), `Unknown intake question ID: ${questionId}`);
     invariant(answer && typeof answer === "object" && !Array.isArray(answer), `dossier.intakeAnswers.${questionId} must be an object`);
     const answerState = answer.answerState ?? "UNKNOWN";
     enumValue(answerState, INTAKE_ANSWER_STATES, `dossier.intakeAnswers.${questionId}.answerState`);
@@ -160,6 +163,7 @@ function validateIntakeAnswers(value) {
       sourceUnitIds: optionalStringArray(answer.sourceUnitIds, `dossier.intakeAnswers.${questionId}.sourceUnitIds`),
       evidenceLinks: Array.isArray(answer.evidenceLinks) ? sanitizeRestrictedValue(structuredClone(answer.evidenceLinks)) : [],
       limitations: optionalStringArray(answer.limitations, `dossier.intakeAnswers.${questionId}.limitations`),
+      explanation: optionalString(answer.explanation, `dossier.intakeAnswers.${questionId}.explanation`) || null,
       confirmedBy: optionalString(answer.confirmedBy, `dossier.intakeAnswers.${questionId}.confirmedBy`) || null,
       confirmedAt: optionalString(answer.confirmedAt, `dossier.intakeAnswers.${questionId}.confirmedAt`) || null
     };
@@ -214,7 +218,6 @@ export function validateDossier(input) {
   const derivedHighRisk = highRiskAnswers.some((answer) => answer?.answerState === "YES") ? true : highRiskAnswers.every((answer) => answer?.answerState === "NO" || answer?.answerState === "NOT_APPLICABLE") ? false : null;
 
   return {
-    ...structuredClone(input),
     name: optionalString(input.name, "dossier.name"),
     intendedPurpose: optionalString(input.intendedPurpose, "dossier.intendedPurpose"),
     expectedValue: optionalString(input.expectedValue, "dossier.expectedValue"),

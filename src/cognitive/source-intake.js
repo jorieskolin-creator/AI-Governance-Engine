@@ -2,6 +2,7 @@ import { extname } from "node:path";
 import { classifyArtifact, HUMAN_AUTHORITIES } from "../contracts.js";
 import { sha256, stableId } from "../core/hash.js";
 import { sanitizeRestrictedText } from "../../public/content-policy.js";
+import { CODE_EVIDENCE_SUMMARY_VERSION, createCodeEvidenceUnit } from "../intake/code-evidence.js";
 
 const MAX_SOURCE_BYTES = 15 * 1024 * 1024;
 const MAX_EXTRACTED_CHARACTERS = 5_000_000;
@@ -215,6 +216,7 @@ function parseFailure(error, source) {
 
 export async function parseAndScreenSources(sources, options = {}) {
   const sourceUnits = [];
+  const localSourceUnits = [];
   const dlpFindings = [];
   const registeredSources = [];
   const failedSources = [];
@@ -227,45 +229,67 @@ export async function parseAndScreenSources(sources, options = {}) {
       const safePath = sanitizeRestrictedText(source.path);
       const sourceId = stableId("src", { path: source.path, sourceHash });
       const segments = await extractSegments(source, bytes);
-      registeredSources.push({ id: sourceId, path: safePath, mimeType: source.mimeType, format: source.format, artifactClass: classifyArtifact(source.path, source.metadata), sha256: sourceHash, size: bytes.length, metadata: source.metadata });
+      const artifactClass = classifyArtifact(source.path, source.metadata);
+      const sourceKind = source.metadata?.kind ?? sourceKindForPath(source.path);
+      const localUnits = [];
+      const sourceFindings = [];
       for (const segment of segments) {
-      if (source.format === "PDF" && !segment.text.trim()) {
-        const unit = {
-          id: stableId("unit", { sourceId, locator: segment.locator, sourceHash, emptyVisualPage: true }), sourceId, path: safePath,
-          format: source.format, mimeType: source.mimeType, evidenceKind: "DOCUMENT", evidenceClass: "OBSERVED", assuranceCeiling: "DECLARED", locator: segment.locator, sha256: sourceHash,
-          content: "[PDF PAGE HAS NO EXTRACTABLE TEXT]", sensitivity: ["UNSCREENED_PDF_PAGE"], transmissionState: "PENDING_APPROVAL", coverage: { characters: 0 }
-        };
-        sourceUnits.push(unit);
-        dlpFindings.push({ id: stableId("dlp", { unitId: unit.id, type: "UNSCREENED_PDF_PAGE" }), sourceUnitId: unit.id, type: "UNSCREENED_PDF_PAGE", count: 1, severity: "HIGH", blocking: true });
-        continue;
-      }
-      if (segment.media) {
-        const sanitized = source.metadata?.sanitized === true;
-        const unit = {
-          id: stableId("unit", { sourceId, locator: segment.locator, sourceHash }), sourceId, path: safePath,
-          format: source.format, mimeType: source.mimeType, evidenceKind: source.metadata?.kind ?? "DOCUMENT", evidenceClass: source.metadata?.kind === "DECLARATION" ? "DECLARED" : "OBSERVED", assuranceCeiling: assuranceCeiling(source), locator: segment.locator, sha256: sourceHash,
-          content: "[IMAGE CONTENT — transmit only after explicit approval]", media: segment.media,
-          sensitivity: sanitized ? [] : ["UNSCREENED_IMAGE"], transmissionState: "PENDING_APPROVAL", coverage: { images: 1 }
-        };
-        sourceUnits.push(unit);
-        if (!sanitized) dlpFindings.push({ id: stableId("dlp", { unitId: unit.id, type: "UNSCREENED_IMAGE" }), sourceUnitId: unit.id, type: "UNSCREENED_IMAGE", count: 1, severity: "HIGH", blocking: true });
-        continue;
-      }
+        if (source.format === "PDF" && !segment.text.trim()) {
+          const unit = {
+            id: stableId("unit", { sourceId, locator: segment.locator, sourceHash, emptyVisualPage: true }), sourceId, path: safePath,
+            format: source.format, mimeType: source.mimeType, evidenceKind: "DOCUMENT", evidenceClass: "OBSERVED", assuranceCeiling: "DECLARED", locator: segment.locator, sha256: sourceHash,
+            content: "[PDF PAGE HAS NO EXTRACTABLE TEXT]", sensitivity: ["UNSCREENED_PDF_PAGE"], transmissionState: "PENDING_APPROVAL", coverage: { characters: 0 }
+          };
+          localUnits.push(unit);
+          const finding = { id: stableId("dlp", { unitId: unit.id, type: "UNSCREENED_PDF_PAGE" }), sourceUnitId: unit.id, type: "UNSCREENED_PDF_PAGE", count: 1, severity: "HIGH", blocking: true };
+          dlpFindings.push(finding); sourceFindings.push(finding);
+          continue;
+        }
+        if (segment.media) {
+          const sanitized = source.metadata?.sanitized === true;
+          const unit = {
+            id: stableId("unit", { sourceId, locator: segment.locator, sourceHash }), sourceId, path: safePath,
+            format: source.format, mimeType: source.mimeType, evidenceKind: source.metadata?.kind ?? "DOCUMENT", evidenceClass: source.metadata?.kind === "DECLARATION" ? "DECLARED" : "OBSERVED", assuranceCeiling: assuranceCeiling(source), locator: segment.locator, sha256: sourceHash,
+            content: "[IMAGE CONTENT — transmit only after explicit approval]", media: segment.media,
+            sensitivity: sanitized ? [] : ["UNSCREENED_IMAGE"], transmissionState: "PENDING_APPROVAL", coverage: { images: 1 }
+          };
+          localUnits.push(unit);
+          if (!sanitized) {
+            const finding = { id: stableId("dlp", { unitId: unit.id, type: "UNSCREENED_IMAGE" }), sourceUnitId: unit.id, type: "UNSCREENED_IMAGE", count: 1, severity: "HIGH", blocking: true };
+            dlpFindings.push(finding); sourceFindings.push(finding);
+          }
+          continue;
+        }
         for (const item of chunkText(source, sourceId, segment)) {
-          sourceUnits.push(item.unit);
-          for (const finding of item.dlpFindings) dlpFindings.push({
-            id: stableId("dlp", { unitId: item.unit.id, type: finding.type }), sourceUnitId: item.unit.id,
-            ...finding, blocking: false
-          });
+          localUnits.push(item.unit);
+          for (const finding of item.dlpFindings) {
+            const record = { id: stableId("dlp", { unitId: item.unit.id, type: finding.type }), sourceUnitId: item.unit.id, ...finding, blocking: false };
+            dlpFindings.push(record); sourceFindings.push(record);
+          }
         }
       }
+      const testCode = artifactClass === "TEST" && !/\.(?:md|txt|html?|pdf|docx?|xlsx?|csv)$/i.test(source.path);
+      const codeOrConfiguration = ["PRODUCTION_CODE", "CONFIGURATION"].includes(artifactClass) || testCode;
+      const egressUnits = codeOrConfiguration
+        ? [createCodeEvidenceUnit({ sourceId, sourceHash, path: source.path, sourceKind, content: bytes.toString("utf8"), findings: sourceFindings })]
+        : localUnits;
+      localSourceUnits.push(...localUnits);
+      sourceUnits.push(...egressUnits);
+      registeredSources.push({
+        id: sourceId, path: safePath, mimeType: source.mimeType, format: source.format, artifactClass, sha256: sourceHash, size: bytes.length, metadata: source.metadata,
+        acquisitionLane: codeOrConfiguration ? "CODE_CONFIGURATION_LOCAL_ANALYSIS" : "DOCUMENT_MEDIA_SCREENING",
+        rawContentPolicy: codeOrConfiguration ? "LOCAL_ONLY" : "REDACTED_CONTENT_REQUIRES_APPROVAL",
+        egressPolicy: codeOrConfiguration ? "DETERMINISTIC_SUMMARY_ONLY" : "REDACTED_SOURCE_UNITS",
+        derivedUnitIds: codeOrConfiguration ? egressUnits.map((unit) => unit.id) : [],
+        analyzerVersion: codeOrConfiguration ? CODE_EVIDENCE_SUMMARY_VERSION : null
+      });
     } catch (error) {
       if (!options.continueOnError) throw error;
       failedSources.push(parseFailure(error, source));
     }
   }
   if (!sourceUnits.length && !registeredSources.length) throw new Error("No supported source could be parsed. Review the disclosed exclusions and provide at least one supported source.");
-  return { registeredSources, sourceUnits, dlpFindings, failedSources };
+  return { registeredSources, sourceUnits, localSourceUnits, dlpFindings, failedSources };
 }
 
 export function sourceKindForUnit(unit) {

@@ -3,6 +3,7 @@ import { ModelBudget, StructuredModelClient } from "./provider-client.js";
 import { modelPolicy } from "./model-policy.js";
 import { discoveryRecheckPrompt, packetHash, PROMPT_VERSIONS } from "./prompts.js";
 import { activeIntakeQuestionIds } from "../knowledge/intake-questionnaire.js";
+import { stableId } from "../core/hash.js";
 
 const MAX_RECHECK_CHARS = 60_000;
 
@@ -17,7 +18,7 @@ function relevantPackets(run, provider, approval) {
   return run.packets.filter((packet) => approved.has(packet.id)).map((packet) => {
     const sourceUnits = packet.sourceUnits.filter((unit) => {
       if (used >= MAX_RECHECK_CHARS || unit.media) return false;
-      const relevant = ["DOCUMENT", "CONFIGURATION", "DECLARATION"].includes(unit.evidenceKind) || /readme|product|architecture|governance|package\.json/i.test(unit.path);
+      const relevant = ["DOCUMENT", "CONFIGURATION", "DECLARATION", "CODE_SUMMARY"].includes(unit.evidenceKind) || /readme|product|architecture|governance|package\.json/i.test(unit.path);
       if (relevant) used += unit.content.length;
       return relevant && used <= MAX_RECHECK_CHARS;
     });
@@ -35,6 +36,14 @@ function candidateMatchesCurrent(value, currentValue) {
   return normalized(value) === normalized(currentValue);
 }
 
+function safeTargetValue(run, fact) {
+  const localOnlySources = new Set(run.registeredSources.filter((source) => source.rawContentPolicy === "LOCAL_ONLY").map((source) => source.id));
+  const localUnits = new Map((run.localSourceUnits ?? []).map((unit) => [unit.id, unit]));
+  const sourceUnitIds = fact.sourceUnitIds ?? [];
+  const localOnly = sourceUnitIds.length > 0 && sourceUnitIds.every((id) => localOnlySources.has(localUnits.get(id)?.sourceId));
+  return { currentValue: localOnly ? null : fact.value, valueWithheld: localOnly };
+}
+
 export async function recheckDiscovery(run, input, options = {}) {
   if (!run?.solutionProfile) throw new Error("Deterministic discovery must complete before AI recheck");
   if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.discoveryRecheck) throw new Error("AI Intake verification is not available from the current run state");
@@ -46,11 +55,11 @@ export async function recheckDiscovery(run, input, options = {}) {
   const policy = options.policy ?? modelPolicy(options.env);
   const profile = policy.choose("SOLUTION_UNDERSTANDING", { allowedProviders: providers });
   const packets = relevantPackets(run, profile.provider, approval);
-  if (!packets.length) throw new Error("No approved documentation or configuration packet is available for discovery recheck");
+  if (!packets.length) throw new Error("No approved evidence packet is available for discovery recheck");
   const activeQuestionIds = activeIntakeQuestionIds(run.solutionProfile.assessmentIntakeFacts);
   const targetFields = [
-    ...Object.values(run.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED" || item.factClass === "SELF_DECLARED").map((item) => ({ field: item.field, currentValue: item.value, status: item.status, factClass: item.factClass })),
-    ...Object.values(run.solutionProfile.assessmentIntakeFacts ?? {}).filter((item) => activeQuestionIds.has(item.questionId) && (item.answerState === "UNKNOWN" || !["SUPPORTED", "PARTIAL"].includes(item.supportStatus))).map((item) => ({ field: `intakeAnswers.${item.questionId}`, currentValue: item.value, status: item.supportStatus, factClass: item.origin }))
+    ...Object.values(run.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED" || item.factClass === "SELF_DECLARED").map((item) => ({ field: item.field, ...safeTargetValue(run, item), status: item.status, factClass: item.factClass })),
+    ...Object.values(run.solutionProfile.assessmentIntakeFacts ?? {}).filter((item) => activeQuestionIds.has(item.questionId) && (item.answerState === "UNKNOWN" || !["SUPPORTED", "PARTIAL"].includes(item.supportStatus))).map((item) => ({ field: `intakeAnswers.${item.questionId}`, ...safeTargetValue(run, item), status: item.supportStatus, factClass: item.origin }))
   ];
   const client = options.client ?? new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2, maxTokens: 60_000, maxMs: 180_000 }) });
   const generated = await client.generate({ profile, prompt: discoveryRecheckPrompt(targetFields, packets), schemaName: "discovery_recheck", schema: DISCOVERY_RECHECK_SCHEMA, packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.discoveryRecheck });
@@ -96,14 +105,18 @@ export async function recheckDiscovery(run, input, options = {}) {
             : item.recommendation === "REVIEW_CANDIDATE" && currentMissing && item.value.trim() !== "";
     const valid = quotesValid && idsValid && citationCoverageValid && supportedResultHasEvidence && recommendationValid;
     return { ...item, status: valid ? item.status : "REJECTED_UNSUPPORTED", recommendation: valid ? item.recommendation : "RESOLVE_CONFLICT", limitations: valid ? ["AI verification is advisory, requires user confirmation and cannot change the deterministic Intake draft."] : ["The model output failed citation or recommendation validation and was rejected."] };
-  });
+  }).map((candidate) => ({ id: stableId("intake-proposal", candidate), ...candidate }));
   run.transmissionManifest ??= [];
+  const transmittedUnits = packets.flatMap((packet) => packet.sourceUnits);
   run.transmissionManifest.push({
     stage: "DISCOVERY_RECHECK",
     provider: profile.provider,
     configuredModel: profile.model,
     packetIds: packets.map((packet) => packet.id),
     packetHash: packetHash(packets),
+    sourceUnitIds: transmittedUnits.map((unit) => unit.id),
+    containsRawEvidence: transmittedUnits.some((unit) => unit.derivation?.rawContentIncluded !== false),
+    derivationContracts: [...new Set(transmittedUnits.map((unit) => unit.derivation?.contractVersion).filter(Boolean))],
     approvedAt: approval.approvedAt,
     transmittedAt: new Date().toISOString()
   });

@@ -13,20 +13,13 @@ let summaryEnabled = true;
 let preparedSources = null;
 let activeRunId = null;
 let intakeQuestionnaire = { version: "unavailable", sections: [], questions: [] };
+let intakeFieldRegistry = { version: "unavailable", fields: [] };
 let latestSolutionProfile = null;
 let latestDiscoveryRecheck = null;
 const editedIntakeFields = new Set();
+const acceptedProposalByField = new Map();
 const intakeControlBaseline = new Map();
-const INTAKE_CONTROL_FIELDS = Object.freeze({
-  name: "name", owner: "accountableOwner", purpose: "intendedPurpose", value: "expectedValue",
-  "current-stage": "currentStage", "target-stage": "targetStage", jurisdictions: "jurisdictions", roles: "roles", users: "users",
-  "allowed-uses": "operatingBoundary.allowedUses", "excluded-uses": "operatingBoundary.excludedUses", "boundary-environment": "operatingBoundary.environment",
-  "boundary-users": "operatingBoundary.userScope", "boundary-data": "operatingBoundary.dataScope", "boundary-expiry": "operatingBoundary.expiresAt",
-  "boundary-integrations": "operatingBoundary.integrationScope", "boundary-permissions": "operatingBoundary.permissionScope", "boundary-autonomy": "operatingBoundary.autonomyScope", "boundary-monitoring": "operatingBoundary.monitoringOwner",
-  "data-categories": "data.categories", "current-user-access": "exposure.currentUserAccess", "intended-user-access": "exposure.intendedUserAccess",
-  "production-access": "exposure.productionAccess", consequential: "exposure.consequentialDecisions", "uses-agents": "agent.usesAgents",
-  "takes-actions": "agent.canTakeActions", irreversible: "agent.irreversibleActions", "human-override": "agent.humanOverride"
-});
+let INTAKE_CONTROL_FIELDS = Object.freeze({});
 
 const $ = (id) => document.getElementById(id);
 const label = (value) => String(value ?? "").replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -101,6 +94,14 @@ function renderQuestionnaire() {
         }
         card.append(options);
       }
+      if (question.options.includes("NOT_APPLICABLE")) {
+        const explanation = el("input", "question-explanation");
+        explanation.dataset.questionId = question.id;
+        explanation.placeholder = "Explain why this item does not apply to the assessed boundary";
+        explanation.setAttribute("aria-label", `${question.prompt} — Not Applicable explanation`);
+        explanation.classList.add("hidden");
+        card.append(explanation);
+      }
       card.append(el("span", "question-evidence-state", "Unknown · no documentary support confirmed"));
       grid.append(card);
     }
@@ -117,6 +118,11 @@ function renderQuestionnaire() {
     if (card) {
       const question = (intakeQuestionnaire.questions ?? []).find((item) => item.id === card.dataset.questionId);
       const answer = question ? collectedQuestionAnswer(question) : { answerState: "UNKNOWN" };
+      const explanation = card.querySelector(".question-explanation");
+      if (explanation) {
+        explanation.classList.toggle("hidden", answer.answerState !== "NOT_APPLICABLE");
+        explanation.required = answer.answerState === "NOT_APPLICABLE";
+      }
       card.querySelector(".question-evidence-state").textContent = answer.answerState === "UNKNOWN"
         ? "Unknown · no information detected or declared"
         : "Self-Declared · unsupported until documentary evidence is verified";
@@ -128,12 +134,13 @@ function renderQuestionnaire() {
 
 function collectedQuestionAnswer(question) {
   const card = document.querySelector(`.question-card[data-question-id="${question.id}"]`);
-  if (!card) return { answerState: "UNKNOWN", values: [] };
-  if (question.type === "SINGLE") return { answerState: card.querySelector("select")?.value ?? "UNKNOWN", values: [] };
+  if (!card) return { answerState: "UNKNOWN", values: [], explanation: null };
+  const explanation = card.querySelector(".question-explanation")?.value.trim() || null;
+  if (question.type === "SINGLE") return { answerState: card.querySelector("select")?.value ?? "UNKNOWN", values: [], explanation };
   const values = [...card.querySelectorAll('input[type="checkbox"]:checked')].map((item) => item.value);
-  if (!values.length || values.includes("UNKNOWN")) return { answerState: "UNKNOWN", values: values.length ? ["UNKNOWN"] : [] };
-  if (values.includes("NONE_OF_THE_ABOVE")) return { answerState: "NO", values: ["NONE_OF_THE_ABOVE"] };
-  return { answerState: "YES", values };
+  if (!values.length || values.includes("UNKNOWN")) return { answerState: "UNKNOWN", values: values.length ? ["UNKNOWN"] : [], explanation };
+  if (values.includes("NONE_OF_THE_ABOVE")) return { answerState: "NO", values: ["NONE_OF_THE_ABOVE"], explanation };
+  return { answerState: "YES", values, explanation };
 }
 
 function questionnaireAnswerRecord(question, now = new Date().toISOString()) {
@@ -146,6 +153,7 @@ function questionnaireAnswerRecord(question, now = new Date().toISOString()) {
     supportStatus: unchanged ? previous.supportStatus : answer.answerState === "UNKNOWN" ? "NOT_CHECKED" : "UNSUPPORTED",
     sourceUnitIds: unchanged ? previous.sourceUnitIds : [], evidenceLinks: unchanged ? previous.evidenceLinks : [],
     limitations: answer.answerState === "UNKNOWN" ? ["No answer was detected or declared."] : unchanged ? previous.limitations : ["Self-Declared information is not documentary evidence."],
+    explanation: answer.explanation,
     confirmedBy: answer.answerState === "UNKNOWN" ? null : "USER", confirmedAt: answer.answerState === "UNKNOWN" ? null : now
   };
 }
@@ -153,7 +161,14 @@ function questionnaireAnswerRecord(question, now = new Date().toISOString()) {
 function updateQuestionnaireConditions() {
   for (const question of intakeQuestionnaire.questions ?? []) {
     const card = document.querySelector(`.question-card[data-question-id="${question.id}"]`);
-    if (!card || !question.showWhen) continue;
+    if (!card) continue;
+    const currentAnswer = collectedQuestionAnswer(question);
+    const explanation = card.querySelector(".question-explanation");
+    if (explanation) {
+      explanation.classList.toggle("hidden", currentAnswer.answerState !== "NOT_APPLICABLE");
+      explanation.required = currentAnswer.answerState === "NOT_APPLICABLE";
+    }
+    if (!question.showWhen) continue;
     const parent = (intakeQuestionnaire.questions ?? []).find((item) => item.id === question.showWhen.questionId);
     const answer = parent ? collectedQuestionAnswer(parent) : { answerState: "UNKNOWN", values: [] };
     const visible = !question.showWhen.answerStates || question.showWhen.answerStates.includes(answer.answerState);
@@ -191,6 +206,8 @@ function fillQuestionnaire(answers = {}) {
     const card = document.querySelector(`.question-card[data-question-id="${question.id}"]`); if (!card) continue;
     if (question.type === "SINGLE") card.querySelector("select").value = answer.answerState ?? "UNKNOWN";
     else for (const input of card.querySelectorAll('input[type="checkbox"]')) input.checked = (answer.values ?? []).includes(input.value);
+    const explanation = card.querySelector(".question-explanation");
+    if (explanation) explanation.value = answer.explanation ?? "";
     card.querySelector(".question-evidence-state").textContent = `${label(answer.origin ?? "SELF_DECLARED")} · ${label(answer.supportStatus ?? "NOT_CHECKED")} · ${answer.sourceUnitIds?.length ?? 0} cited source unit(s)`;
   }
   updateQuestionnaireConditions();
@@ -198,6 +215,7 @@ function fillQuestionnaire(answers = {}) {
 
 function fillDossier(dossier) {
   editedIntakeFields.clear();
+  acceptedProposalByField.clear();
   latestDiscoveryRecheck = null;
   const boundary = dossier.operatingBoundary ?? {};
   $("name").value = dossier.name ?? ""; $("owner").value = dossier.accountableOwner ?? "";
@@ -236,7 +254,8 @@ function renderIntakeWorkspace(profile, recheck = null) {
     const fact = profile.fields[field];
     const ai = aiByField.get(field);
     const edited = editedIntakeFields.has(field);
-    const state = edited ? { tone: "self-declared", text: "Self-Declared · changed by user · V&V lifecycle cap applies" }
+    const state = acceptedProposalByField.has(field) ? { tone: "review", text: "GenAI proposal selected · editable · becomes a user decision only on final approval" }
+      : edited ? { tone: "self-declared", text: "Self-Declared · changed by user · V&V lifecycle cap applies" }
       : fact?.status === "CONFLICTING" ? { tone: "conflicting", text: "Conflict · source values require resolution" }
         : ai?.recommendation === "REVIEW_REWRITE" ? { tone: "review", text: "AI wording proposal available · accepting it becomes Self-Declared" }
           : ai?.recommendation === "REVIEW_CANDIDATE" ? { tone: "review", text: "AI source-grounded candidate available · user decision required" }
@@ -286,6 +305,70 @@ function dossierFromForm() {
       expiresAt: $("boundary-expiry").value || null
     }
   };
+}
+
+function comparableIntakeValue(value) {
+  if (Array.isArray(value)) return [...value].map((item) => String(item).trim()).filter(Boolean).sort();
+  return typeof value === "string" ? value.trim() : value;
+}
+
+function sameIntakeValue(left, right) {
+  return JSON.stringify(comparableIntakeValue(left)) === JSON.stringify(comparableIntakeValue(right));
+}
+
+function proposalMatchesValue(proposalValue, value) {
+  if (Array.isArray(value)) return sameIntakeValue(String(proposalValue ?? "").split(/[,;|\n]/).map((item) => item.trim()).filter(Boolean), value);
+  return sameIntakeValue(proposalValue, value);
+}
+
+function dossierPathValue(dossier, path) {
+  const value = path.split(".").reduce((item, key) => item?.[key], dossier);
+  return value === "UNKNOWN" || value === "" || value === undefined || value === null || Array.isArray(value) && !value.length ? null : value;
+}
+
+function questionnaireFieldValue(dossier, field) {
+  const answer = dossier.intakeAnswers?.[field.questionId] ?? { answerState: "UNKNOWN", values: [] };
+  if (["UNKNOWN", "NOT_APPLICABLE", "HUMAN_REVIEW_REQUIRED"].includes(answer.answerState)) return null;
+  return field.dataType === "ENUM_ARRAY" ? answer.values : answer.answerState;
+}
+
+function priorFieldValue(field) {
+  const fact = field.questionId ? latestSolutionProfile?.assessmentIntakeFacts?.[field.questionId] : latestSolutionProfile?.fields?.[field.id];
+  if (!fact) return null;
+  if (field.questionId) {
+    if (["UNKNOWN", "NOT_APPLICABLE", "HUMAN_REVIEW_REQUIRED"].includes(fact.answerState)) return null;
+    return field.dataType === "ENUM_ARRAY" ? fact.value : fact.answerState;
+  }
+  return fact.value === "UNKNOWN" ? null : fact.value;
+}
+
+function fieldIsApplicable(field, dossier) {
+  if (!field.applicability) return true;
+  const parentId = field.applicability.fieldId.slice("intakeAnswers.".length);
+  return field.applicability.answerStates.includes(dossier.intakeAnswers?.[parentId]?.answerState ?? "UNKNOWN");
+}
+
+function intakeResolutions(dossier) {
+  const decisions = {};
+  for (const field of intakeFieldRegistry.fields.filter((item) => fieldIsApplicable(item, dossier))) {
+    const fact = field.questionId ? latestSolutionProfile?.assessmentIntakeFacts?.[field.questionId] : latestSolutionProfile?.fields?.[field.id];
+    const answer = field.questionId ? dossier.intakeAnswers?.[field.questionId] : null;
+    const value = field.questionId ? questionnaireFieldValue(dossier, field) : dossierPathValue(dossier, field.id);
+    const proposal = acceptedProposalByField.get(field.id);
+    let resolutionState;
+    if (answer?.answerState === "NOT_APPLICABLE") resolutionState = "USER_SELECTED_NOT_APPLICABLE";
+    else if (answer?.answerState === "HUMAN_REVIEW_REQUIRED" || (fact?.status === "CONFLICTING" || fact?.supportStatus === "CONFLICTING") && sameIntakeValue(priorFieldValue(field), value)) resolutionState = "CONFLICT_REQUIRES_RESOLUTION";
+    else if (value === null) resolutionState = "USER_SELECTED_UNKNOWN";
+    else if (proposal && proposalMatchesValue(proposal.value, value)) resolutionState = "USER_ACCEPTED_PROPOSAL";
+    else if (sameIntakeValue(priorFieldValue(field), value)) resolutionState = "USER_CONFIRMED";
+    else resolutionState = "USER_EDITED";
+    decisions[field.id] = {
+      resolutionState,
+      explanation: answer?.explanation ?? "",
+      proposalRef: resolutionState === "USER_ACCEPTED_PROPOSAL" ? proposal.id : null
+    };
+  }
+  return decisions;
 }
 
 function bytesToBase64(buffer) {
@@ -369,7 +452,12 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
         const control = controlId ? $(controlId) : null;
         if (control && ["INPUT", "TEXTAREA"].includes(control.tagName) && ["REVIEW_REWRITE", "REVIEW_CANDIDATE"].includes(candidate.recommendation) && candidate.value) {
           const apply = el("button", "candidate-apply-button", "Use proposal"); apply.type = "button";
-          apply.addEventListener("click", () => { control.value = candidate.value; control.dispatchEvent(new Event("input", { bubbles: true })); control.focus(); });
+          apply.addEventListener("click", () => {
+            acceptedProposalByField.set(candidate.field, candidate);
+            control.value = candidate.value;
+            control.dispatchEvent(new Event("input", { bubbles: true }));
+            control.focus();
+          });
           item.append(apply);
         }
         candidates.append(item);
@@ -586,14 +674,14 @@ async function runAssessment(event) {
   event.preventDefault(); $("error").classList.add("hidden"); $("progress").classList.remove("hidden"); $("assess-button").disabled = true;
   try {
     if (!activeRunId) throw new Error("Complete deterministic discovery and AI Intake verification before starting the A–F assessment.");
-    const prepared = await selectedSources();
+    await selectedSources();
     const dossier = dossierFromForm();
     setProgress("Preparing AI analysis", "Local screening is complete. Redacted evidence will be analysed by the Engine’s configured providers.");
-    const confirmations = {};
-    for (const [field, item] of Object.entries(latestSolutionProfile?.fields ?? {})) {
-      if (item.value !== null && item.value !== "" && item.value !== "UNKNOWN" && (!Array.isArray(item.value) || item.value.length)) confirmations[field] = { confirmed: true };
-    }
-    await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, { dossier, confirmations });
+    await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, {
+      dossier,
+      resolutions: intakeResolutions(dossier),
+      approval: { confirmed: true, actorRef: "INTERACTIVE_USER" }
+    });
     setIntakeFlow("ASSESSMENT");
     await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/execute`);
     await waitForRun(activeRunId);
@@ -647,11 +735,20 @@ Promise.all([
   fetch("/api/knowledge").then((response) => response.json()),
   fetch("/api/config").then((response) => response.json()).catch(() => ({ assuranceSummaryEnabled: true })),
   fetch("/api/knowledge/diagnostics").then((response) => response.json()).catch(() => ({ status: "UNKNOWN", issues: [] })),
-  fetch("/api/intake-questionnaire").then((response) => response.json()).catch(() => ({ version: "unavailable", sections: [], questions: [] }))
-]).then(([kb, config, diagnostics, questionnaire]) => {
+  fetch("/api/intake-questionnaire").then((response) => response.json()).catch(() => ({ version: "unavailable", sections: [], questions: [] })),
+  fetch("/api/intake-field-registry").then((response) => {
+    if (!response.ok) throw new Error("Intake field registry is unavailable");
+    return response.json();
+  })
+]).then(([kb, config, diagnostics, questionnaire, registry]) => {
   renderKnowledgeDiagnostics(kb, diagnostics);
   summaryEnabled = config.assuranceSummaryEnabled !== false;
   intakeQuestionnaire = questionnaire;
+  intakeFieldRegistry = registry;
+  INTAKE_CONTROL_FIELDS = Object.freeze(Object.fromEntries(registry.fields.filter((field) => field.uiControlId).map((field) => {
+    if (!$(field.uiControlId)) throw new Error(`Registered Intake control is missing: ${field.uiControlId}`);
+    return [field.uiControlId, field.id];
+  })));
   renderQuestionnaire();
 }).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; $("knowledge-diagnostics-content").textContent = "Knowledge connection diagnostics are unavailable."; });
 $("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("dossier-form").addEventListener("submit", runAssessment);
@@ -659,6 +756,8 @@ $("dossier-form").addEventListener("input", (event) => {
   const controlId = event.target.id || event.target.closest("#data-categories")?.id;
   const field = INTAKE_CONTROL_FIELDS[controlId];
   if (field && latestSolutionProfile) {
+    const acceptedProposal = acceptedProposalByField.get(field);
+    if (acceptedProposal && !sameIntakeValue(acceptedProposal.value, event.target.value)) acceptedProposalByField.delete(field);
     if (intakeControlValue(controlId) === intakeControlBaseline.get(controlId)) editedIntakeFields.delete(field);
     else editedIntakeFields.add(field);
     renderIntakeWorkspace(latestSolutionProfile, latestDiscoveryRecheck);

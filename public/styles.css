@@ -112,6 +112,7 @@ legend { color: var(--forest-2); font-size: .75rem; font-weight: 850; padding: 0
 .questionnaire-section-description { color: var(--muted); font-size: .76rem; margin: 0; padding: 0 16px 12px; }
 .questionnaire-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; padding: 0 14px 14px; }
 .question-card { border: 1px solid var(--line); border-radius: 12px; padding: 13px; background: #fafbf7; }
+.question-explanation { margin-top: 10px; width: 100%; }
 .question-prompt { display: block; font-weight: 750; font-size: .78rem; line-height: 1.4; }
 .question-help, .question-evidence-state { display: block; color: var(--muted); font-size: .66rem; line-height: 1.4; margin-top: 7px; }
 .question-options { display: grid; gap: 5px; margin-top: 9px; }

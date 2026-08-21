@@ -76,12 +76,16 @@ function chooseForPackets(policy, role, run, packets, options = {}) {
 }
 
 function recordTransmission(run, stageName, profile, packets, containsRawEvidence = true) {
+  const transmittedUnits = packets.flatMap((item) => item.sourceUnits);
   run.transmissionManifest.push({
     id: stableId("transmission", { stageName, profile: profile.id, packets: packets.map((item) => item.id), sequence: run.transmissionManifest.length }),
     stage: stageName, provider: profile.provider, configuredModel: profile.model,
-    packetIds: packets.map((item) => item.id), sourceUnitIds: packets.flatMap((item) => item.sourceUnits.map((unit) => unit.id)),
+    packetIds: packets.map((item) => item.id), sourceUnitIds: transmittedUnits.map((unit) => unit.id),
     packetHashes: packets.map((item) => sha256(item.sourceUnits.map((unit) => ({ id: unit.id, sha256: unit.sha256 })))),
-    approvedPacketHashes: packets.map((item) => item.approvedHash ?? item.hash), containsRawEvidence, transmittedAt: new Date().toISOString()
+    approvedPacketHashes: packets.map((item) => item.approvedHash ?? item.hash),
+    containsRawEvidence: containsRawEvidence && transmittedUnits.some((unit) => unit.derivation?.rawContentIncluded !== false),
+    derivationContracts: unique(transmittedUnits.map((unit) => unit.derivation?.contractVersion)),
+    transmittedAt: new Date().toISOString()
   });
 }
 

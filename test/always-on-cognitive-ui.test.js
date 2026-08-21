@@ -28,7 +28,7 @@ test("the Intake workspace is exception-focused and marks accepted AI proposals 
 test("the service exposes an always-on cognitive contract without client credentials", () => {
   assert.match(server, /cognitiveMode: "ALWAYS_ON"/);
   assert.match(server, /function automaticApproval/);
-  assert.match(server, /A confirmed immutable Intake snapshot is required before execution/);
+  assert.match(server, /A user-approved immutable Intake snapshot is required before execution/);
   assert.match(server, /url\.pathname === "\/api\/assess"[\s\S]*?sendJson\(response, 410/);
   assert.doesNotMatch(server, /COGNITIVE_PIPELINE_ENABLED/);
   assert.doesNotMatch(server, /COGNITIVE_API_TOKEN/);

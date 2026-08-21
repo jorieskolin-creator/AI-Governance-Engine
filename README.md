@@ -11,6 +11,7 @@ The repository is suitable for controlled development and calibration. It is not
 ## Implemented foundation
 
 - Source-first intake registers, classifies and hashes submitted artifacts and records exclusions in a content-addressed Source Ingestion Manifest.
+- Evidence acquisition uses versioned lanes. Raw code and configuration are inspected locally and replaced in provider-eligible packets by a validated `code-evidence-summary-1.0.0` containing only controlled signal enums, coarse size ranges, lineage references and explicit limitations.
 - Deterministic assessment evaluates six governance domains across seven lifecycle stages.
 - Evidence coverage, control assurance, residual risk and hard-gate status remain separate concepts.
 - Missing evidence remains `UNKNOWN`; silence is not interpreted as safety, compliance or absence of an anti-pattern.
@@ -28,8 +29,8 @@ Every normal assessment uses cognitive contract `3.0.0`: independently verified 
 The cognitive contract is `3.0.0`. It is the only implemented cognitive pipeline; there is no separate shadow or compatibility implementation. It is the normal browser assessment path; users never enter credentials or select providers.
 
 ```text
-raw source
-  -> derived source
+raw source (local only for code/configuration)
+  -> deterministic safe summary or screened source unit
   -> candidate fact or claim
   -> independent verification
   -> adjudicated claim
@@ -61,21 +62,21 @@ pnpm start
 
 The dashboard is served on port `4174` by default. Copy configuration from `.env.example` into your development environment; do not commit credentials.
 
-The dashboard can upload a codebase folder or individual supported files. **Discover case information** performs local DLP screening, deterministic discovery, and a cited AI semantic recheck. After confirmation, **Confirm intake and start AI analysis** runs the full evidence-gated pipeline. **Load credible sample** follows the same source-first workflow.
+The dashboard can upload a codebase folder or individual supported files. **Discover case information** performs local DLP screening, deterministic discovery, and a cited AI semantic recheck. After every applicable field has an explicit user resolution, **Approve Filled Information and Continue to Analysis** creates an immutable Intake revision and runs the evidence-gated pipeline. **Load credible sample** follows the same source-first workflow.
 
-## Confirmed Intake API
+## Approved Intake API
 
 The supported assessment workflow uses the v2 run state machine:
 
 1. `POST /api/v2/runs/preflight` parses and screens sources, then builds the deterministic Intake draft.
 2. `POST /api/v2/runs/{runId}/discover-recheck` runs the optional cited AI Intake verification while the run awaits confirmation.
-3. `POST /api/v2/runs/{runId}/confirm` records user resolution and creates the immutable confirmed Intake snapshot.
+3. `POST /api/v2/runs/{runId}/confirm` requires a resolution for every applicable field plus explicit user approval, then creates the immutable approved Intake snapshot.
 4. `POST /api/v2/runs/{runId}/execute` starts A–F assessment from that snapshot.
 5. `GET /api/v2/runs/{runId}` and `GET /api/v2/runs/{runId}/result` expose progress and the result.
 
-`POST /api/assess` is retired and returns HTTP 410 because a one-shot request cannot enforce the confirmed Intake boundary. Library-level deterministic assessment functions remain available to tests and internal code, but their output must not be represented as a confirmed v2 pipeline result.
+`POST /api/assess` is retired and returns HTTP 410 because a one-shot request cannot enforce the approved Intake boundary. Library-level deterministic assessment functions remain available to tests and internal code, but their output must not be represented as an approved v2 pipeline result.
 
-Supporting read-only endpoints include `GET /api/sample`, `GET /api/knowledge`, `GET /api/knowledge/diagnostics` and `GET /api/config`.
+Supporting read-only endpoints include `GET /api/sample`, `GET /api/knowledge`, `GET /api/knowledge/diagnostics`, `GET /api/intake-field-registry` and `GET /api/config`.
 
 ## Cognitive API and safeguards
 
@@ -84,14 +85,14 @@ The browser calls the normal cognitive path automatically. Provider credentials 
 - `POST /api/v2/runs/preflight` parses and screens evidence locally and returns redacted packet previews.
 - `POST /api/v2/runs/{id}/discover` returns the cited intake draft.
 - `POST /api/v2/runs/{id}/discover-recheck` performs a cited semantic recheck without overwriting deterministic facts.
-- `POST /api/v2/runs/{id}/confirm` records the reviewed dossier without erasing source conflicts.
+- `POST /api/v2/runs/{id}/confirm` validates explicit field resolutions and creates the user-approved Intake snapshot without erasing source conflicts.
 - `POST /api/v2/runs/{id}/execute` records the fixed server-side route and starts the run.
 - `GET /api/v2/runs/{id}` returns progress.
 - `GET /api/v2/runs/{id}/result` returns `ReadinessPackageV2` schema `2.5.0`.
 - `DELETE /api/v2/runs/{id}` purges the ephemeral run record and evidence held by the run store.
 - `GET /api/v2/models` exposes the non-secret fixed policy without credentials.
 
-Supported intake includes common repository text and code, JSON, CSV, inert HTML, PDF, DOCX, XLSX, PNG, JPEG and WebP. Binary content uses base64. Office archives are checked for unsafe paths, macros, excessive expansion and suspicious compression. Source files, formulas, scripts, links and embedded instructions are not executed.
+Supported intake includes common repository text and code, JSON, CSV, inert HTML, PDF, DOCX, XLSX, PNG, JPEG and WebP. Binary content uses base64. Office archives are checked for unsafe paths, macros, excessive expansion and suspicious compression. Source files, formulas, scripts, links and embedded instructions are not executed. Code and configuration enter the `CODE_CONFIGURATION_LOCAL_ANALYSIS` lane: raw content remains process-local, while GenAI can receive only the schema-validated deterministic summary. Documentary and tabular safe-egress minimization remains a separate acquisition milestone; those formats currently use screened/redacted source units and explicit packet approval.
 
 ## Knowledge Base status
 

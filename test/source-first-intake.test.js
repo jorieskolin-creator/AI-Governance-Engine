@@ -10,8 +10,13 @@ import { buildDocumentationReadiness, discoverSolutionProfile } from "../src/cor
 import { classifyUploadPath, provisionalIngestionManifest, resolveUploadMimeType } from "../public/upload-types.js";
 import { buildSourceIngestionManifest } from "../src/core/source-ingestion.js";
 import { INTAKE_QUESTIONNAIRE } from "../src/knowledge/intake-questionnaire.js";
+import { createIntakeResolutionDraft } from "../src/intake/contracts.js";
 
 function sampleRequest() { return structuredClone(SAMPLE_REQUEST); }
+
+function approvedInput(run, dossier) {
+  return { dossier, resolutions: createIntakeResolutionDraft(dossier, run.solutionProfile), approval: { confirmed: true, actorRef: "TEST_USER" } };
+}
 
 function completeHumanClassifications() {
   return Object.fromEntries(INTAKE_QUESTIONNAIRE.questions.map((question) => [question.id, {
@@ -189,7 +194,9 @@ test("recognized extensionless and dot-prefixed configuration files are accepted
   assert.equal(resolveUploadMimeType("unrecognized.binary"), "");
   const run = await createPreflight({ sources: [{ path: ".env.example", mimeType: resolveUploadMimeType(".env.example"), encoding: "utf8", content: "OPENAI_API_KEY=replace-me" }] });
   assert.equal(run.registeredSources[0].artifactClass, "CONFIGURATION");
-  assert.equal(run.packets[0].sourceUnits[0].evidenceKind, "CONFIGURATION");
+  assert.equal(run.localSourceUnits[0].evidenceKind, "CONFIGURATION");
+  assert.equal(run.packets[0].sourceUnits[0].evidenceKind, "CODE_SUMMARY");
+  assert.equal(run.sourceIngestion.items[0].egressPolicy, "DETERMINISTIC_SUMMARY_ONLY");
 });
 
 test("mixed repository ingestion continues and discloses every exclusion", () => {
@@ -363,7 +370,7 @@ test("HTML is parsed inertly and source-first preflight can be confirmed later",
   assert.match(screened.sourceUnits[0].content, /answer internal questions/i);
   const run = await createPreflight({ sources });
   assert.equal(run.status, "AWAITING_INTAKE_CONFIRMATION");
-  await confirmPreflightDossier(run, { dossier: sampleRequest().dossier, confirmations: {} });
+  await confirmPreflightDossier(run, approvedInput(run, sampleRequest().dossier));
   assert.equal(run.status, "AWAITING_TRANSMISSION_APPROVAL");
   assert.ok(run.registeredSources.some((item) => item.path === "intended-use-dossier.json"));
 });
@@ -371,7 +378,7 @@ test("HTML is parsed inertly and source-first preflight can be confirmed later",
 test("confirming empty Intake defaults does not manufacture Self-Declared edits", async () => {
   const run = await createPreflight({ sources: [{ path: "case.md", mimeType: "text/markdown", encoding: "utf8", content: "# Intake case" }] });
   const dossier = validateDossier(run.solutionProfile.suggestedDossier);
-  await confirmPreflightDossier(run, { dossier });
+  await confirmPreflightDossier(run, approvedInput(run, dossier));
   assert.notEqual(run.solutionProfile.fields["operatingBoundary.allowedUses"].factClass, "SELF_DECLARED");
   assert.notEqual(run.solutionProfile.fields["data.categories"].factClass, "SELF_DECLARED");
   assert.notEqual(run.solutionProfile.fields["operatingBoundary.environment"].factClass, "SELF_DECLARED");
@@ -386,7 +393,7 @@ test("a changed questionnaire answer cannot retain observed provenance from the 
     ...dossier.intakeAnswers.REGULATORY_ROLES,
     answerState: "YES", values: ["DEPLOYER"], origin: "OBSERVED", supportStatus: "SUPPORTED"
   };
-  await confirmPreflightDossier(run, { dossier });
+  await confirmPreflightDossier(run, approvedInput(run, dossier));
   const answer = run.solutionProfile.assessmentIntakeFacts.REGULATORY_ROLES;
   assert.equal(answer.origin, "SELF_DECLARED");
   assert.equal(answer.supportStatus, "CONFLICTING");
@@ -397,7 +404,7 @@ test("a changed questionnaire answer cannot retain observed provenance from the 
 test("confirmation stamps an unchanged observed questionnaire answer on the server", async () => {
   const run = await createPreflight({ sources: [{ path: "case.md", mimeType: "text/markdown", encoding: "utf8", content: "AI system qualification: Yes" }] });
   const dossier = validateDossier(run.solutionProfile.suggestedDossier);
-  await confirmPreflightDossier(run, { dossier });
+  await confirmPreflightDossier(run, approvedInput(run, dossier));
   const answer = run.solutionProfile.assessmentIntakeFacts.AI_SYSTEM_QUALIFICATION;
   assert.equal(answer.origin, "OBSERVED");
   assert.equal(answer.confirmedBy, "USER");

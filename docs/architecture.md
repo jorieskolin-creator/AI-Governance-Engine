@@ -4,6 +4,10 @@
 
 The canonical readiness package is the only source of truth. Source-first intake first builds a content-addressed `SourceIngestionManifest 1.0.0`, then a field-level `solutionProfile`, immutable `assessmentIntake 1.3.0`, versioned applicability questionnaire, and deterministic `documentationReadiness` before governance assessment. The engine then builds `transitionBoundary`, enriched hard gates, and the `assuranceSummary 1.5.0` view model before any cognitive synthesis. The browser renders two views over that same package:
 
+The Intake boundary is defined by `intake-field-registry-1.0.0`. Every active field requires an explicit final user resolution; factual provenance remains separate from that decision state. `Unknown` is valid, `Not Applicable` is available only where the registry permits it and may require an explanation, and unresolved conflicts cannot be approved. The user-only approval action creates a frozen, content-hashed `approved-intake-snapshot-1.0.0` revision tied to the acquisition-manifest hash. Cognitive execution revalidates that snapshot and consumes only its effective dossier and solution profile.
+
+The acquisition manifest uses `evidence-acquisition-1.0.0` to record each parsed artifact's acquisition lane, raw-content policy, egress policy, analyzer version and derived-unit lineage. Code and configuration are scanned locally without execution. Their raw units remain outside provider packets; `code-evidence-summary-1.0.0` emits only allow-listed artifact/language classes, coarse size and line ranges, controlled capability/risk signals, an opaque source reference and fixed limitations. Static signal detection does not establish runtime behavior or control effectiveness. Documentary, tabular and media minimization will be tightened in subsequent lanes; the current contract discloses that they still use screened/redacted units requiring packet approval.
+
 - **Assessment Workspace** for intake, detailed controls, evidence, execution diagnostics, and remediation work.
 - **Assurance Summary** for owners, executives, and formal reviewers.
 
@@ -16,7 +20,7 @@ The AI Governance Engine is a standalone evidence-processing service. It reuses 
 ```mermaid
 flowchart LR
   D["Untrusted sources"] --> P["Local parse, DLP and provenance"]
-  P --> I["Cited intake draft and user confirmation"]
+  P --> I["Cited intake draft and user-approved snapshot"]
   I --> S["Candidate solution facts"]
   S --> SV["Independent fact verification"]
   SV --> A["Parallel A-F candidate claims"]
@@ -37,13 +41,14 @@ flowchart LR
 
 ## Trust boundaries
 
-- Uploaded content is untrusted evidence, not executable instruction. Raw bytes are memory-only; redacted excerpts, hashes, claims, findings, model traces, and the package may survive the run.
+- Uploaded content is untrusted evidence, not executable instruction. Raw bytes are memory-only. Raw code/configuration units are local-only and are purged with the run; only their schema-validated deterministic summaries can enter provider packets. Screened documentary units, hashes, claims, findings, model traces, and the package may survive the run under their stated acquisition policy.
 - A packet is sent only after explicit packet/provider approval. The trace records provider, model, parameters, prompt/schema version, packet hash, usage, latency, retries, and output hash without recording credentials.
 - Provider disagreement is not resolved by majority vote. Unresolved high/critical disagreement is routed to a named human authority.
 - Knowledge Base content is criteria, never case evidence. Exact finding-definition IDs are required before an approved tactic can activate.
 - Every applicable requirement, control, atomic assessment object, anti-pattern test, and finding definition receives an explicit coverage state. Domain failure yields a partial package and blocks positive progression rather than discarding successful domains.
 - Evidence state is derived from artifact type. Code/configuration can establish only `IMPLEMENTED`; tests and scans can establish `TESTED`; operational records can establish `OPERATIONALLY_OBSERVED`.
 - Lexical matches are `AUTOMATED_INDICATOR` records and cannot independently establish `IMPLEMENTED`. User confirmation creates a declaration but cannot manufacture documentary evidence or erase a contradiction.
+- Deterministic acquisition and GenAI may create candidates, but only the user can resolve fields and approve the immutable Intake revision that analysis consumes.
 - Missing critical case information enforces an `ISOLATED_SANDBOX` operating boundary. Deployment and operation require every applicable intake field to be documented, confirmed, and aligned with implementation.
 - Known-irrelevant source exclusions remain visible but do not block progression. Unsupported source-like, failed, or unsafe evidence creates `SOURCE_COVERAGE_INCOMPLETE`; early work remains sandboxed and Deployment or later progression fails closed until the gap has scoped, attributable coverage.
 - `HUMAN_VALIDATED` and `FORMALLY_APPROVED` require a non-engine actor identifier plus an allow-listed authority.

@@ -10,8 +10,9 @@ import { executeCognitiveRun } from "./cognitive/pipeline.js";
 import { modelPolicy, publicModelPolicy, requiredGovernanceProviders } from "./cognitive/model-policy.js";
 import { EphemeralRunStore } from "./cognitive/run-store.js";
 import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
-import { sha256 } from "./core/hash.js";
 import { sanitizeRestrictedValue } from "../public/content-policy.js";
+import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./intake/field-registry.js";
+import { validateApprovedIntakeSnapshot } from "./intake/contracts.js";
 
 const port = Number(process.env.PORT ?? 4174);
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
@@ -28,6 +29,7 @@ const cognitiveRateLimit = positiveEnvNumber("COGNITIVE_RATE_LIMIT_PER_MINUTE", 
 const contentTypes = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml" };
 
 const knowledge = await loadKnowledgeSnapshot();
+validateQuestionnaireAgainstRegistry(knowledge.intakeQuestionnaire);
 const runStore = new EphemeralRunStore();
 const rateWindows = new Map();
 
@@ -86,11 +88,11 @@ function automaticApproval(run, policy = modelPolicy()) {
 function startCognitiveRun(run, request) {
   if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive assessment rate limit exceeded"), { statusCode: 429 });
   if (run.status !== "AWAITING_TRANSMISSION_APPROVAL") throw Object.assign(new Error(`Run cannot execute from status ${run.status}`), { statusCode: 409 });
-  if (run.stage !== "INTAKE_CONFIRMED" || !run.confirmedIntake?.hash) throw Object.assign(new Error("A confirmed immutable Intake snapshot is required before execution"), { statusCode: 409 });
-  const { hash: confirmedIntakeHash, ...confirmedIntakePayload } = run.confirmedIntake;
-  if (sha256(confirmedIntakePayload) !== confirmedIntakeHash) throw Object.assign(new Error("The confirmed Intake snapshot failed its integrity check"), { statusCode: 409 });
-  run.dossier = structuredClone(run.confirmedIntake.effectiveDossier);
-  run.solutionProfile = structuredClone(run.confirmedIntake.solutionProfile);
+  if (run.stage !== "INTAKE_CONFIRMED" || !run.approvedIntake?.snapshotHash) throw Object.assign(new Error("A user-approved immutable Intake snapshot is required before execution"), { statusCode: 409 });
+  try { validateApprovedIntakeSnapshot(run.approvedIntake, { acquisitionManifestHash: run.sourceIngestion.manifestHash }); }
+  catch (error) { throw Object.assign(error, { statusCode: 409 }); }
+  run.dossier = structuredClone(run.approvedIntake.effectiveDossier);
+  run.solutionProfile = structuredClone(run.approvedIntake.solutionProfile);
   const blocking = run.dlpFindings.filter((item) => item.blocking);
   if (blocking.length) throw Object.assign(new Error("Preflight contains evidence that cannot be safely transmitted"), { statusCode: 400, blockingFindingIds: blocking.map((item) => item.id) });
   const policy = modelPolicy();
@@ -172,6 +174,7 @@ const server = http.createServer(async (request, response) => {
     });
     if (request.method === "GET" && url.pathname === "/api/knowledge") return sendJson(response, 200, knowledgeManifestView(knowledge));
     if (request.method === "GET" && url.pathname === "/api/intake-questionnaire") return sendJson(response, 200, { ...knowledge.intakeQuestionnaire, source: knowledge.intakeQuestionnaireSource ?? "BUNDLED" });
+    if (request.method === "GET" && url.pathname === "/api/intake-field-registry") return sendJson(response, 200, INTAKE_FIELD_REGISTRY);
     if (request.method === "GET" && url.pathname === "/api/knowledge/diagnostics") return sendJson(response, 200, knowledge.diagnostics ?? { status: "UNKNOWN", issues: [{ severity: "WARNING", code: "DIAGNOSTICS_UNAVAILABLE", message: "Knowledge diagnostics were not generated at startup.", entryIds: [] }] });
     if (request.method === "POST" && url.pathname === "/api/discover") {
       const payload = await readJson(request);

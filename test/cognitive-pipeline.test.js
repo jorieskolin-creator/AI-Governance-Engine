@@ -8,9 +8,22 @@ import { StructuredModelClient, ModelBudget } from "../src/cognitive/provider-cl
 import { loadKnowledgeSnapshot } from "../src/knowledge/provider.js";
 import { recheckDiscovery } from "../src/cognitive/discovery-recheck.js";
 import { SAMPLE_REQUEST } from "../src/sample.js";
+import { createIntakeResolutionDraft } from "../src/intake/contracts.js";
 
 function preflightInput(sources) {
   return { dossier: structuredClone(SAMPLE_REQUEST.dossier), sources };
+}
+
+function approvedInput(run, dossier) {
+  return { dossier, resolutions: createIntakeResolutionDraft(dossier, run.solutionProfile), approval: { confirmed: true, actorRef: "TEST_USER" } };
+}
+
+function broadGovernanceSource() {
+  return [{
+    path: "governance/system-overview.md",
+    mimeType: "text/markdown",
+    content: "Purpose, expected value, classification and owner. Data privacy retention and licence. Model provider, agent tools and dependencies. Security architecture, evaluation and tests. Fairness, impact, oversight, transparency and appeal. Governance risk, monitoring, incident response and audit."
+  }];
 }
 
 function firstUnitId(prompt) {
@@ -68,15 +81,16 @@ test("preflight redacts secrets and keeps prompt-like source text inert", async 
 });
 
 test("a supplied dossier still requires confirmation and produces an immutable effective Intake snapshot", async () => {
-  const run = await createPreflight(preflightInput([{ path: "README.md", mimeType: "text/markdown", content: "# Intake case" }]));
+  const run = await createPreflight(preflightInput([{ path: "README.md", mimeType: "text/markdown", content: "# Internal Knowledge Assistant" }]));
   assert.equal(run.status, "AWAITING_INTAKE_CONFIRMATION");
   assert.equal(run.stage, "DETERMINISTIC_DISCOVERY_COMPLETED");
   assert.equal(run.registeredSources.some((item) => item.path === "intended-use-dossier.json"), false);
-  await confirmPreflightDossier(run, { dossier: structuredClone(SAMPLE_REQUEST.dossier), confirmations: {} });
+  await confirmPreflightDossier(run, approvedInput(run, structuredClone(SAMPLE_REQUEST.dossier)));
   assert.equal(run.stage, "INTAKE_CONFIRMED");
-  assert.ok(run.confirmedIntake.hash);
-  assert.notStrictEqual(run.confirmedIntake.effectiveDossier, run.dossier);
-  assert.equal(Object.hasOwn(run.confirmedIntake.effectiveDossier.intakeAnswers, "SYSTEMIC_RISK_MODEL"), false);
+  assert.ok(run.approvedIntake.snapshotHash);
+  assert.equal(Object.isFrozen(run.approvedIntake), true);
+  assert.notStrictEqual(run.approvedIntake.effectiveDossier, run.dossier);
+  assert.equal(Object.hasOwn(run.approvedIntake.effectiveDossier.intakeAnswers, "SYSTEMIC_RISK_MODEL"), false);
   await assert.rejects(() => confirmPreflightDossier(run, { dossier: structuredClone(SAMPLE_REQUEST.dossier) }), /not awaiting intake confirmation/i);
 });
 
@@ -145,7 +159,7 @@ test("AI Intake verification rejects empty and incompletely covered citations", 
 });
 
 test("v2 accepts only verified claims into the deterministic readiness package", async () => {
-  const run = await createPreflight(preflightInput([{ path: "src/assistant.js", mimeType: "application/javascript", content: "export function answer() { return 'bounded'; }" }]));
+  const run = await createPreflight(preflightInput(broadGovernanceSource()));
   const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
   const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
@@ -158,7 +172,7 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   assert.ok(result.coverageMatrix.entries.some((item) => item.evidenceStatus === "NO_EVIDENCE_FOUND"));
   assert.equal(result.cognitive.lockedFindings.length, 6);
   assert.ok(result.cognitive.verificationRecords.every((item) => item.status === "SUPPORTED"));
-  assert.ok(result.evidence.filter((item) => item.signal === "verified-control-evidence").every((item) => item.assuranceState === "IMPLEMENTED"));
+  assert.ok(result.evidence.filter((item) => item.signal === "verified-control-evidence").every((item) => item.assuranceState === "DECLARED"));
   assert.ok(result.cognitive.modelExecutionTrace.every((item) => !JSON.stringify(item).includes("test")));
 });
 
@@ -174,7 +188,7 @@ test("single-provider approval fails closed for cross-provider verification", as
 });
 
 test("a fabricated evidence quote is rejected before model verification", async () => {
-  const run = await createPreflight(preflightInput([{ path: "src/assistant.js", mimeType: "application/javascript", content: "export function answer() { return 'bounded'; }" }]));
+  const run = await createPreflight(preflightInput(broadGovernanceSource()));
   const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
   const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
@@ -214,7 +228,7 @@ test("unsupported synthesis is quarantined and cannot alter deterministic author
 });
 
 test("one failed domain returns a partial deterministic package and incomplete coverage gate", async () => {
-  const run = await createPreflight(preflightInput([{ path: "src/assistant.js", mimeType: "application/javascript", content: "export function answer() { return 'bounded'; }" }]));
+  const run = await createPreflight(preflightInput(broadGovernanceSource()));
   const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
   const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });

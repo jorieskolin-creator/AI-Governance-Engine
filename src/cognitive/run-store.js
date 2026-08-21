@@ -35,6 +35,11 @@ export class EphemeralRunStore {
       }
       packet.transmissionState = "PURGED";
     }
+    for (const unit of run.localSourceUnits ?? []) {
+      unit.content = "";
+      if (unit.media) unit.media.data = "";
+      unit.transmissionState = "PURGED";
+    }
     run.status = reason;
     this.runs.delete(id);
     return true;
@@ -48,6 +53,11 @@ export class EphemeralRunStore {
         unit.transmissionState = "PURGED";
       }
       packet.transmissionState = "PURGED";
+    }
+    for (const unit of run.localSourceUnits ?? []) {
+      unit.content = "";
+      if (unit.media) unit.media.data = "";
+      unit.transmissionState = "PURGED";
     }
   }
 

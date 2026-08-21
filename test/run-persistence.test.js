@@ -11,6 +11,17 @@ class FakePool {
   async query(sql, parameters = []) {
     const normalized = sql.replace(/\s+/g, " ").trim();
     if (normalized.startsWith("CREATE ")) return { rowCount: 0, rows: [] };
+    if (normalized.startsWith("WITH candidate AS")) {
+      const candidate = [...this.rows.entries()]
+        .filter(([, row]) => row.status === "QUEUED" && !row.deleted && Date.parse(row.expiresAt) > Date.parse(parameters[2]))
+        .filter(([id]) => !this.lease.has(id) || Date.parse(this.lease.get(id).expiresAt) <= Date.parse(parameters[2]))
+        .filter(([, row]) => !row.state.run.executionDataAffinity?.owner || row.state.run.executionDataAffinity.owner === parameters[0])
+        .sort(([left], [right]) => left.localeCompare(right))[0];
+      if (!candidate) return { rowCount: 0, rows: [] };
+      const [id, row] = candidate;
+      this.lease.set(id, { owner: parameters[0], expiresAt: parameters[1] });
+      return { rowCount: 1, rows: [{ id, state: structuredClone(row.state), version: row.version }] };
+    }
     if (normalized.startsWith("INSERT INTO governance_runs")) {
       if (this.rows.has(parameters[0])) throw new Error("duplicate key");
       this.rows.set(parameters[0], { state: JSON.parse(parameters[1]), status: parameters[2], stage: parameters[3], expiresAt: parameters[4], deleted: false, version: 1 });
@@ -197,4 +208,52 @@ test("memory leases serialize mutation and are released by purge", async () => {
   assert.equal(store.purge(run.id), true);
   assert.equal(store.acquireLease(run.id), false);
   store.close();
+});
+
+test("queued runs are claimed once by memory and PostgreSQL workers", async () => {
+  const memory = new EphemeralRunStore();
+  const memoryRun = await createPreflight({ sources: [{ path: "memory.md", mimeType: "text/markdown", content: "# Case" }] });
+  memoryRun.status = "QUEUED";
+  memory.create(memoryRun);
+  assert.equal(memory.claimNextQueued(), memoryRun);
+  assert.equal(memory.claimNextQueued(), null);
+  memory.releaseLease(memoryRun.id);
+  memory.close();
+
+  const pool = new FakePool();
+  const first = await new PostgresRunStore({ pool, instanceId: "worker-a" }).initialize();
+  const second = new PostgresRunStore({ pool, instanceId: "worker-b" });
+  const run = await createPreflight({ sources: [{ path: "postgres.md", mimeType: "text/markdown", content: "# Case" }] });
+  await first.create(run);
+  run.status = "QUEUED";
+  await first.checkpoint(run);
+  const recoveredQueued = deserializeDurableRun(serializeDurableRun(run));
+  assert.equal(recoveredQueued.status, "QUEUED");
+  assert.equal((await first.claimNextQueued()).id, run.id);
+  assert.equal(await second.claimNextQueued(), null);
+});
+
+test("queued memory-only media stays with its worker and requires re-upload after recovery", async () => {
+  const pool = new FakePool();
+  const first = await new PostgresRunStore({ pool, instanceId: "worker-a" }).initialize();
+  const second = new PostgresRunStore({ pool, instanceId: "worker-b" });
+  const run = await createPreflight({ sources: [
+    { path: "case.md", mimeType: "text/markdown", content: "# Case" },
+    { path: "diagram.png", mimeType: "image/png", encoding: "base64", content: Buffer.from("89504e470d0a1a0a00000000", "hex").toString("base64") }
+  ] });
+  assert.ok(run.localSourceUnits.some((unit) => unit.media?.data));
+  run.status = "QUEUED";
+  run.stage = "COGNITIVE_EXECUTION_QUEUED";
+  run.executionDataAffinity = { owner: first.instanceId, reason: "MEMORY_ONLY_MEDIA" };
+  await first.create(run);
+
+  assert.equal(await second.claimNextQueued(), null);
+  assert.equal(await first.claimNextQueued(), run);
+  await first.releaseLease(run.id);
+
+  first.runs.clear();
+  const recovered = await first.get(run.id);
+  assert.equal(recovered.status, "RECOVERY_REQUIRES_REUPLOAD");
+  assert.equal(recovered.stage, "RECOVERY_MEDIA_REUPLOAD_REQUIRED");
+  assert.equal(recovered.persistence.rawEvidenceAvailable, false);
 });

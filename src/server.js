@@ -14,7 +14,7 @@ import { sanitizeRestrictedValue } from "../public/content-policy.js";
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./intake/field-registry.js";
 import { validateApprovedIntakeSnapshot } from "./intake/contracts.js";
 import { createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "./intake/acquired-facts.js";
-import { createCognitiveStepLedger } from "./cognitive/orchestration.js";
+import { createCognitiveStepLedger, prepareInterruptedRunRestart, recoveredExecutionDataUnavailable, RECOVERY_RESTART_PURPOSE } from "./cognitive/orchestration.js";
 import { cancellationError, classifyCognitiveFailure } from "./cognitive/failure-policy.js";
 
 const port = Number(process.env.PORT ?? 4174);
@@ -29,6 +29,8 @@ function positiveEnvNumber(name, fallback) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 const cognitiveRateLimit = positiveEnvNumber("COGNITIVE_RATE_LIMIT_PER_MINUTE", 10);
+const cognitiveMaxActiveRuns = positiveEnvNumber("COGNITIVE_MAX_ACTIVE_RUNS", 2);
+const cognitiveQueuePollMs = positiveEnvNumber("COGNITIVE_QUEUE_POLL_MS", 1000);
 const contentTypes = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8", ".svg": "image/svg+xml" };
 
 const knowledge = await loadKnowledgeSnapshot();
@@ -100,7 +102,7 @@ function automaticApproval(run, policy = modelPolicy()) {
   return validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
 }
 
-async function startCognitiveRun(run, request) {
+async function enqueueCognitiveRun(run, request) {
   if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive assessment rate limit exceeded"), { statusCode: 429 });
   if (run.status !== "AWAITING_TRANSMISSION_APPROVAL") throw Object.assign(new Error(`Run cannot execute from status ${run.status}`), { statusCode: 409 });
   if (run.stage !== "INTAKE_CONFIRMED" || !run.approvedIntake?.snapshotHash) throw Object.assign(new Error("A user-approved immutable Intake snapshot is required before execution"), { statusCode: 409 });
@@ -121,10 +123,35 @@ async function startCognitiveRun(run, request) {
   run.solutionProfile = structuredClone(run.approvedIntake.solutionProfile);
   run.approval = approval;
   run.stepLedger = createCognitiveStepLedger();
+  run.queueAttempt = (run.queueAttempt ?? 0) + 1;
+  if (runStore.instanceId && run.localSourceUnits.some((unit) => unit.media?.data)) {
+    run.executionDataAffinity = { owner: runStore.instanceId, reason: "MEMORY_ONLY_MEDIA" };
+  }
   for (const packet of run.packets) packet.transmissionState = "APPROVED";
-  run.status = "RUNNING";
+  run.status = "QUEUED";
   run.stage = "COGNITIVE_EXECUTION_QUEUED";
   run.trace.push({ stage: run.stage, status: "QUEUED", at: new Date().toISOString() });
+  try { await runStore.checkpoint(run, { leaseOwner: runStore.instanceId }); }
+  catch (error) { await runStore.releaseLease(run.id); throw error; }
+  await runStore.releaseLease(run.id);
+}
+
+async function startClaimedCognitiveRun(run) {
+  if (recoveredExecutionDataUnavailable(run)) {
+    run.status = "RECOVERY_REQUIRES_REUPLOAD";
+    run.stage = "RECOVERY_MEDIA_REUPLOAD_REQUIRED";
+    run.failureCode = "RAW_EVIDENCE_REUPLOAD_REQUIRED";
+    run.retryDisposition = "REQUIRES_NEW_INTAKE";
+    run.error = "The queued run requires memory-only media that is unavailable after recovery. Re-upload evidence to create a new Intake run.";
+    await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+    await runStore.releaseLease(run.id);
+    return;
+  }
+  const policy = modelPolicy();
+  run.status = "RUNNING";
+  run.stage = "COGNITIVE_EXECUTION_STARTING";
+  run.executionStartedAt = new Date().toISOString();
+  run.trace.push({ stage: run.stage, status: "RUNNING", at: run.executionStartedAt, queueAttempt: run.queueAttempt });
   try { await runStore.checkpoint(run, { leaseOwner: runStore.instanceId }); }
   catch (error) { await runStore.releaseLease(run.id); throw error; }
   const controller = new AbortController();
@@ -173,6 +200,23 @@ async function startCognitiveRun(run, request) {
   })();
 }
 
+let dispatchingQueue = false;
+async function dispatchQueuedRuns() {
+  if (dispatchingQueue) return;
+  dispatchingQueue = true;
+  try {
+    while (activeExecutions.size < cognitiveMaxActiveRuns) {
+      const run = await runStore.claimNextQueued();
+      if (!run) break;
+      try { await startClaimedCognitiveRun(run); }
+      catch (error) {
+        try { await runStore.releaseLease(run.id); } catch { /* The lease expires automatically. */ }
+        throw error;
+      }
+    }
+  } finally { dispatchingQueue = false; }
+}
+
 function publicRunView(run) {
   const domainProgress = Object.fromEntries(Object.keys({ A: 1, B: 1, C: 1, D: 1, E: 1, F: 1 }).map((domain) => {
     const latest = run.trace.filter((item) => item.stage === `DOMAIN_${domain}`).at(-1);
@@ -181,6 +225,8 @@ function publicRunView(run) {
   return {
     runId: run.id, status: run.status, stage: run.stage, createdAt: run.createdAt, expiresAt: run.expiresAt,
     completedAt: run.completedAt ?? null, resultAvailable: Boolean(run.result), error: run.error, failureCode: run.failureCode ?? null, retryDisposition: run.retryDisposition ?? null,
+    queueAttempt: run.queueAttempt ?? 0,
+    recovery: run.status === "INTERRUPTED" ? { restartEligible: !recoveredExecutionDataUnavailable(run), purpose: RECOVERY_RESTART_PURPOSE, requiresExplicitUserAcknowledgement: true } : null,
     solutionProfile: run.solutionProfile,
     stepLedger: run.stepLedger ? {
       schemaVersion: run.stepLedger.schemaVersion,
@@ -319,7 +365,24 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && executeMatch) {
       const run = await runStore.get(executeMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
-      await startCognitiveRun(run, request);
+      await enqueueCognitiveRun(run, request);
+      void dispatchQueuedRuns().catch(() => {});
+      return sendJson(response, 202, publicRunView(run));
+    }
+    const restartMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/restart$/);
+    if (request.method === "POST" && restartMatch) {
+      const run = await runStore.get(restartMatch[1]);
+      if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
+      const input = await readJson(request);
+      if (input?.confirmed !== true || input?.purpose !== RECOVERY_RESTART_PURPOSE || !String(input.actorRef ?? "").trim()) return sendJson(response, 400, { error: "Explicit user acknowledgement, purpose and actorRef are required for recovery restart" });
+      if (run.status !== "INTERRUPTED" || run.stage !== "RECOVERY_REQUIRES_USER_RESTART") return sendJson(response, 409, { error: "Run is not eligible for controlled recovery restart" });
+      if (recoveredExecutionDataUnavailable(run)) return sendJson(response, 409, { error: "Memory-only media is unavailable; re-upload evidence to create a new Intake run" });
+      if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run recovery is already owned by another worker" });
+      try {
+        prepareInterruptedRunRestart(run, input);
+        await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+      } finally { await runStore.releaseLease(run.id); }
+      void dispatchQueuedRuns().catch(() => {});
       return sendJson(response, 202, publicRunView(run));
     }
     const resultMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/result$/);
@@ -351,9 +414,13 @@ const server = http.createServer(async (request, response) => {
 });
 
 server.listen(port, "0.0.0.0", () => console.log(`AI Governance Engine listening on ${port}`));
+const queueTimer = setInterval(() => { void dispatchQueuedRuns().catch(() => {}); }, cognitiveQueuePollMs);
+queueTimer.unref?.();
+void dispatchQueuedRuns().catch(() => {});
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
+    clearInterval(queueTimer);
     for (const controller of activeExecutions.values()) controller.abort(cancellationError(`Cognitive run interrupted by ${signal}`));
     server.close(async () => { await runStore.close(); process.exit(0); });
   });

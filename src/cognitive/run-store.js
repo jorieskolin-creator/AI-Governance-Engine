@@ -76,6 +76,13 @@ export class EphemeralRunStore {
 
   releaseLease(id) { this.leases.delete(id); }
 
+  claimNextQueued() {
+    for (const run of this.runs.values()) {
+      if (run.status === "QUEUED" && this.acquireLease(run.id)) return run;
+    }
+    return null;
+  }
+
   sweep() {
     const now = this.now().getTime();
     for (const [id, run] of this.runs) if (Date.parse(run.expiresAt) <= now) this.purge(id, "EXPIRED");

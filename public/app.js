@@ -763,6 +763,8 @@ function progressText(run) {
   return {
     PREFLIGHT: "Screening sources and creating redacted evidence packets.",
     INTAKE_CONFIRMED: "Preparing verified solution understanding.",
+    COGNITIVE_EXECUTION_QUEUED: "Waiting for an available cognitive execution worker.",
+    COGNITIVE_EXECUTION_STARTING: "Starting the claimed cognitive execution attempt.",
     SOLUTION_UNDERSTANDING: "Building and independently verifying solution understanding.",
     PACKET_ROUTING: "Routing redacted evidence to governance domains.",
     DOMAIN_ASSESSMENT: "Assessing A–F governance evidence.",
@@ -790,7 +792,7 @@ async function waitForRun(runId) {
     if (!response.ok) throw new Error(run.detail || run.error || "Cognitive run status is unavailable");
     setProgress("Evidence-gated AI analysis", progressText(run));
     if (run.status === "COMPLETED") return run;
-    if (["FAILED", "PURGED", "CANCELLED"].includes(run.status)) throw new Error(`${run.error || "Cognitive analysis did not complete."}${run.failureCode ? ` (${label(run.failureCode)})` : ""}`);
+    if (["FAILED", "PURGED", "CANCELLED", "INTERRUPTED", "RECOVERY_REQUIRES_REUPLOAD"].includes(run.status)) throw new Error(`${run.error || "Cognitive analysis did not complete."}${run.failureCode ? ` (${label(run.failureCode)})` : ""}`);
     await new Promise((resolve) => window.setTimeout(resolve, 1200));
   }
   throw new Error("Cognitive analysis exceeded the browser waiting limit. The server may still be processing the run.");

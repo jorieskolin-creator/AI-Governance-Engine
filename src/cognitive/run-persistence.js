@@ -78,6 +78,12 @@ export function deserializeDurableRun(envelope) {
     run.status = "INTERRUPTED";
     run.stage = "RECOVERY_REQUIRES_USER_RESTART";
     run.error = "Execution was interrupted before a terminal checkpoint. It was not resumed automatically to avoid duplicate provider calls.";
+  } else if (run.status === "QUEUED" && run.executionDataAffinity?.reason === "MEMORY_ONLY_MEDIA") {
+    run.status = "RECOVERY_REQUIRES_REUPLOAD";
+    run.stage = "RECOVERY_MEDIA_REUPLOAD_REQUIRED";
+    run.failureCode = "RAW_EVIDENCE_REUPLOAD_REQUIRED";
+    run.retryDisposition = "REQUIRES_NEW_INTAKE";
+    run.error = "The queued run required memory-only media from its original worker. Re-upload evidence to create a new Intake run.";
   }
   return run;
 }
@@ -193,6 +199,36 @@ export class PostgresRunStore {
       "UPDATE governance_runs SET lease_owner = NULL, lease_expires_at = NULL, updated_at = NOW() WHERE id = $1 AND lease_owner = $2",
       [id, this.instanceId]
     );
+  }
+
+  async claimNextQueued() {
+    const now = this.now();
+    const leaseExpiresAt = new Date(now.getTime() + this.leaseMs).toISOString();
+    const result = await this.pool.query(
+      `WITH candidate AS (
+        SELECT id FROM governance_runs
+        WHERE status = 'QUEUED' AND deleted_at IS NULL AND expires_at > $3
+          AND (lease_owner IS NULL OR lease_expires_at <= $3)
+          AND (state #>> '{run,executionDataAffinity,owner}' IS NULL OR state #>> '{run,executionDataAffinity,owner}' = $1)
+        ORDER BY updated_at, id
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      )
+      UPDATE governance_runs AS runs
+      SET lease_owner = $1, lease_expires_at = $2, updated_at = NOW()
+      FROM candidate
+      WHERE runs.id = candidate.id
+      RETURNING runs.id, runs.state, runs.version`,
+      [this.instanceId, leaseExpiresAt, now.toISOString()]
+    );
+    if (!result.rows.length) return null;
+    const row = result.rows[0];
+    const active = this.runs.get(row.id);
+    if (active?.persistence?.durableVersion === Number(row.version)) return active;
+    const run = deserializeDurableRun(row.state);
+    run.persistence.durableVersion = Number(row.version);
+    this.runs.set(run.id, run);
+    return run;
   }
 
   async purge(id, reason = "USER_REQUEST") {

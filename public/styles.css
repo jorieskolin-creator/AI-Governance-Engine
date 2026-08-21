@@ -88,6 +88,8 @@ legend { color: var(--forest-2); font-size: .75rem; font-weight: 850; padding: 0
 .discovery-recheck-note { margin: 13px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: .75rem; line-height: 1.5; }
 .discovery-candidate-details { margin-top: 10px; }
 .discovery-candidate-details > summary, .intake-workspace-section > summary { cursor: pointer; font-weight: 800; color: var(--forest); }
+.discovery-candidates { min-width: 0; padding-left: 20px; }
+.discovery-candidates li { max-width: 100%; overflow-wrap: anywhere; }
 .candidate-apply-button { display: block; margin-top: 7px; padding: 5px 9px; border: 1px solid var(--forest-2); border-radius: 7px; background: var(--green-soft); color: var(--forest); font: inherit; font-weight: 750; cursor: pointer; }
 .intake-review-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0 18px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: #f7f8f4; }
 .intake-review-summary strong { margin-right: auto; }

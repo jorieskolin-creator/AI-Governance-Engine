@@ -10,6 +10,7 @@ import { parseAndScreenSources } from "../src/cognitive/source-intake.js";
 import { sha256 } from "../src/core/hash.js";
 import { validateSourceIngestionManifest } from "../src/core/source-ingestion.js";
 import { CODE_EVIDENCE_SUMMARY_VERSION, validateCodeEvidenceSummary } from "../src/intake/code-evidence.js";
+import { MEDIA_EVIDENCE_SUMMARY_VERSION, validateMediaEvidenceSummary } from "../src/intake/media-evidence.js";
 import { createTabularEvidenceUnit, TABULAR_EVIDENCE_SUMMARY_VERSION, validateTabularEvidenceSummary } from "../src/intake/tabular-evidence.js";
 
 const rawMarker = "internal-project-orchid-customer-table";
@@ -140,16 +141,57 @@ test("XLSX summaries expose coarse dimensions and controlled signals without cel
   assert.doesNotMatch(unit.content, /private-model|Customers|Results|employee_id/);
 });
 
-test("purging a run clears both local raw material and provider-eligible summaries", async () => {
+test("image pixels remain local even when the client labels the image sanitized", async () => {
+  const pixels = Buffer.from("89504e470d0a1a0a00000000", "hex");
+  const encodedPixels = pixels.toString("base64");
   const run = await createPreflight({ sources: [{
-    path: "src/runtime.js",
-    mimeType: "application/javascript",
-    content: `export const internalValue = "${rawMarker}";`
+    path: "screenshots/private-customer-screen.png",
+    mimeType: "image/png",
+    encoding: "base64",
+    content: encodedPixels,
+    metadata: { sanitized: true }
+  }] });
+  const local = run.localSourceUnits[0];
+  const egress = run.packets[0].sourceUnits[0];
+  const summary = validateMediaEvidenceSummary(JSON.parse(egress.content));
+
+  assert.equal(local.media.data, encodedPixels);
+  assert.equal(egress.media, undefined);
+  assert.equal(egress.evidenceKind, "MEDIA_SUMMARY");
+  assert.equal(egress.derivation.rawContentIncluded, false);
+  assert.equal(summary.schemaVersion, MEDIA_EVIDENCE_SUMMARY_VERSION);
+  assert.equal(summary.visualContentState, "NOT_ASSESSED");
+  assert.doesNotMatch(egress.path, /private|customer|screen/i);
+  assert.equal(run.sourceIngestion.items[0].acquisitionLane, "MEDIA_LOCAL_METADATA");
+  assert.equal(run.sourceIngestion.items[0].rawContentPolicy, "LOCAL_ONLY");
+  assert.equal(run.sourceIngestion.items[0].analyzerVersion, MEDIA_EVIDENCE_SUMMARY_VERSION);
+
+  const providerPrompt = discoveryRecheckPrompt([], run.packets);
+  assert.match(providerPrompt, new RegExp(MEDIA_EVIDENCE_SUMMARY_VERSION));
+  assert.doesNotMatch(providerPrompt, new RegExp(encodedPixels));
+  assert.doesNotMatch(providerPrompt, /private-customer-screen|screenshots\//i);
+  assert.doesNotMatch(JSON.stringify(publicPreflightView(run).packets), new RegExp(encodedPixels));
+
+  const inconsistent = structuredClone(run.sourceIngestion);
+  inconsistent.items[0].egressPolicy = "REDACTED_SOURCE_UNITS";
+  const { manifestHash: ignored, ...payload } = inconsistent;
+  inconsistent.manifestHash = sha256(payload);
+  assert.throws(() => validateSourceIngestionManifest(inconsistent), /media acquisition policy is invalid/i);
+});
+
+test("purging a run clears both local raw material and provider-eligible summaries", async () => {
+  const encodedPixels = Buffer.from("89504e470d0a1a0a00000000", "hex").toString("base64");
+  const run = await createPreflight({ sources: [{
+    path: "private-screen.png",
+    mimeType: "image/png",
+    encoding: "base64",
+    content: encodedPixels
   }] });
   const store = new EphemeralRunStore();
   store.create(run);
   assert.equal(store.purge(run.id), true);
   assert.ok(run.localSourceUnits.every((unit) => unit.content === "" && unit.transmissionState === "PURGED"));
+  assert.ok(run.localSourceUnits.every((unit) => !unit.media || unit.media.data === ""));
   assert.ok(run.packets.every((packet) => packet.transmissionState === "PURGED" && packet.sourceUnits.every((unit) => unit.content === "")));
   store.close();
 });

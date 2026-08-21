@@ -18,7 +18,7 @@ function relevantPackets(run, provider, approval) {
   return run.packets.filter((packet) => approved.has(packet.id)).map((packet) => {
     const sourceUnits = packet.sourceUnits.filter((unit) => {
       if (used >= MAX_RECHECK_CHARS || unit.media) return false;
-      const relevant = ["DOCUMENT", "CONFIGURATION", "DECLARATION", "CODE_SUMMARY", "TABULAR_SUMMARY"].includes(unit.evidenceKind) || /readme|product|architecture|governance|package\.json/i.test(unit.path);
+      const relevant = ["DOCUMENT", "CONFIGURATION", "DECLARATION", "CODE_SUMMARY", "TABULAR_SUMMARY", "MEDIA_SUMMARY"].includes(unit.evidenceKind) || /readme|product|architecture|governance|package\.json/i.test(unit.path);
       if (relevant) used += unit.content.length;
       return relevant && used <= MAX_RECHECK_CHARS;
     });

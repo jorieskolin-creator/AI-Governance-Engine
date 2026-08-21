@@ -10,7 +10,7 @@ import { recheckDiscovery } from "../src/cognitive/discovery-recheck.js";
 import { SAMPLE_REQUEST } from "../src/sample.js";
 import { createIntakeResolutionDraft } from "../src/intake/contracts.js";
 import { cancellationError } from "../src/cognitive/failure-policy.js";
-import { validateReadinessPackage } from "../src/readiness-package-contract.js";
+import { readinessPackageJsonSchema, validateReadinessPackage } from "../src/readiness-package-contract.js";
 
 const ALL_PROVIDERS = ["OPENAI", "XAI", "MOONSHOT"];
 const ALL_CREDENTIALS = { OPENAI_API_KEY: "test", XAI_API_KEY: "test", MOONSHOT_API_KEY: "test" };
@@ -193,6 +193,9 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }), onCheckpoint: async (checkpoint) => checkpoints.push(checkpoint) });
   assert.strictEqual(validateReadinessPackage(result), result);
   assert.equal(result.schemaVersion, "2.6.0");
+  const integrationSchema = readinessPackageJsonSchema(result.schemaVersion);
+  assert.deepEqual([...integrationSchema.required].sort(), Object.keys(result).sort());
+  assert.deepEqual(Object.keys(integrationSchema.properties).sort(), Object.keys(result).sort());
   assert.equal(result.cognitive.contractVersion, "3.1.0");
   assert.equal(result.recommendation.formalApproval, false);
   assert.equal(result.cognitive.coverage.complete, true);

@@ -77,6 +77,13 @@ test("HTTP workflow exposes readiness and fails closed before unapproved provide
     assert.equal(models.body.profiles.length, 16);
     assert.ok(models.body.profiles.every((profile) => !profile.credentialAvailable && profile.qualificationStatus === "APPROVAL_REQUIRED"));
 
+    const packageSchema = await request(baseUrl, "/api/v2/contracts/readiness-package/2.6.0");
+    assert.equal(packageSchema.status, 200);
+    assert.equal(packageSchema.body.$schema, "https://json-schema.org/draft/2020-12/schema");
+    assert.equal(packageSchema.body.properties.schemaVersion.const, "2.6.0");
+    assert.equal(packageSchema.body.properties.cognitive.properties.contractVersion.const, "3.1.0");
+    assert.equal(packageSchema.body["x-contract-coverage"], "TOP_LEVEL_AND_GOVERNANCE_INVARIANTS");
+
     const preflight = await request(baseUrl, "/api/v2/runs/preflight", {
       method: "POST",
       body: JSON.stringify({ sources: [{ path: "case.md", mimeType: "text/markdown", content: "Solution name: Router integration case" }] })

@@ -18,6 +18,66 @@ const ARRAY_FIELDS = Object.freeze([
   "unresolvedClaims"
 ]);
 
+const NULLABLE_OBJECT_FIELDS = Object.freeze(["coverageMatrix", "documentationGate", "publicationGate"]);
+
+export function readinessPackageJsonSchema(schemaVersion = "2.6.0") {
+  invariant(READINESS_PACKAGE_VERSIONS.includes(schemaVersion), "ReadinessPackage schemaVersion is unsupported");
+  const fields = [...COMMON_FIELDS, ...(schemaVersion === "2.6.0" ? ["cognitive"] : [])];
+  const properties = Object.fromEntries(fields.map((field) => {
+    if (ARRAY_FIELDS.includes(field)) return [field, { type: "array" }];
+    if (NULLABLE_OBJECT_FIELDS.includes(field)) return [field, { type: ["object", "null"] }];
+    return [field, { type: "object" }];
+  }));
+  Object.assign(properties, {
+    schemaVersion: { const: schemaVersion },
+    packageId: { type: "string", pattern: "^readiness-package-" },
+    runId: { type: "string", minLength: 1 },
+    engineVersion: { type: "string", minLength: 1 },
+    rulesetVersion: { type: "string", minLength: 1 },
+    generatedAt: { type: "string", format: "date-time" },
+    packageHash: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    recommendation: {
+      type: "object", additionalProperties: false,
+      required: ["outcome", "rationale", "formalApproval", "boundary"],
+      properties: {
+        outcome: { type: "string", enum: READINESS_OUTCOMES }, rationale: { type: "string" },
+        formalApproval: { const: false }, boundary: { type: "string", minLength: 1 }
+      }
+    },
+    transitionBoundary: {
+      type: "object", required: ["immutable"], properties: { immutable: { const: true } }
+    },
+    trace: {
+      type: "object", additionalProperties: false,
+      required: ["inputHash", "evidenceSnapshotHash", "stages", "startedAt", "completedAt"],
+      properties: {
+        inputHash: { type: "string", minLength: 1 }, evidenceSnapshotHash: { type: "string", minLength: 1 },
+        stages: { type: "array" }, startedAt: { type: "string", format: "date-time" }, completedAt: { type: "string", format: "date-time" }
+      }
+    }
+  });
+  if (schemaVersion === "2.6.0") {
+    properties.cognitive = {
+      type: "object", required: ["contractVersion", "rolloutMode", "authorityBoundary"],
+      properties: {
+        contractVersion: { const: "3.1.0" }, rolloutMode: { const: "ENABLED" },
+        authorityBoundary: { type: "string", minLength: 1 }
+      }
+    };
+  }
+  return {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    $id: `https://ai-governance-engine.invalid/contracts/readiness-package/${schemaVersion}`,
+    title: `ReadinessPackage ${schemaVersion}`,
+    description: "Strict top-level integration contract. Local runtime validation additionally enforces cross-ledger hashes, package integrity, JSON safety, and nested cognitive invariants.",
+    "x-contract-coverage": "TOP_LEVEL_AND_GOVERNANCE_INVARIANTS",
+    type: "object",
+    additionalProperties: false,
+    required: fields,
+    properties
+  };
+}
+
 function objectValue(value, path) {
   invariant(value && typeof value === "object" && !Array.isArray(value), `${path} must be an object`);
 }

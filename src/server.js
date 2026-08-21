@@ -10,6 +10,7 @@ import { executeCognitiveRun } from "./cognitive/pipeline.js";
 import { MODEL_POLICY_VIEW_VERSION, modelPolicy, modelPolicyReadiness, publicModelPolicy, publicModelRoleSlots, requiredGovernanceProviders } from "./cognitive/model-policy.js";
 import { createRunStore } from "./cognitive/run-persistence.js";
 import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
+import { readinessPackageJsonSchema } from "./readiness-package-contract.js";
 import { sanitizeRestrictedValue } from "../public/content-policy.js";
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./intake/field-registry.js";
 import { validateApprovedIntakeSnapshot } from "./intake/contracts.js";
@@ -304,6 +305,9 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/v2/models") {
       const policy = modelPolicy();
       return sendJson(response, 200, { schemaVersion: MODEL_POLICY_VIEW_VERSION, mode: "ALWAYS_ON", readiness: modelPolicyReadiness(policy), roleSlots: publicModelRoleSlots(policy), profiles: publicModelPolicy(policy) });
+    }
+    if (request.method === "GET" && url.pathname === "/api/v2/contracts/readiness-package/2.6.0") {
+      return sendJson(response, 200, readinessPackageJsonSchema("2.6.0"));
     }
     if (request.method === "POST" && url.pathname === "/api/v2/runs/preflight") {
       const run = await createPreflight(await readJson(request));

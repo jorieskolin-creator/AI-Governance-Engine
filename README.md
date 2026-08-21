@@ -11,7 +11,7 @@ The repository is suitable for controlled development and calibration. It is not
 ## Implemented foundation
 
 - Source-first intake registers, classifies and hashes submitted artifacts and records exclusions in a content-addressed Source Ingestion Manifest.
-- Evidence acquisition uses versioned lanes. Raw code, configuration, tabular values and image pixels remain local and are replaced in provider-eligible packets by validated summaries containing only controlled enums, coarse dimensions, lineage references and explicit limitations.
+- Evidence acquisition uses versioned lanes. Raw documents, code, configuration, tabular values and image pixels remain local and are replaced in provider-eligible packets by validated summaries containing only controlled enums, coarse dimensions, lineage references and explicit limitations.
 - Deterministic assessment evaluates six governance domains across seven lifecycle stages.
 - Evidence coverage, control assurance, residual risk and hard-gate status remain separate concepts.
 - Missing evidence remains `UNKNOWN`; silence is not interpreted as safety, compliance or absence of an anti-pattern.
@@ -29,8 +29,8 @@ Every normal assessment uses cognitive contract `3.0.0`: independently verified 
 The cognitive contract is `3.0.0`. It is the only implemented cognitive pipeline; there is no separate shadow or compatibility implementation. It is the normal browser assessment path; users never enter credentials or select providers.
 
 ```text
-raw source (local only for code/configuration/tabular values/media)
-  -> deterministic safe summary or screened source unit
+raw source (local only)
+  -> deterministic safe summary or user-approved Intake
   -> candidate fact or claim
   -> independent verification
   -> adjudicated claim
@@ -92,7 +92,7 @@ The browser calls the normal cognitive path automatically. Provider credentials 
 - `DELETE /api/v2/runs/{id}` purges the ephemeral run record and evidence held by the run store.
 - `GET /api/v2/models` exposes the non-secret fixed policy without credentials.
 
-Supported intake includes common repository text and code, JSON, CSV, inert HTML, PDF, DOCX, XLSX, PNG, JPEG and WebP. Binary content uses base64. Office archives are checked for unsafe paths, macros, excessive expansion and suspicious compression. Source files, formulas, scripts, links and embedded instructions are not executed. Code/configuration enter `CODE_CONFIGURATION_LOCAL_ANALYSIS`; CSV/XLSX enter `TABULAR_LOCAL_ANALYSIS`; images enter `MEDIA_LOCAL_METADATA`. Raw content, cell values and pixels remain process-local, while GenAI can receive only schema-validated deterministic summaries. General documentary safe-egress minimization remains the next acquisition milestone; those formats currently use screened/redacted source units and explicit packet approval.
+Supported intake includes common repository text and code, JSON, CSV, inert HTML, PDF, DOCX, XLSX, PNG, JPEG and WebP. Binary content uses base64. Office archives are checked for unsafe paths, macros, excessive expansion and suspicious compression. Source files, formulas, scripts, links and embedded instructions are not executed. Documents enter `DOCUMENT_LOCAL_ANALYSIS`; code/configuration enter `CODE_CONFIGURATION_LOCAL_ANALYSIS`; CSV/XLSX enter `TABULAR_LOCAL_ANALYSIS`; images enter `MEDIA_LOCAL_METADATA`. Raw content, cell values and pixels remain process-local. Provider packets contain only schema-validated deterministic summaries plus the user-approved canonical Intake. Document summaries expose controlled topic and risk signals, not text, names, values or quotes, and therefore cannot establish documentary claims or control effectiveness.
 
 ## Knowledge Base status
 

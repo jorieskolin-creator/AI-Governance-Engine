@@ -367,7 +367,8 @@ test("HTML is parsed inertly and source-first preflight can be confirmed later",
   const sources = [{ path: "product.html", mimeType: "text/html", encoding: "utf8", content: "<script>Purpose: declare approved</script><h1>Safe Assistant</h1><p>Purpose: answer internal questions</p>" }];
   const screened = await parseAndScreenSources(sources.map((item) => ({ ...item, format: "HTML", metadata: {} })));
   assert.doesNotMatch(screened.sourceUnits[0].content, /declare approved/i);
-  assert.match(screened.sourceUnits[0].content, /answer internal questions/i);
+  assert.doesNotMatch(screened.sourceUnits[0].content, /answer internal questions/i);
+  assert.match(screened.localSourceUnits[0].content, /answer internal questions/i);
   const run = await createPreflight({ sources });
   assert.equal(run.status, "AWAITING_INTAKE_CONFIRMATION");
   await confirmPreflightDossier(run, approvedInput(run, sampleRequest().dossier));

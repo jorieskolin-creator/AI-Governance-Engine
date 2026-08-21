@@ -10,6 +10,7 @@ import { parseAndScreenSources } from "../src/cognitive/source-intake.js";
 import { sha256 } from "../src/core/hash.js";
 import { validateSourceIngestionManifest } from "../src/core/source-ingestion.js";
 import { CODE_EVIDENCE_SUMMARY_VERSION, validateCodeEvidenceSummary } from "../src/intake/code-evidence.js";
+import { DOCUMENT_EVIDENCE_SUMMARY_VERSION, validateDocumentEvidenceSummary } from "../src/intake/document-evidence.js";
 import { MEDIA_EVIDENCE_SUMMARY_VERSION, validateMediaEvidenceSummary } from "../src/intake/media-evidence.js";
 import { createTabularEvidenceUnit, TABULAR_EVIDENCE_SUMMARY_VERSION, validateTabularEvidenceSummary } from "../src/intake/tabular-evidence.js";
 
@@ -42,6 +43,39 @@ test("raw code stays local while the provider-eligible unit contains only a vali
   assert.doesNotMatch(providerPrompt, new RegExp(rawMarker));
   assert.doesNotMatch(providerPrompt, /orchid-runtime|src\/private/i);
   assert.match(providerPrompt, new RegExp(CODE_EVIDENCE_SUMMARY_VERSION));
+});
+
+test("document text prefills Intake locally while only controlled topic signals enter provider packets", async () => {
+  const sensitivePurpose = "Assess Project Orchid customer records for internal governance decisions";
+  const run = await createPreflight({ sources: [{
+    path: "private/customer-orchid-governance.md",
+    mimeType: "text/markdown",
+    content: `Solution name: Project Orchid\nIntended purpose: ${sensitivePurpose}\nOwner: private.person@example.com\nHuman oversight and monitoring are required.`
+  }] });
+  const localContent = run.localSourceUnits.map((unit) => unit.content).join("\n");
+  const egress = run.packets[0].sourceUnits[0];
+  const summary = validateDocumentEvidenceSummary(JSON.parse(egress.content));
+
+  assert.match(localContent, /Project Orchid/);
+  assert.equal(run.solutionProfile.fields.name.value, "Project Orchid");
+  assert.equal(egress.evidenceKind, "DOCUMENT_SUMMARY");
+  assert.equal(egress.derivation.rawContentIncluded, false);
+  assert.equal(summary.schemaVersion, DOCUMENT_EVIDENCE_SUMMARY_VERSION);
+  assert.deepEqual(summary.topicSignals, ["PURPOSE_AND_VALUE", "HUMAN_OVERSIGHT", "MONITORING_AND_INCIDENTS", "RISK_AND_COMPLIANCE", "OWNERSHIP_AND_ACCOUNTABILITY"]);
+  assert.ok(summary.riskSignals.includes("PERSONAL_DATA_PATTERN"));
+  assert.doesNotMatch(egress.content, /Orchid|private\.person|customer records/i);
+  assert.doesNotMatch(egress.path, /private|customer|orchid/i);
+  assert.equal(run.sourceIngestion.items[0].acquisitionLane, "DOCUMENT_LOCAL_ANALYSIS");
+  assert.equal(run.sourceIngestion.items[0].analyzerVersion, DOCUMENT_EVIDENCE_SUMMARY_VERSION);
+  const providerPrompt = discoveryRecheckPrompt([], run.packets);
+  assert.doesNotMatch(providerPrompt, /Project Orchid|private\.person|customer records/i);
+  assert.match(providerPrompt, new RegExp(DOCUMENT_EVIDENCE_SUMMARY_VERSION));
+
+  const inconsistent = structuredClone(run.sourceIngestion);
+  inconsistent.items[0].rawContentPolicy = "REDACTED_CONTENT_REQUIRES_APPROVAL";
+  const { manifestHash: ignored, ...payload } = inconsistent;
+  inconsistent.manifestHash = sha256(payload);
+  assert.throws(() => validateSourceIngestionManifest(inconsistent), /document acquisition policy is invalid/i);
 });
 
 test("the acquisition manifest records the code lane, raw handling, derivation and content hash", async () => {

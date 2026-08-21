@@ -94,7 +94,7 @@ test("a supplied dossier still requires confirmation and produces an immutable e
   await assert.rejects(() => confirmPreflightDossier(run, { dossier: structuredClone(SAMPLE_REQUEST.dossier) }), /not awaiting intake confirmation/i);
 });
 
-test("AI discovery recheck returns quote-grounded candidates without overwriting deterministic facts", async () => {
+test("AI discovery recheck cannot recover raw document values from a controlled summary", async () => {
   const run = await createPreflight({ sources: [{ path: "README.md", mimeType: "text/markdown", content: "# FinOps Engine\nSolution name: FinOps Engine\nIntended purpose: Assess FinOps evidence for governance decisions." }] });
   const unit = run.packets[0].sourceUnits[0];
   const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
@@ -108,17 +108,19 @@ test("AI discovery recheck returns quote-grounded candidates without overwriting
   const before = structuredClone(run.solutionProfile);
   const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
   const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
-  assert.equal(result.candidates[0].status, "CANDIDATE");
-  assert.equal(result.candidates[0].recommendation, "ACCEPT_CURRENT");
-  assert.equal(result.candidates.find((item) => item.field === "intendedPurpose").recommendation, "REVIEW_REWRITE");
+  assert.equal(result.candidates[0].status, "REJECTED_UNSUPPORTED");
+  assert.equal(result.candidates[0].recommendation, "RESOLVE_CONFLICT");
+  assert.equal(result.candidates.find((item) => item.field === "intendedPurpose").recommendation, "RESOLVE_CONFLICT");
   assert.ok(result.candidates.some((item) => item.status === "NOT_FOUND" && item.recommendation === "PROVIDE_INFORMATION"));
   assert.equal(result.targetFields.includes("intakeAnswers.SYSTEMIC_RISK_MODEL"), false);
   assert.equal(run.stage, "INTAKE_AI_VERIFICATION_COMPLETED");
   assert.ok(run.trace.some((item) => item.stage === "INTAKE_AI_VERIFICATION" && item.status === "RUNNING"));
-  assert.match(result.candidates[0].limitations[0], /requires user confirmation/i);
+  assert.match(result.candidates[0].limitations[0], /failed citation or recommendation validation/i);
   assert.deepEqual(run.solutionProfile, before);
   assert.equal(run.transmissionManifest[0].stage, "DISCOVERY_RECHECK");
   assert.equal(run.transmissionManifest[0].provider, "ANTHROPIC");
+  assert.equal(run.transmissionManifest[0].containsRawEvidence, false);
+  assert.deepEqual(run.transmissionManifest[0].derivationContracts, ["document-evidence-summary-1.0.0"]);
   assert.ok(run.transmissionManifest[0].approvedAt);
   await assert.rejects(() => recheckDiscovery(run, { approvedPackets }, { policy, client }), /not available from the current run state/i);
 });

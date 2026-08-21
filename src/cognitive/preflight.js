@@ -41,7 +41,7 @@ export function publicPreflightView(run) {
       sourceUnitIds: packet.sourceUnits.map((unit) => unit.id),
       preview: packet.sourceUnits.map((unit) => ({ id: unit.id, path: unit.path, locator: unit.locator, sensitivity: unit.sensitivity, excerpt: unit.content.slice(0, 280) }))
     })),
-    transmissionPolicy: "Only these reviewed packets may be sent to approved providers. Raw code, configuration, tabular values and image pixels remain local; provider packets contain only their versioned deterministic summaries.",
+    transmissionPolicy: "Only these reviewed packets may be sent to approved providers. Raw documents, code, configuration, tabular values and image pixels remain local; provider packets contain only versioned deterministic summaries and the user-approved Intake.",
     solutionProfile: run.solutionProfile,
     sourceIngestion: run.sourceIngestion,
     discoveryRecheck: run.discoveryRecheck ?? null,

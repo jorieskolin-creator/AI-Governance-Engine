@@ -210,7 +210,7 @@ export class PostgresRunStore {
   async releaseRawEvidence(run, options = {}) {
     purgeRunMaterial(run, run.status);
     run.cancelled = false;
-    await this.checkpoint(run, options);
+    if (options.checkpoint !== false) await this.checkpoint(run, options);
   }
 
   async close() { if (this.ownsPool) await this.pool.end(); }

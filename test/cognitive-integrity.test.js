@@ -9,6 +9,7 @@ import { buildActionGroundingRecords, selectPlaybookActions } from "../src/core/
 import { assessAntiPatterns } from "../src/core/assessment.js";
 import { ModelBudget, StructuredModelClient } from "../src/cognitive/provider-client.js";
 import { modelPolicy, requiredGovernanceProviders } from "../src/cognitive/model-policy.js";
+import { cancellationError } from "../src/cognitive/failure-policy.js";
 
 const sourceUnit = {
   id: "unit-1", sourceId: "src-1", path: "src/control.js", locator: "text;lines:1-1", sha256: "source-hash",
@@ -156,6 +157,28 @@ test("provider responses from an unapproved model are rejected and traced", asyn
   await assert.rejects(() => client.generate({ profile, prompt: "test", schemaName: "model_identity", schema, packetHash: "hash", promptVersion: "1" }), /unapproved model/i);
   assert.equal(client.traces[0].status, "FAILED");
   assert.match(client.traces[0].requestId, /^model-request-/);
+});
+
+test("provider cancellation is propagated and classified without retry", async () => {
+  const policy = modelPolicy({ OPENAI_API_KEY: "test", NODE_ENV: "development" });
+  const profile = policy.choose("VERIFICATION");
+  const schema = { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } };
+  const controller = new AbortController();
+  let calls = 0;
+  const client = new StructuredModelClient({
+    policy,
+    signal: controller.signal,
+    budget: new ModelBudget({ maxCalls: 2, maxTokens: 100000 }),
+    transport: async () => {
+      calls += 1;
+      controller.abort(cancellationError("cancel test"));
+      return { value: { ok: true }, responseModel: profile.model, usage: { totalTokens: 1 } };
+    }
+  });
+  await assert.rejects(client.generate({ profile, prompt: "test", schemaName: "cancel", schema, packetHash: "hash", promptVersion: "1" }), /cancel test/i);
+  assert.equal(calls, 1);
+  assert.equal(client.traces[0].failureCode, "RUN_CANCELLED");
+  assert.equal(client.traces[0].retryDisposition, "DO_NOT_RETRY");
 });
 
 test("per-stage model-call budgets fail closed", async () => {

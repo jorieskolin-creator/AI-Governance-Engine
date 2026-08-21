@@ -13,6 +13,7 @@ The repository is suitable for controlled development and calibration. It is not
 - Source-first intake registers, classifies and hashes submitted artifacts and records exclusions in a content-addressed Source Ingestion Manifest.
 - Optional PostgreSQL orchestration persists content-hashed safe checkpoints and uses worker leases to serialize mutation and execution. Raw source units are never written to the orchestration database.
 - Cognitive execution follows a versioned seven-step ledger. Every executable major step is checkpointed before and after work, ordering is deterministic, and the worker lease is renewed at each boundary.
+- Active execution also renews its lease on a timed heartbeat. Cancellation propagates through an abort signal to provider transport, and deterministic failure codes distinguish retryable provider conditions from configuration, budget, cancellation and human-review states.
 - Evidence acquisition uses versioned lanes. Raw documents, code, configuration, tabular values and image pixels remain local and are replaced in provider-eligible packets by validated summaries containing only controlled enums, coarse dimensions, lineage references and explicit limitations. A separate `acquired-fact-package-1.0.0` withholds free text, dates, unknowns, conflicts and policy-excluded fields; users may explicitly select only eligible controlled values for an optional proposal request.
 - Deterministic assessment evaluates six governance domains across seven lifecycle stages.
 - Evidence coverage, control assurance, residual risk and hard-gate status remain separate concepts.
@@ -112,12 +113,12 @@ See [docs/knowledge-base.md](docs/knowledge-base.md) for the runtime manifest an
 
 - The service is a development skeleton, not a multi-tenant production service.
 - Without `DATABASE_URL`, the v2 run store remains process-local and restarts lose active runs. With PostgreSQL, approved Intake and terminal safe state are recoverable; pre-approval recovery requires source re-upload because raw evidence is deliberately excluded, and interrupted provider execution is never resumed automatically.
-- PostgreSQL worker leases prevent concurrent mutation and duplicate execution starts, and are renewed at cognitive step boundaries. Durable queue scheduling, timed heartbeats during an unusually long individual step, retry classification, and automatic interrupted-run replay remain future orchestration milestones.
-- Cancellation purges the run-store copy, but run-scoped abort propagation to an already active provider request is not implemented yet.
+- PostgreSQL worker leases prevent concurrent mutation and duplicate execution starts, and are renewed both at cognitive step boundaries and by a timed heartbeat. Durable queue scheduling and automatic interrupted-run replay remain future orchestration milestones.
+- Cancellation aborts provider requests on the owning worker and purges evidence. In a multi-worker PostgreSQL deployment, cancellation on another worker is observed through failed heartbeat renewal; the current schema does not use PostgreSQL notifications for immediate cross-worker signalling.
 - Authentication and tenant authorization remain production-hardening work.
 - The legacy deterministic endpoint is retained for compatibility and is not the browser assessment path.
 - Run/provider concurrency and financial budgets are enforced per run; durable queues and aggregate service-wide budgets remain future hardening.
-- Production monitoring, centralized audit logging, malware scanning, persistence, incident response and deployment security validation remain future hardening work.
+- Production monitoring, centralized audit logging, malware scanning, long-term package retention, incident response and deployment security validation remain future hardening work.
 - Images currently rely on caller-provided sanitized metadata; a trusted image-sanitization service is not integrated.
 - Knowledge taxonomy, identifiers and release content are not finalized.
 - Final readiness packages are versioned by implementation contract but do not yet pass a separate runtime output-schema validator.

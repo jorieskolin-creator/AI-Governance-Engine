@@ -15,6 +15,7 @@ import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./i
 import { validateApprovedIntakeSnapshot } from "./intake/contracts.js";
 import { createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "./intake/acquired-facts.js";
 import { createCognitiveStepLedger } from "./cognitive/orchestration.js";
+import { cancellationError, classifyCognitiveFailure } from "./cognitive/failure-policy.js";
 
 const port = Number(process.env.PORT ?? 4174);
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
@@ -33,7 +34,11 @@ const contentTypes = { ".html": "text/html; charset=utf-8", ".js": "text/javascr
 const knowledge = await loadKnowledgeSnapshot();
 validateQuestionnaireAgainstRegistry(knowledge.intakeQuestionnaire);
 const runStore = await createRunStore();
+const defaultHeartbeatMs = Math.max(1_000, Math.min(30_000, Math.floor((runStore.leaseMs ?? 90_000) / 3)));
+const cognitiveRunHeartbeatMs = positiveEnvNumber("COGNITIVE_RUN_HEARTBEAT_MS", defaultHeartbeatMs);
+if (runStore.kind === "POSTGRESQL" && cognitiveRunHeartbeatMs >= runStore.leaseMs) throw new Error("COGNITIVE_RUN_HEARTBEAT_MS must be lower than COGNITIVE_RUN_LEASE_MS");
 const rateWindows = new Map();
+const activeExecutions = new Map();
 
 function sendJson(response, status, value) {
   const body = JSON.stringify(sanitizeRestrictedValue(value));
@@ -73,13 +78,21 @@ function rateAllowed(request) {
 }
 
 function safeFailureCode(error) {
-  const message = String(error?.message ?? "");
-  if (/credential|required .*route|governance route/i.test(message)) return "MODEL_ROUTE_UNAVAILABLE";
-  if (/budget/i.test(message)) return "COGNITIVE_BUDGET_EXHAUSTED";
-  if (/refused/i.test(message)) return "PROVIDER_REFUSAL";
-  if (/Provider request failed|HTTP \d+/i.test(message)) return "PROVIDER_REQUEST_FAILED";
-  if (/independent|verification|adjudication/i.test(message)) return "INDEPENDENT_VERIFICATION_INCOMPLETE";
-  return "COGNITIVE_RUN_FAILED";
+  return classifyCognitiveFailure(error).code;
+}
+
+function startLeaseHeartbeat(run, controller) {
+  let renewing = false;
+  const timer = setInterval(async () => {
+    if (renewing || controller.signal.aborted) return;
+    renewing = true;
+    try {
+      if (!await runStore.renewLease(run.id)) controller.abort(cancellationError("Cognitive execution ownership was lost"));
+    } catch { controller.abort(cancellationError("Cognitive execution lease renewal failed")); }
+    finally { renewing = false; }
+  }, cognitiveRunHeartbeatMs);
+  timer.unref?.();
+  return timer;
 }
 
 function automaticApproval(run, policy = modelPolicy()) {
@@ -114,13 +127,18 @@ async function startCognitiveRun(run, request) {
   run.trace.push({ stage: run.stage, status: "QUEUED", at: new Date().toISOString() });
   try { await runStore.checkpoint(run, { leaseOwner: runStore.instanceId }); }
   catch (error) { await runStore.releaseLease(run.id); throw error; }
+  const controller = new AbortController();
+  const heartbeat = startLeaseHeartbeat(run, controller);
+  activeExecutions.set(run.id, controller);
   void (async () => {
+    let cancelled = false;
     try {
       await executeCognitiveRun(run, {
         knowledge,
         policy,
+        signal: controller.signal,
         onCheckpoint: async () => {
-          if (!await runStore.renewLease(run.id)) throw new Error("Cognitive execution lease could not be renewed");
+          if (!await runStore.renewLease(run.id)) throw Object.assign(new Error("Cognitive execution lease could not be renewed"), { failureCode: "ORCHESTRATION_LEASE_LOST", fatal: true });
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
         },
         domainConcurrency: positiveEnvNumber("COGNITIVE_MAX_CONCURRENCY", 3),
@@ -131,15 +149,25 @@ async function startCognitiveRun(run, request) {
         }
       });
     } catch (error) {
-      run.status = "FAILED"; run.stage = "FAILED"; run.failureCode = safeFailureCode(error);
-      run.error = "Cognitive analysis could not complete safely.";
-      run.trace.push({ stage: "FAILED", status: "FAILED", at: new Date().toISOString(), failureCode: run.failureCode, error: run.error });
+      const failure = classifyCognitiveFailure(error);
+      cancelled = failure.code === "RUN_CANCELLED" || run.cancelled;
+      run.status = cancelled ? "CANCELLED" : "FAILED";
+      run.stage = run.status;
+      run.failureCode = failure.code;
+      run.retryDisposition = failure.retryDisposition;
+      run.error = cancelled ? "Cognitive analysis was cancelled." : "Cognitive analysis could not complete safely.";
+      run.trace.push({ stage: run.stage, status: run.status, at: new Date().toISOString(), failureCode: run.failureCode, retryDisposition: run.retryDisposition, error: run.error });
     }
-    try { await runStore.releaseRawEvidence(run, { leaseOwner: runStore.instanceId }); }
+    try { await runStore.releaseRawEvidence(run, cancelled ? { checkpoint: false } : { leaseOwner: runStore.instanceId }); }
     catch {
-      run.status = "FAILED"; run.stage = "DURABLE_CHECKPOINT_FAILED"; run.failureCode = "ORCHESTRATION_CHECKPOINT_FAILED";
-      run.error = "The terminal run state could not be durably checkpointed.";
+      if (!cancelled) {
+        run.status = "FAILED"; run.stage = "DURABLE_CHECKPOINT_FAILED"; run.failureCode = "ORCHESTRATION_CHECKPOINT_FAILED";
+        run.retryDisposition = "REVIEW_REQUIRED";
+        run.error = "The terminal run state could not be durably checkpointed.";
+      }
     }
+    clearInterval(heartbeat);
+    activeExecutions.delete(run.id);
     try { await runStore.releaseLease(run.id); }
     catch { /* The lease expires automatically; terminal state already failed closed above. */ }
   })();
@@ -152,7 +180,7 @@ function publicRunView(run) {
   }));
   return {
     runId: run.id, status: run.status, stage: run.stage, createdAt: run.createdAt, expiresAt: run.expiresAt,
-    completedAt: run.completedAt ?? null, resultAvailable: Boolean(run.result), error: run.error, failureCode: run.failureCode ?? null,
+    completedAt: run.completedAt ?? null, resultAvailable: Boolean(run.result), error: run.error, failureCode: run.failureCode ?? null, retryDisposition: run.retryDisposition ?? null,
     solutionProfile: run.solutionProfile,
     stepLedger: run.stepLedger ? {
       schemaVersion: run.stepLedger.schemaVersion,
@@ -307,6 +335,7 @@ const server = http.createServer(async (request, response) => {
       return run ? sendJson(response, 200, publicRunView(run)) : sendJson(response, 404, { error: "Run not found or expired" });
     }
     if (request.method === "DELETE" && runMatch) {
+      activeExecutions.get(runMatch[1])?.abort(cancellationError("Cognitive run was cancelled by the user"));
       return await runStore.purge(runMatch[1], "CANCELLED") ? sendJson(response, 200, { status: "PURGED" }) : sendJson(response, 404, { error: "Run not found or expired" });
     }
     if (request.method === "GET" && await serveStatic(url.pathname, response)) return;
@@ -324,5 +353,8 @@ const server = http.createServer(async (request, response) => {
 server.listen(port, "0.0.0.0", () => console.log(`AI Governance Engine listening on ${port}`));
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => { server.close(async () => { await runStore.close(); process.exit(0); }); });
+  process.on(signal, () => {
+    for (const controller of activeExecutions.values()) controller.abort(cancellationError(`Cognitive run interrupted by ${signal}`));
+    server.close(async () => { await runStore.close(); process.exit(0); });
+  });
 }

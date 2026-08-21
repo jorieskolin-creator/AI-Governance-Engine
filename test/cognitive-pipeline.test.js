@@ -9,6 +9,7 @@ import { loadKnowledgeSnapshot } from "../src/knowledge/provider.js";
 import { recheckDiscovery } from "../src/cognitive/discovery-recheck.js";
 import { SAMPLE_REQUEST } from "../src/sample.js";
 import { createIntakeResolutionDraft } from "../src/intake/contracts.js";
+import { cancellationError } from "../src/cognitive/failure-policy.js";
 
 function preflightInput(sources) {
   return { dossier: structuredClone(SAMPLE_REQUEST.dossier), sources };
@@ -212,6 +213,28 @@ test("a durable checkpoint failure stops execution before the next provider call
     onCheckpoint: async () => { throw new Error("checkpoint unavailable"); }
   }), /checkpoint unavailable/i);
   assert.equal(providerCalls, 0);
+});
+
+test("run cancellation escapes cognitive fallbacks and stops sequencing", async () => {
+  const run = await createPreflight(preflightInput(broadGovernanceSource()));
+  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
+  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  const controller = new AbortController();
+  let providerCalls = 0;
+  await assert.rejects(executeCognitiveRun(run, {
+    policy,
+    signal: controller.signal,
+    transport: async ({ signal }) => {
+      providerCalls += 1;
+      controller.abort(cancellationError("cancel pipeline"));
+      signal.throwIfAborted();
+    },
+    knowledge: await loadKnowledgeSnapshot({ production: false })
+  }), /cancel pipeline/i);
+  assert.equal(providerCalls, 1);
+  assert.equal(run.stepLedger.records.find((item) => item.step === "SOLUTION_UNDERSTANDING").status, "RUNNING");
+  assert.ok(run.stepLedger.records.slice(2).every((item) => item.status === "PENDING"));
 });
 
 test("single-provider approval fails closed for cross-provider verification", async () => {

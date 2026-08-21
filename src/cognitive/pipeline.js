@@ -19,6 +19,7 @@ import {
   normalizeSolutionCandidates, validateClaimMappings, validateFactCheckCompleteness
 } from "./integrity.js";
 import { completeCognitiveStep, createCognitiveStepLedger, startCognitiveStep } from "./orchestration.js";
+import { rethrowFatal } from "./failure-policy.js";
 
 const HIGH_INTEGRITY = new Set(["HIGH", "CRITICAL"]);
 const unique = (values) => [...new Set(values.filter(Boolean))];
@@ -140,7 +141,7 @@ async function mapLimitSettled(items, limit, worker) {
     while (next < items.length) {
       const index = next; next += 1;
       try { output[index] = await worker(items[index], index); }
-      catch (error) { output[index] = { domain: items[index], status: "FAILED", claims: [], error: error.message }; }
+      catch (error) { rethrowFatal(error); output[index] = { domain: items[index], status: "FAILED", claims: [], error: error.message }; }
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, consume));
@@ -302,7 +303,7 @@ async function runFactCheck({ client, policy, run, synthesis, lockedFindings, pr
 
 export async function executeCognitiveRun(run, options = {}) {
   const now = new Date(); const policy = options.policy ?? modelPolicy(options.env); const budget = options.budget ?? new ModelBudget(options.budgets);
-  const client = options.client ?? new StructuredModelClient({ policy, budget, transport: options.transport }); const knowledge = options.knowledge;
+  const client = options.client ?? new StructuredModelClient({ policy, budget, transport: options.transport, signal: options.signal }); const knowledge = options.knowledge;
   const failedStages = []; const verificationRecords = []; const findingLockRecords = []; const adjudicatedClaims = []; const unresolvedClaims = []; const reanalysisTrace = []; const integrityIncidents = [];
   const claimRecords = new Map(); let claims = []; let lockedFindings = []; let derivedSourceUnits = [];
   run.status = "RUNNING"; run.transmissionManifest = [];
@@ -322,7 +323,7 @@ export async function executeCognitiveRun(run, options = {}) {
         const screened = redactText(derived.content); derived.content = screened.text; derived.sha256 = sha256(screened.text); derived.sensitivity = unique([...derived.sensitivity, ...screened.findings.map((item) => item.type)]);
         for (const finding of screened.findings) run.dlpFindings.push({ id: stableId("dlp", { unitId: derived.id, type: finding.type }), sourceUnitId: derived.id, ...finding, blocking: false });
         derivedSourceUnits.push(derived); packet.sourceUnits.push(derived);
-      } catch (error) { failedStages.push(`MULTIMODAL_EXTRACTION:${unit.id}`); run.trace.push({ stage: "MULTIMODAL_EXTRACTION", status: "UNIT_FAILED", at: new Date().toISOString(), sourceUnitId: unit.id, error: error.message }); }
+      } catch (error) { rethrowFatal(error); failedStages.push(`MULTIMODAL_EXTRACTION:${unit.id}`); run.trace.push({ stage: "MULTIMODAL_EXTRACTION", status: "UNIT_FAILED", at: new Date().toISOString(), sourceUnitId: unit.id, error: error.message }); }
     }
     const multimodalStatus = failedStages.some((item) => item.startsWith("MULTIMODAL")) ? "PARTIAL" : "COMPLETED";
     const multimodalDetail = { derivedSourceUnitCount: derivedSourceUnits.length };
@@ -351,12 +352,14 @@ export async function executeCognitiveRun(run, options = {}) {
         solutionModel = applySolutionFactVerification(candidate, checked.value, verifier);
         if (solutionModel.integrityIssues.length) failedStages.push("SOLUTION_FACT_VERIFICATION_INCOMPLETE");
       } catch (error) {
+        rethrowFatal(error);
         failedStages.push("SOLUTION_FACT_VERIFICATION"); solutionModel = applySolutionFactVerification(candidate, { factResults: [] }, null);
       }
     } else solutionModel = applySolutionFactVerification(candidate, { factResults: [] }, null);
     stage(run, "SOLUTION_UNDERSTANDING", "COMPLETED", { outputHash: solutionModel.hash, verifiedFactCount: solutionModel.verifiedFacts.length, unresolvedFactCount: solutionModel.unresolvedFacts.length });
     solutionStepStatus = "COMPLETED";
   } catch (error) {
+    rethrowFatal(error);
     failedStages.push("SOLUTION_UNDERSTANDING");
     solutionModel = { id: stableId("solution-model", run.dossier), status: "DETERMINISTIC_DOSSIER_ONLY", declared: run.dossier, candidateFacts: [], verifiedFacts: [], unresolvedFacts: [], facts: [], contradictions: [], unknowns: ["Cognitive solution understanding failed."], limitations: [error.message], hash: sha256(run.dossier) };
     stage(run, "SOLUTION_UNDERSTANDING", "FAILED", { error: error.message });
@@ -374,7 +377,7 @@ export async function executeCognitiveRun(run, options = {}) {
       const generated = await client.generate({ profile, prompt: routingPrompt(approvedPackets.flatMap((item) => item.sourceUnits)), schemaName: "semantic_packet_routing", schema: ROUTING_SCHEMA, packetHash: packetHash(approvedPackets), promptVersion: PROMPT_VERSIONS.routing });
       const ambiguousIds = new Set(routing.ambiguous.map((unit) => unit.id));
       for (const route of generated.value.routes) if (ambiguousIds.has(route.sourceUnitId) && route.domains.length) routing.routes.set(route.sourceUnitId, unique(route.domains));
-    } catch (error) { run.trace.push({ stage: "PACKET_ROUTING", status: "SEMANTIC_FALLBACK", at: new Date().toISOString(), error: error.message }); }
+    } catch (error) { rethrowFatal(error); run.trace.push({ stage: "PACKET_ROUTING", status: "SEMANTIC_FALLBACK", at: new Date().toISOString(), error: error.message }); }
     for (const unit of routing.ambiguous) if (!routing.routes.has(unit.id)) routing.routes.set(unit.id, Object.keys(DOMAINS));
   }
   stage(run, "PACKET_ROUTING", "COMPLETED", { ambiguousCount: routing.ambiguous.length });
@@ -461,7 +464,7 @@ export async function executeCognitiveRun(run, options = {}) {
                 recordTransmission(run, "ADJUDICATION", adjudicator, transmittedPackets(run, adjudicator.provider, claimPackets));
                 const adjudicated = await client.generate({ profile: adjudicator, prompt: adjudicationPrompt(claim, history, citedUnits()), schemaName: "claim_adjudication", schema: VERIFICATION_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.adjudication });
                 history.push(verificationRecord(claim, adjudicator, adjudicated.value, "ADJUDICATION"));
-              } catch (error) { failedStages.push(`ADJUDICATION:${claim.id}`); }
+              } catch (error) { rethrowFatal(error); failedStages.push(`ADJUDICATION:${claim.id}`); }
             }
           }
         }
@@ -491,7 +494,7 @@ export async function executeCognitiveRun(run, options = {}) {
     const profile = chooseForPackets(policy, "SYNTHESIS", run, [], { requireAll: false }); synthesisProvider = profile.provider; recordTransmission(run, "CONTROLLED_SYNTHESIS", profile, [], false);
     const generated = await client.generate({ profile, prompt: synthesisPrompt({ solutionModel, lockedFindings, deterministic: provisional, actions: provisional.actions }), schemaName: "readiness_synthesis", schema: SYNTHESIS_SCHEMA, packetHash: provisional.packageHash, promptVersion: PROMPT_VERSIONS.synthesis });
     const sanitized = sanitizeSynthesis(generated.value, provisional, lockedFindings); synthesis = sanitized; integrityIncidents.push(...sanitized.integrityIncidents); stage(run, "CONTROLLED_SYNTHESIS", "COMPLETED"); synthesisStepStatus = "COMPLETED";
-  } catch (error) { failedStages.push("CONTROLLED_SYNTHESIS"); stage(run, "CONTROLLED_SYNTHESIS", "FAILED", { error: error.message }); synthesisStepStatus = "FAILED"; }
+  } catch (error) { rethrowFatal(error); failedStages.push("CONTROLLED_SYNTHESIS"); stage(run, "CONTROLLED_SYNTHESIS", "FAILED", { error: error.message }); synthesisStepStatus = "FAILED"; }
   await finishOrchestrationStep(run, "CONTROLLED_SYNTHESIS", synthesisStepStatus, null, onCheckpoint);
 
   stage(run, "FINAL_FACT_CHECK", "RUNNING");
@@ -519,7 +522,7 @@ export async function executeCognitiveRun(run, options = {}) {
             const adjudicated = createAdjudicatedClaim(claim, [...previous, challenge, record], sourceUnits, knowledge); adjudicatedClaims.push(adjudicated);
             const locked = lockAdjudicatedClaim(claim, adjudicated, sourceUnits); findingLockRecords.push(locked.lockRecord); replacement = locked.finding;
             outcome = replacement ? "RESOLVED" : "UNLOCKED_AFTER_REANALYSIS"; rationale = record.rationale;
-          } catch (error) { verificationRecords.push(challenge); rationale = error.message; }
+          } catch (error) { rethrowFatal(error); verificationRecords.push(challenge); rationale = error.message; }
         }
         lockedFindings = lockedFindings.filter((item) => item.id !== findingId); if (replacement) lockedFindings.push(replacement);
         reanalysisTrace.push({ id: stableId("reanalysis", { findingId, outcome, rationale }), trigger: "FACT_CHECK_GROUNDING_CHALLENGE", findingId, replacementFindingId: replacement?.id ?? null, status: outcome, rationale, consequence: "The deterministic package was recomputed from the re-adjudicated finding set." });
@@ -533,6 +536,7 @@ export async function executeCognitiveRun(run, options = {}) {
     }
     stage(run, "FINAL_FACT_CHECK", "COMPLETED", { supported: factCheck.supported, integrityValid: factCheckIntegrity.valid }); factCheckStepStatus = "COMPLETED";
   } catch (error) {
+    rethrowFatal(error);
     failedStages.push("FINAL_FACT_CHECK"); synthesis = { ...deterministicNarrative(provisional, lockedFindings), quarantine: { status: "QUARANTINED", items: [{ text: "Generated prose was discarded because the fact-check stage failed.", reason: error.message }] } }; factCheckIntegrity = { valid: false, error: error.message }; stage(run, "FINAL_FACT_CHECK", "FAILED", { error: error.message }); factCheckStepStatus = "FAILED";
   }
   await finishOrchestrationStep(run, "FINAL_FACT_CHECK", factCheckStepStatus, { supported: factCheck.supported, integrityValid: factCheckIntegrity.valid }, onCheckpoint);

@@ -54,7 +54,9 @@ test("the service exposes an always-on cognitive contract without client credent
 });
 
 test("asynchronous provider failures expose a stable limitation instead of provider detail", () => {
-  assert.match(server, /run\.failureCode = safeFailureCode\(error\)/);
-  assert.match(server, /run\.error = "Cognitive analysis could not complete safely\."/);
+  assert.match(server, /const failure = classifyCognitiveFailure\(error\)/);
+  assert.match(server, /run\.failureCode = failure\.code/);
+  assert.match(server, /run\.retryDisposition = failure\.retryDisposition/);
+  assert.match(server, /"Cognitive analysis could not complete safely\."/);
   assert.doesNotMatch(server, /run\.error = process\.env\.NODE_ENV/);
 });

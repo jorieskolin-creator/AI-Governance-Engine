@@ -1,4 +1,5 @@
 import { sha256, stableStringify } from "../core/hash.js";
+import { classifyCognitiveFailure } from "./failure-policy.js";
 
 function parseJson(value, label) {
   try { return JSON.parse(value); }
@@ -49,8 +50,9 @@ export function assertOpenAiStrictSchema(schema, path = "$") {
   if (types.includes("array") && schema.items) assertOpenAiStrictSchema(schema.items, `${path}[]`);
 }
 
-async function requestJson(url, init, timeoutMs) {
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+async function requestJson(url, init, timeoutMs, signal) {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const response = await fetch(url, { ...init, signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = body?.error?.message ?? body?.message ?? `HTTP ${response.status}`;
@@ -59,7 +61,7 @@ async function requestJson(url, init, timeoutMs) {
   return body;
 }
 
-function openAiRequest(profile, credential, prompt, schemaName, schema, media = []) {
+function openAiRequest(profile, credential, prompt, schemaName, schema, media = [], signal) {
   assertOpenAiStrictSchema(schema);
   return requestJson("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -72,14 +74,14 @@ function openAiRequest(profile, credential, prompt, schemaName, schema, media = 
       max_output_tokens: profile.maxOutputTokens,
       store: false
     })
-  }, 120_000).then((body) => ({
+  }, 120_000, signal).then((body) => ({
     value: parseJson(openAiOutput(body), "OpenAI"),
     responseModel: body.model,
     usage: { inputTokens: body.usage?.input_tokens ?? 0, outputTokens: body.usage?.output_tokens ?? 0, totalTokens: body.usage?.total_tokens ?? 0 }
   }));
 }
 
-function anthropicRequest(profile, credential, prompt, schemaName, schema, media = []) {
+function anthropicRequest(profile, credential, prompt, schemaName, schema, media = [], signal) {
   return requestJson("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": credential, "anthropic-version": "2023-06-01", "content-type": "application/json" },
@@ -90,14 +92,14 @@ function anthropicRequest(profile, credential, prompt, schemaName, schema, media
       output_config: { effort: profile.effort, format: { type: "json_schema", schema } },
       messages: [{ role: "user", content: [{ type: "text", text: prompt }, ...media.map((item) => ({ type: "image", source: { type: "base64", media_type: item.mimeType, data: item.data } }))] }]
     })
-  }, 120_000).then((body) => ({
+  }, 120_000, signal).then((body) => ({
     value: parseJson(anthropicOutput(body), "Anthropic"),
     responseModel: body.model,
     usage: { inputTokens: body.usage?.input_tokens ?? 0, outputTokens: body.usage?.output_tokens ?? 0, totalTokens: (body.usage?.input_tokens ?? 0) + (body.usage?.output_tokens ?? 0) }
   }));
 }
 
-function geminiRequest(profile, credential, prompt, schemaName, schema, media = []) {
+function geminiRequest(profile, credential, prompt, schemaName, schema, media = [], signal) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(profile.model)}:generateContent`;
   return requestJson(url, {
     method: "POST",
@@ -109,7 +111,7 @@ function geminiRequest(profile, credential, prompt, schemaName, schema, media = 
         thinkingConfig: { thinkingLevel: profile.thinkingLevel }
       }
     })
-  }, 120_000).then((body) => ({
+  }, 120_000, signal).then((body) => ({
     value: parseJson(geminiOutput(body), "Gemini"),
     responseModel: profile.model,
     usage: { inputTokens: body.usageMetadata?.promptTokenCount ?? 0, outputTokens: body.usageMetadata?.candidatesTokenCount ?? 0, totalTokens: body.usageMetadata?.totalTokenCount ?? 0 }
@@ -173,10 +175,11 @@ function responseModelMatches(configured, returned) {
 }
 
 export class StructuredModelClient {
-  constructor({ policy, budget, transport } = {}) {
+  constructor({ policy, budget, transport, signal } = {}) {
     this.policy = policy;
     this.budget = budget ?? new ModelBudget();
     this.transport = transport;
+    this.signal = signal;
     this.traces = [];
   }
 
@@ -184,17 +187,19 @@ export class StructuredModelClient {
     const requestHash = sha256({ profile: profile.id, prompt, schemaName, schema, packetHash, promptVersion, media: media.map((item) => ({ mimeType: item.mimeType, sha256: sha256(Buffer.from(item.data, "base64")) })) });
     let lastError;
     for (let retry = 0; retry <= 1; retry += 1) {
+      this.signal?.throwIfAborted();
       this.budget.reserve(profile.role, profile.maxOutputTokens ?? 0);
       const started = Date.now();
       const repairPrompt = retry === 0 ? prompt : `${prompt}\n\nSCHEMA_REPAIR: The previous response was malformed or violated the schema. Return one complete JSON value that exactly matches the supplied schema.`;
       try {
         const response = this.transport
-          ? await this.transport({ profile, prompt: repairPrompt, schemaName, schema, media, retry })
+          ? await this.transport({ profile, prompt: repairPrompt, schemaName, schema, media, retry, signal: this.signal })
           : profile.provider === "OPENAI"
-            ? await openAiRequest(profile, this.policy.credentials.OPENAI, repairPrompt, schemaName, schema, media)
+            ? await openAiRequest(profile, this.policy.credentials.OPENAI, repairPrompt, schemaName, schema, media, this.signal)
             : profile.provider === "ANTHROPIC"
-              ? await anthropicRequest(profile, this.policy.credentials.ANTHROPIC, repairPrompt, schemaName, schema, media)
-              : await geminiRequest(profile, this.policy.credentials.GEMINI, repairPrompt, schemaName, schema, media);
+              ? await anthropicRequest(profile, this.policy.credentials.ANTHROPIC, repairPrompt, schemaName, schema, media, this.signal)
+              : await geminiRequest(profile, this.policy.credentials.GEMINI, repairPrompt, schemaName, schema, media, this.signal);
+        this.signal?.throwIfAborted();
         if (!responseModelMatches(profile.model, response.responseModel)) throw new Error(`Provider returned unapproved model ${response.responseModel ?? "UNKNOWN"}; expected ${profile.model}`);
         validateSchema(response.value, schema);
         this.budget.record(response.usage ?? {}, profile.role);
@@ -212,6 +217,7 @@ export class StructuredModelClient {
   }
 
   trace(profile, promptVersion, schemaName, packetHash, requestHash, started, response, retry, error) {
+    const failure = error ? classifyCognitiveFailure(error) : null;
     return {
       id: `model-event-${sha256({ requestHash, retry, started }).slice(0, 24)}`,
       requestId: `model-request-${requestHash.slice(0, 24)}`, provider: profile.provider, configuredModel: profile.model,
@@ -220,6 +226,8 @@ export class StructuredModelClient {
       promptVersion, schemaName, schemaVersion: "3.1.0", packetHash, requestHash,
       usage: response?.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, latencyMs: Date.now() - started,
       retry, refusal: Boolean(error?.refusal), status: error ? "FAILED" : "COMPLETED", error: error ? error.message : null,
+      failureCode: failure?.code ?? null,
+      retryDisposition: failure?.code === "STRUCTURED_OUTPUT_INVALID" && retry > 0 ? "REVIEW_REQUIRED" : failure?.retryDisposition ?? null,
       outputHash: response ? sha256(stableStringify(response.value)) : null
     };
   }

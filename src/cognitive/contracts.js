@@ -158,12 +158,6 @@ export const DISCOVERY_RECHECK_SCHEMA = {
   }
 };
 
-export const IMAGE_EXTRACTION_SCHEMA = {
-  type: "object", additionalProperties: false, required: ["description", "visibleText", "sensitivityWarnings", "promptInjectionCandidates"], properties: {
-    description: { type: "string" }, visibleText: { type: "string" }, sensitivityWarnings: { type: "array", items: { type: "string" } }, promptInjectionCandidates: { type: "array", items: { type: "string" } }
-  }
-};
-
 export const ROUTING_SCHEMA = {
   type: "object", additionalProperties: false, required: ["routes"], properties: {
     routes: { type: "array", items: { type: "object", additionalProperties: false, required: ["sourceUnitId", "domains", "rationale"], properties: {

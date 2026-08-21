@@ -37,9 +37,9 @@ async function requestJson(url, init, timeoutMs, signal) {
   return body;
 }
 
-function providerRequest(profile, credential, prompt, schemaName, schema, media = [], signal) {
+function providerRequest(profile, credential, prompt, schemaName, schema, signal) {
   if (!credential) throw new Error(`The server credential required for ${profile.provider} is unavailable`);
-  const request = serializeProviderRequest(profile, prompt, schemaName, schema, media);
+  const request = serializeProviderRequest(profile, prompt, schemaName, schema);
   return requestJson(request.url, {
     method: "POST",
     headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" },
@@ -116,7 +116,8 @@ export class StructuredModelClient {
   }
 
   async generate({ profile, prompt, schemaName, schema, packetHash, promptVersion, media = [] }) {
-    const requestHash = sha256({ profile: profile.id, prompt, schemaName, schema, packetHash, promptVersion, media: media.map((item) => ({ mimeType: item.mimeType, sha256: sha256(Buffer.from(item.data, "base64")) })) });
+    if (media.length) throw new Error("Provider transmission cannot contain media; only local deterministic media summaries are allowed");
+    const requestHash = sha256({ profile: profile.id, prompt, schemaName, schema, packetHash, promptVersion });
     let lastError;
     for (let retry = 0; retry <= 1; retry += 1) {
       this.signal?.throwIfAborted();
@@ -125,8 +126,8 @@ export class StructuredModelClient {
       const repairPrompt = retry === 0 ? prompt : `${prompt}\n\nSCHEMA_REPAIR: The previous response was malformed or violated the schema. Return one complete JSON value that exactly matches the supplied schema.`;
       try {
         const response = this.transport
-          ? await this.transport({ profile, prompt: repairPrompt, schemaName, schema, media, retry, signal: this.signal })
-          : await providerRequest(profile, this.policy.credentials[profile.provider], repairPrompt, schemaName, schema, media, this.signal);
+          ? await this.transport({ profile, prompt: repairPrompt, schemaName, schema, media: [], retry, signal: this.signal })
+          : await providerRequest(profile, this.policy.credentials[profile.provider], repairPrompt, schemaName, schema, this.signal);
         this.signal?.throwIfAborted();
         if (!responseModelMatches(profile.model, response.responseModel)) throw new Error(`Provider returned unapproved model ${response.responseModel ?? "UNKNOWN"}; expected ${profile.model}`);
         validateSchema(response.value, schema);

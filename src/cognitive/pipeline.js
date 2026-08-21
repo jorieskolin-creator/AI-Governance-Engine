@@ -3,19 +3,18 @@ import { assessVerifiedSolution } from "../engine.js";
 import { sha256, stableId } from "../core/hash.js";
 import {
   COGNITIVE_CONTRACT_VERSION, createGovernanceClaim, DOMAIN_CLAIMS_SCHEMA, FACT_CHECK_SCHEMA,
-  IMAGE_EXTRACTION_SCHEMA, ROUTING_SCHEMA, SOLUTION_FACT_VERIFICATION_SCHEMA, SOLUTION_MODEL_SCHEMA,
+  ROUTING_SCHEMA, SOLUTION_FACT_VERIFICATION_SCHEMA, SOLUTION_MODEL_SCHEMA,
   SYNTHESIS_SCHEMA, VERIFICATION_SCHEMA
 } from "./contracts.js";
 import { ModelBudget, StructuredModelClient } from "./provider-client.js";
 import { modelPolicy } from "./model-policy.js";
-import { redactText } from "./source-intake.js";
 import {
-  adjudicationPrompt, domainPrompt, factCheckPrompt, imageExtractionPrompt, packetHash, PROMPT_VERSIONS,
+  adjudicationPrompt, domainPrompt, factCheckPrompt, packetHash, PROMPT_VERSIONS,
   rescanPrompt, routingPrompt, solutionFactVerificationPrompt, solutionPrompt, synthesisPrompt, verificationPrompt
 } from "./prompts.js";
 import {
   applySolutionFactVerification, buildAssessmentCoverageMatrix, consolidateClaims, createAdjudicatedClaim,
-  createDerivedSourceUnit, evaluatePublicationGate, evidenceLinksForClaim, lockAdjudicatedClaim, assessmentWorkItems,
+  evaluatePublicationGate, evidenceLinksForClaim, lockAdjudicatedClaim, assessmentWorkItems,
   normalizeSolutionCandidates, validateClaimMappings, validateFactCheckCompleteness
 } from "./integrity.js";
 import { completeCognitiveStep, createCognitiveStepLedger, startCognitiveStep } from "./orchestration.js";
@@ -304,31 +303,14 @@ export async function executeCognitiveRun(run, options = {}) {
   const now = new Date(); const policy = options.policy ?? modelPolicy(options.env); const budget = options.budget ?? new ModelBudget(options.budgets);
   const client = options.client ?? new StructuredModelClient({ policy, budget, transport: options.transport, signal: options.signal }); const knowledge = options.knowledge;
   const failedStages = []; const verificationRecords = []; const findingLockRecords = []; const adjudicatedClaims = []; const unresolvedClaims = []; const reanalysisTrace = []; const integrityIncidents = [];
-  const claimRecords = new Map(); let claims = []; let lockedFindings = []; let derivedSourceUnits = [];
+  const claimRecords = new Map(); let claims = []; let lockedFindings = []; const derivedSourceUnits = [];
   run.status = "RUNNING"; run.transmissionManifest = [];
   run.stepLedger ??= createCognitiveStepLedger();
   const onCheckpoint = options.onCheckpoint ?? (async () => {});
 
   const imageUnits = allUnits(run.packets).filter((unit) => unit.media?.data);
-  if (imageUnits.length) {
-    stage(run, "MULTIMODAL_EXTRACTION", "RUNNING");
-    await beginOrchestrationStep(run, "MULTIMODAL_EXTRACTION", onCheckpoint);
-    for (const unit of imageUnits) {
-      const packet = run.packets.find((item) => item.sourceUnits.includes(unit));
-      try {
-        const profile = chooseForPackets(policy, "EXTRACTION", run, [packet]); recordTransmission(run, "MULTIMODAL_EXTRACTION", profile, [packet]);
-        const generated = await client.generate({ profile, prompt: imageExtractionPrompt(unit), schemaName: "image_evidence_extraction", schema: IMAGE_EXTRACTION_SCHEMA, packetHash: packet.hash, promptVersion: PROMPT_VERSIONS.imageExtraction, media: [unit.media] });
-        const derived = createDerivedSourceUnit(unit, generated.value, profile);
-        const screened = redactText(derived.content); derived.content = screened.text; derived.sha256 = sha256(screened.text); derived.sensitivity = unique([...derived.sensitivity, ...screened.findings.map((item) => item.type)]);
-        for (const finding of screened.findings) run.dlpFindings.push({ id: stableId("dlp", { unitId: derived.id, type: finding.type }), sourceUnitId: derived.id, ...finding, blocking: false });
-        derivedSourceUnits.push(derived); packet.sourceUnits.push(derived);
-      } catch (error) { rethrowFatal(error); failedStages.push(`MULTIMODAL_EXTRACTION:${unit.id}`); run.trace.push({ stage: "MULTIMODAL_EXTRACTION", status: "UNIT_FAILED", at: new Date().toISOString(), sourceUnitId: unit.id, error: error.message }); }
-    }
-    const multimodalStatus = failedStages.some((item) => item.startsWith("MULTIMODAL")) ? "PARTIAL" : "COMPLETED";
-    const multimodalDetail = { derivedSourceUnitCount: derivedSourceUnits.length };
-    stage(run, "MULTIMODAL_EXTRACTION", multimodalStatus, multimodalDetail);
-    await finishOrchestrationStep(run, "MULTIMODAL_EXTRACTION", multimodalStatus, multimodalDetail, onCheckpoint);
-  } else await finishOrchestrationStep(run, "MULTIMODAL_EXTRACTION", "SKIPPED", { reason: "NO_MEDIA_UNITS" }, onCheckpoint);
+  if (imageUnits.length) throw new Error("Provider-eligible packets must not contain media bytes");
+  await finishOrchestrationStep(run, "MULTIMODAL_EXTRACTION", "SKIPPED", { reason: "LOCAL_MEDIA_SUMMARIES_ONLY" }, onCheckpoint);
 
   const sourceUnits = allUnits(run.packets);
   stage(run, "SOLUTION_UNDERSTANDING", "RUNNING");
@@ -441,13 +423,13 @@ export async function executeCognitiveRun(run, options = {}) {
       catch (error) { history.push(verificationRecord(claim, null, { status: "NOT_VERIFIABLE", rationale: error.message, checkedSourceUnitIds: [], conflictingSourceUnitIds: [] }, "PRIMARY")); failedStages.push(`CROSS_PROVIDER_VERIFICATION:${claim.id}`); }
       if (verifierProfile) {
         const approvedPackets = transmittedPackets(run, verifierProfile.provider, claimPackets); recordTransmission(run, "EVIDENCE_VERIFICATION", verifierProfile, approvedPackets);
-        const checked = await client.generate({ profile: verifierProfile, prompt: verificationPrompt(claim, citedUnits()), schemaName: "claim_verification", schema: VERIFICATION_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.verification, media: citedUnits().filter((unit) => unit.media?.data).map((unit) => unit.media) });
+        const checked = await client.generate({ profile: verifierProfile, prompt: verificationPrompt(claim, citedUnits()), schemaName: "claim_verification", schema: VERIFICATION_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.verification });
         let verification = verificationRecord(claim, verifierProfile, checked.value, "PRIMARY"); history.push(verification);
         if (shouldRescan(claim, verification, consolidated.contradictionGraph, sourceUnits)) {
           const extractorProfile = policy.profiles.find((item) => item.id === claim.extractor.profileId);
           if (extractorProfile) {
             recordTransmission(run, "TARGETED_RESCAN", extractorProfile, transmittedPackets(run, extractorProfile.provider, claimPackets));
-            const rescanned = await client.generate({ profile: extractorProfile, prompt: rescanPrompt(claim, verification, citedUnits()), schemaName: "targeted_rescan", schema: DOMAIN_CLAIMS_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.rescan, media: citedUnits().filter((unit) => unit.media?.data).map((unit) => unit.media) });
+            const rescanned = await client.generate({ profile: extractorProfile, prompt: rescanPrompt(claim, verification, citedUnits()), schemaName: "targeted_rescan", schema: DOMAIN_CLAIMS_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.rescan });
             if (rescanned.value.claims[0]) {
               try {
                 const revised = createGovernanceClaim(rescanned.value.claims[0], { ...claim.extractor, rescanOf: originalClaim.id });

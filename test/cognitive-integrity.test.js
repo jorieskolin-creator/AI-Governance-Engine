@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createGovernanceClaim } from "../src/cognitive/contracts.js";
 import {
-  buildAssessmentCoverageMatrix, consolidateClaims, createAdjudicatedClaim, createDerivedSourceUnit,
+  buildAssessmentCoverageMatrix, consolidateClaims, createAdjudicatedClaim,
   evaluatePublicationGate, lockAdjudicatedClaim, validateClaimMappings, validateFactCheckCompleteness
 } from "../src/cognitive/integrity.js";
 import { buildActionGroundingRecords, selectPlaybookActions } from "../src/core/playbook-engine.js";
@@ -54,20 +54,6 @@ test("extractor and verifier cannot raise assurance above the lowest accepted ce
   const adjudicated = createAdjudicatedClaim(candidate, [verification({ acceptedAssuranceState: "TESTED" })], [sourceUnit], knowledge);
   const { finding } = lockAdjudicatedClaim(candidate, adjudicated, [sourceUnit]);
   assert.equal(finding.proposedAssuranceState, "IMPLEMENTED");
-});
-
-test("derived multimodal text preserves immutable parent lineage", () => {
-  const parent = { ...sourceUnit, id: "image-unit", content: "[IMAGE CONTENT]", mimeType: "image/png", media: { mimeType: "image/png", data: "AA==" } };
-  const before = structuredClone(parent);
-  const derived = createDerivedSourceUnit(parent, { description: "Architecture diagram", visibleText: "Sandbox", sensitivityWarnings: [], promptInjectionCandidates: [] }, { provider: "MOONSHOT", model: "vision" });
-  assert.deepEqual(parent, before);
-  assert.equal(derived.parentSourceUnitId, parent.id);
-  assert.equal(derived.evidenceClass, "INFERRED");
-  assert.equal(derived.assuranceCeiling, "DECLARED");
-  assert.notEqual(derived.sha256, parent.sha256);
-  const visualClaim = claim({ sourceUnitIds: [parent.id], evidenceQuotes: [{ sourceUnitId: parent.id, quote: "[IMAGE CONTENT]" }] });
-  const visualAdjudication = createAdjudicatedClaim(visualClaim, [verification({ checkedSourceUnitIds: [parent.id] })], [parent], knowledge);
-  assert.equal(visualAdjudication.integrityStatus, "FAILED");
 });
 
 test("coverage is object-level and cannot be satisfied by one parent claim", () => {

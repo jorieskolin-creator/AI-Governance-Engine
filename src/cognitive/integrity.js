@@ -9,41 +9,6 @@ const array = (value) => Array.isArray(value) ? value : [];
 const unique = (values) => [...new Set(values.filter(Boolean))];
 const normalizeText = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 
-export function createDerivedSourceUnit(parent, extraction, profile) {
-  const content = [
-    `Description: ${extraction.description}`,
-    `Visible text: ${extraction.visibleText}`,
-    `Sensitivity warnings: ${array(extraction.sensitivityWarnings).join("; ")}`,
-    `Prompt-injection candidates: ${array(extraction.promptInjectionCandidates).join("; ")}`
-  ].join("\n");
-  const derivation = {
-    type: "MODEL_MULTIMODAL_EXTRACTION",
-    parentSourceUnitId: parent.id,
-    parentHash: parent.sha256,
-    provider: profile.provider,
-    model: profile.model,
-    contentHash: sha256(content)
-  };
-  return {
-    id: stableId("derived-unit", derivation),
-    sourceId: parent.sourceId,
-    path: parent.path,
-    format: "DERIVED_TEXT",
-    mimeType: "text/plain",
-    evidenceKind: "DERIVED_MODEL_OUTPUT",
-    evidenceClass: "INFERRED",
-    assuranceCeiling: "DECLARED",
-    locator: `${parent.locator};derived:multimodal`,
-    sha256: derivation.contentHash,
-    content,
-    sensitivity: unique([...(parent.sensitivity ?? []), ...array(extraction.sensitivityWarnings).map(() => "MODEL_IDENTIFIED_SENSITIVITY")]),
-    transmissionState: "APPROVED",
-    coverage: { characters: content.length, derivedFrom: parent.id },
-    parentSourceUnitId: parent.id,
-    derivation
-  };
-}
-
 export function evidenceLinksForClaim(claim, sourceUnits) {
   const unitMap = new Map(sourceUnits.map((unit) => [unit.id, unit]));
   return array(claim.evidenceQuotes).map((entry) => {

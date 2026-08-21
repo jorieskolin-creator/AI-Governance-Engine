@@ -3,19 +3,19 @@ const PROVIDER_ADAPTERS = Object.freeze({
     provider: "OPENAI",
     endpoint: "https://api.openai.com/v1/responses",
     protocol: "RESPONSES",
-    capabilities: Object.freeze({ strictJsonSchema: true, imageInput: true, reasoningEffort: true })
+    capabilities: Object.freeze({ strictJsonSchema: true, imageInput: false, reasoningEffort: true })
   }),
   XAI: Object.freeze({
     provider: "XAI",
     endpoint: "https://api.x.ai/v1/responses",
     protocol: "RESPONSES",
-    capabilities: Object.freeze({ strictJsonSchema: true, imageInput: true, reasoningEffort: true })
+    capabilities: Object.freeze({ strictJsonSchema: true, imageInput: false, reasoningEffort: true })
   }),
   MOONSHOT: Object.freeze({
     provider: "MOONSHOT",
     endpoint: "https://api.moonshot.ai/v1/chat/completions",
     protocol: "CHAT_COMPLETIONS",
-    capabilities: Object.freeze({ strictJsonSchema: true, imageInput: true, reasoningEffort: true })
+    capabilities: Object.freeze({ strictJsonSchema: true, imageInput: false, reasoningEffort: true })
   })
 });
 
@@ -43,19 +43,12 @@ export function assertStrictSchema(schema, path = "$") {
   }
 }
 
-function dataUrl(item) {
-  return `data:${item.mimeType};base64,${item.data}`;
-}
-
-function responsesRequest(profile, prompt, schemaName, schema, media) {
+function responsesRequest(profile, prompt, schemaName, schema) {
   return {
     model: profile.model,
     input: [{
       role: "developer",
-      content: [
-        { type: "input_text", text: prompt },
-        ...media.map((item) => ({ type: "input_image", image_url: dataUrl(item), detail: "high" }))
-      ]
+      content: [{ type: "input_text", text: prompt }]
     }],
     reasoning: { effort: profile.effort },
     text: { verbosity: "low", format: { type: "json_schema", name: schemaName, strict: true, schema } },
@@ -64,13 +57,10 @@ function responsesRequest(profile, prompt, schemaName, schema, media) {
   };
 }
 
-function chatCompletionsRequest(profile, prompt, schemaName, schema, media) {
-  const content = media.length
-    ? [{ type: "text", text: prompt }, ...media.map((item) => ({ type: "image_url", image_url: { url: dataUrl(item) } }))]
-    : prompt;
+function chatCompletionsRequest(profile, prompt, schemaName, schema) {
   return {
     model: profile.model,
-    messages: [{ role: "user", content }],
+    messages: [{ role: "user", content: prompt }],
     reasoning_effort: profile.effort,
     response_format: { type: "json_schema", json_schema: { name: schemaName, strict: true, schema } },
     max_completion_tokens: profile.maxOutputTokens
@@ -80,12 +70,12 @@ function chatCompletionsRequest(profile, prompt, schemaName, schema, media) {
 export function serializeProviderRequest(profile, prompt, schemaName, schema, media = []) {
   const adapter = providerAdapter(profile.provider);
   assertStrictSchema(schema);
-  if (media.length && !adapter.capabilities.imageInput) throw new Error(`${profile.provider} profile ${profile.id} is not approved for image input`);
+  if (media.length) throw new Error("Provider transmission cannot contain media; only local deterministic media summaries are allowed");
   return {
     url: adapter.endpoint,
     body: adapter.protocol === "RESPONSES"
-      ? responsesRequest(profile, prompt, schemaName, schema, media)
-      : chatCompletionsRequest(profile, prompt, schemaName, schema, media)
+      ? responsesRequest(profile, prompt, schemaName, schema)
+      : chatCompletionsRequest(profile, prompt, schemaName, schema)
   };
 }
 

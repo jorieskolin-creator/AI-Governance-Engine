@@ -253,7 +253,7 @@ export async function parseAndScreenSources(sources, options = {}) {
           const unit = {
             id: stableId("unit", { sourceId, locator: segment.locator, sourceHash }), sourceId, path: safePath,
             format: source.format, mimeType: source.mimeType, evidenceKind: source.metadata?.kind ?? "DOCUMENT", evidenceClass: source.metadata?.kind === "DECLARATION" ? "DECLARED" : "OBSERVED", assuranceCeiling: assuranceCeiling(source), locator: segment.locator, sha256: sourceHash,
-            content: "[IMAGE CONTENT — transmit only after explicit approval]", media: segment.media,
+            content: "[IMAGE CONTENT — LOCAL ONLY]", media: segment.media,
             sensitivity: sanitized ? [] : ["UNSCREENED_IMAGE"], transmissionState: "PENDING_APPROVAL", coverage: { images: 1 }
           };
           localUnits.push(unit);

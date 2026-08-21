@@ -21,6 +21,7 @@ const credentials = {
 
 test("the canonical provider catalog contains only OpenAI, xAI and Moonshot", () => {
   assert.deepEqual([...COGNITIVE_PROVIDERS].sort(), ["MOONSHOT", "OPENAI", "XAI"]);
+  assert.ok(COGNITIVE_PROVIDERS.every((provider) => providerAdapter(provider).capabilities.imageInput === false));
   assert.throws(() => providerAdapter("LEGACY_PROVIDER"), /unsupported cognitive provider/i);
 });
 
@@ -66,19 +67,34 @@ test("production routing requires approval of the exact profile and model identi
 
 test("provider adapters translate one canonical schema without changing it", () => {
   const policy = modelPolicy(credentials);
-  const media = [{ mimeType: "image/png", data: "AA==" }];
-  const openai = serializeProviderRequest(policy.choose("VERIFICATION"), "safe packet", "result", schema, media);
-  const xai = serializeProviderRequest(policy.choose("ADJUDICATION"), "safe packet", "result", schema, media);
-  const moonshot = serializeProviderRequest(policy.choose("SOLUTION_UNDERSTANDING"), "safe packet", "result", schema, media);
+  const openai = serializeProviderRequest(policy.choose("VERIFICATION"), "safe packet", "result", schema);
+  const xai = serializeProviderRequest(policy.choose("ADJUDICATION"), "safe packet", "result", schema);
+  const moonshot = serializeProviderRequest(policy.choose("SOLUTION_UNDERSTANDING"), "safe packet", "result", schema);
 
   for (const request of [openai, xai]) {
     assert.equal(request.body.store, false);
     assert.strictEqual(request.body.text.format.schema, schema);
-    assert.match(request.body.input[0].content[1].image_url, /^data:image\/png;base64,/);
+    assert.deepEqual(request.body.input[0].content, [{ type: "input_text", text: "safe packet" }]);
   }
   assert.strictEqual(moonshot.body.response_format.json_schema.schema, schema);
-  assert.match(moonshot.body.messages[0].content[1].image_url.url, /^data:image\/png;base64,/);
+  assert.equal(moonshot.body.messages[0].content, "safe packet");
   assert.equal(moonshot.body.max_completion_tokens, policy.choose("SOLUTION_UNDERSTANDING").maxOutputTokens);
+});
+
+test("media bytes fail closed before adapters or custom transports can receive them", async () => {
+  const policy = modelPolicy(credentials);
+  const profile = policy.choose("VERIFICATION");
+  const media = [{ mimeType: "image/png", data: "AA==" }];
+  assert.throws(() => serializeProviderRequest(profile, "safe packet", "result", schema, media), /cannot contain media/i);
+
+  let transportCalled = false;
+  const client = new StructuredModelClient({
+    policy,
+    transport: async () => { transportCalled = true; throw new Error("must not be called"); }
+  });
+  await assert.rejects(client.generate({ profile, prompt: "safe packet", schemaName: "result", schema, packetHash: "hash", promptVersion: "1", media }), /cannot contain media/i);
+  assert.equal(transportCalled, false);
+  assert.equal(client.traces.length, 0);
 });
 
 test("provider response shapes normalize to the same usage contract", () => {

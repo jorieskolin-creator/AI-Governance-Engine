@@ -243,6 +243,18 @@ test("run cancellation escapes cognitive fallbacks and stops sequencing", async 
   assert.ok(run.stepLedger.records.slice(2).every((item) => item.status === "PENDING"));
 });
 
+test("provider-eligible packets reject injected media before cognitive transport", async () => {
+  const run = await createPreflight(preflightInput(broadGovernanceSource()));
+  run.packets[0].sourceUnits[0].media = { mimeType: "image/png", data: "AA==" };
+  run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers: ALL_PROVIDERS })) }, run);
+  const policy = modelPolicy(ALL_CREDENTIALS);
+  let providerCalls = 0;
+  const client = new StructuredModelClient({ policy, transport: async (request) => { providerCalls += 1; return mockTransport(request); } });
+  await assert.rejects(executeCognitiveRun(run, { policy, client, knowledge: await loadKnowledgeSnapshot({ production: false }) }), /must not contain media bytes/i);
+  assert.equal(providerCalls, 0);
+  assert.equal(client.traces.length, 0);
+});
+
 test("single-provider approval fails closed for cross-provider verification", async () => {
   const run = await createPreflight(preflightInput([{ path: "governance/purpose.md", mimeType: "text/markdown", content: "Purpose and owner are documented." }]));
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] })) }, run);

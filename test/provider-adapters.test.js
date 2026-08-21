@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { COGNITIVE_PROVIDERS, modelPolicy, requiredGovernanceProviders, validateGovernanceRouteTopology } from "../src/cognitive/model-policy.js";
+import { COGNITIVE_PROVIDERS, modelPolicy, modelPolicyReadiness, requiredGovernanceProviders, validateGovernanceRouteTopology } from "../src/cognitive/model-policy.js";
 import {
   normalizeProviderResponse, providerAdapter, serializeProviderRequest
 } from "../src/cognitive/provider-adapters.js";
@@ -62,6 +62,13 @@ test("runtime routing always requires approval of the exact profile and model id
   const unapproved = modelPolicy(credentials);
   assert.throws(() => unapproved.choose("VERIFICATION"), /approved model profile/i);
   assert.throws(() => requiredGovernanceProviders(unapproved), /approved model profiles/i);
+  assert.deepEqual(modelPolicyReadiness(unapproved), {
+    status: "CONFIGURATION_REQUIRED",
+    issueCodes: ["MODEL_PROFILES_UNAPPROVED"],
+    credentials: { requiredProviderCount: 3, configuredProviderCount: 3 },
+    qualification: { requiredProfileCount: 6, approvedProfileCount: 0 },
+    topologyStatus: "NOT_EVALUATED"
+  });
   const developmentLabelCannotBypass = modelPolicy({ ...credentials, NODE_ENV: "development" });
   assert.equal(developmentLabelCannotBypass.profiles[0].qualificationStatus, "APPROVAL_REQUIRED");
   assert.throws(() => developmentLabelCannotBypass.choose("VERIFICATION"), /approved model profile/i);
@@ -69,6 +76,8 @@ test("runtime routing always requires approval of the exact profile and model id
   const approved = modelPolicy({ ...credentials, MODEL_PROFILE_APPROVALS: approvals });
   assert.equal(approved.choose("VERIFICATION").qualificationStatus, "APPROVED");
   assert.deepEqual(requiredGovernanceProviders(approved).sort(), ["MOONSHOT", "OPENAI", "XAI"]);
+  assert.equal(modelPolicyReadiness(approved).status, "READY");
+  assert.equal(modelPolicyReadiness(approved).topologyStatus, "VALID");
 
   const changedModel = modelPolicy({
     ...credentials,

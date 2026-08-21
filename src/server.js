@@ -7,7 +7,7 @@ import { SAMPLE_REQUEST } from "./sample.js";
 import { validateExecutionApproval } from "./cognitive/contracts.js";
 import { confirmPreflightDossier, createPreflight, publicDiscoveryView, publicPreflightView } from "./cognitive/preflight.js";
 import { executeCognitiveRun } from "./cognitive/pipeline.js";
-import { modelPolicy, publicModelPolicy, requiredGovernanceProviders } from "./cognitive/model-policy.js";
+import { modelPolicy, modelPolicyReadiness, publicModelPolicy, requiredGovernanceProviders } from "./cognitive/model-policy.js";
 import { createRunStore } from "./cognitive/run-persistence.js";
 import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
 import { sanitizeRestrictedValue } from "../public/content-policy.js";
@@ -263,7 +263,8 @@ const server = http.createServer(async (request, response) => {
       return response.end();
     }
     if (request.method === "GET" && url.pathname === "/health") {
-      return sendJson(response, 200, { status: "ok", buildRevision, cognitiveContractVersion, runStore: runStore.kind, knowledge: knowledgeManifestView(knowledge) });
+      const policy = modelPolicy();
+      return sendJson(response, 200, { status: "ok", buildRevision, cognitiveContractVersion, runStore: runStore.kind, knowledge: knowledgeManifestView(knowledge), cognitiveReadiness: modelPolicyReadiness(policy) });
     }
     if (request.method === "GET" && url.pathname === "/api/sample") return sendJson(response, 200, SAMPLE_REQUEST);
     if (request.method === "GET" && url.pathname === "/api/config") return sendJson(response, 200, {

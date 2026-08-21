@@ -108,6 +108,33 @@ export function validateGovernanceRouteTopology(policy) {
   };
 }
 
+export function modelPolicyReadiness(policy) {
+  const required = [...new Map(policy.profiles.map((profile) => [profile.approvalRef, profile])).values()];
+  const requiredProviders = [...new Set(required.map((profile) => profile.provider))];
+  const configuredProviders = requiredProviders.filter((provider) => Boolean(policy.credentials[provider]));
+  const approvedProfiles = required.filter((profile) => profile.qualificationStatus === "APPROVED");
+  const issueCodes = [];
+  if (configuredProviders.length !== requiredProviders.length) issueCodes.push("MODEL_CREDENTIALS_MISSING");
+  if (approvedProfiles.length !== required.length) issueCodes.push("MODEL_PROFILES_UNAPPROVED");
+  let topologyStatus = "NOT_EVALUATED";
+  if (!issueCodes.length) {
+    try {
+      validateGovernanceRouteTopology(policy);
+      topologyStatus = "VALID";
+    } catch {
+      topologyStatus = "INVALID";
+      issueCodes.push("MODEL_ROUTE_TOPOLOGY_INVALID");
+    }
+  }
+  return {
+    status: issueCodes.length ? "CONFIGURATION_REQUIRED" : "READY",
+    issueCodes,
+    credentials: { requiredProviderCount: requiredProviders.length, configuredProviderCount: configuredProviders.length },
+    qualification: { requiredProfileCount: required.length, approvedProfileCount: approvedProfiles.length },
+    topologyStatus
+  };
+}
+
 export function requiredGovernanceProviders(policy) {
   const required = [...new Map(policy.profiles.map((profile) => [profile.approvalRef, profile])).values()];
   const unavailable = required.filter((item) => !item.credentialAvailable);

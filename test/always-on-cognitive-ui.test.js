@@ -52,6 +52,7 @@ test("the service exposes an always-on cognitive contract without client credent
   assert.match(server, /url\.pathname === "\/api\/assess"[\s\S]*?sendJson\(response, 410/);
   assert.doesNotMatch(server, /COGNITIVE_PIPELINE_ENABLED/);
   assert.doesNotMatch(server, /COGNITIVE_API_TOKEN/);
+  assert.match(server, /cognitiveReadiness: modelPolicyReadiness\(policy\)/);
 });
 
 test("the Railway deployment always enforces production policy", () => {

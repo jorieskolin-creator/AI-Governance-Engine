@@ -136,7 +136,7 @@ BENCHMARK_CONFIRM_LIVE_CALLS=true pnpm run benchmark:models
 
 Use `BENCHMARK_PROFILE_IDS` to constrain cost. The harness checks structured output and zero-tolerance integrity conditions, but deliberately reports `REQUIRES_HUMAN_LABEL_REVIEW`. Human-labelled precision and high/critical recall must meet the qualification floors before the fixed route is treated as qualified for decision-ready assessments.
 
-Production additionally requires each role slot's exact `role-slot@PROVIDER:model` reference in `MODEL_PROFILE_APPROVALS`. This allowlist is deliberately separate from credentials: changing a configured provider or model invalidates the approval and blocks that route until the new candidate is qualified.
+Every runtime environment requires each role slot's exact `role-slot@PROVIDER:model` reference in `MODEL_PROFILE_APPROVALS`. This allowlist is deliberately separate from credentials and cannot be bypassed through an environment mode: changing a configured provider or model invalidates the approval and blocks that route until the new candidate is qualified. The explicitly authorized benchmark harness evaluates unapproved candidates without changing runtime policy.
 
 ## Further documentation
 

@@ -46,9 +46,9 @@ export function providerCredentials(env = process.env) {
   };
 }
 
-export function modelPolicy(env = process.env) {
+export function modelPolicy(env = process.env, options = {}) {
   const credentials = providerCredentials(env);
-  const production = env.NODE_ENV === "production";
+  const qualificationRequired = options.qualificationRequired !== false;
   const approvals = approvedProfileRefs(env.MODEL_PROFILE_APPROVALS);
   const roleSlots = Object.fromEntries(Object.keys(ROLE_DEFAULTS).map((operationalRole) => [operationalRole, {
     PRIMARY: configuredRoleSlot(env, operationalRole, "PRIMARY"),
@@ -65,7 +65,7 @@ export function modelPolicy(env = process.env) {
       operationalStatus: routePriority === "PRIMARY" ? "GOVERNANCE_ROUTE" : "FALLBACK_ROUTE",
       credentialAvailable: Boolean(credentials[profile.provider]),
       approvalRef,
-      qualificationStatus: approvals.has(approvalRef) ? "APPROVED" : production ? "APPROVAL_REQUIRED" : "NOT_ENFORCED"
+      qualificationStatus: approvals.has(approvalRef) ? "APPROVED" : qualificationRequired ? "APPROVAL_REQUIRED" : "QUALIFICATION_CANDIDATE"
     };
   }));
   return {
@@ -78,11 +78,11 @@ export function modelPolicy(env = process.env) {
       const preferred = (options.preferredProfileIds ?? []).map((id) => stageProfiles.find((item) => item.id === id)).filter(Boolean);
       const routeProfiles = [...new Map([...preferred, ...stageProfiles].map((item) => [item.id, item])).values()];
       if (!routeProfiles.length) throw new Error(`No governance route is configured for ${stage}`);
-      const profile = routeProfiles.find((item) => item.credentialAvailable && (!production || item.qualificationStatus === "APPROVED") && !excluded.has(item.provider) && (!allowed || allowed.has(item.provider)));
+      const profile = routeProfiles.find((item) => item.credentialAvailable && (!qualificationRequired || item.qualificationStatus === "APPROVED") && !excluded.has(item.provider) && (!allowed || allowed.has(item.provider)));
       if (profile) return profile;
       const providers = [...new Set(routeProfiles.map((item) => item.provider))];
       if (routeProfiles.every((item) => !item.credentialAvailable)) throw new Error(`The ${providers.join(" or ")} credential required for ${stage} is unavailable`);
-      if (production && routeProfiles.every((item) => item.qualificationStatus !== "APPROVED")) throw new Error(`No approved production model profile is configured for ${stage}`);
+      if (qualificationRequired && routeProfiles.every((item) => item.qualificationStatus !== "APPROVED")) throw new Error(`No approved model profile is configured for ${stage}`);
       if (routeProfiles.every((item) => excluded.has(item.provider))) throw new Error(`The required independent route for ${stage} is unavailable`);
       throw new Error(`The required provider route for ${stage} is not approved for these redacted evidence packets`);
     }
@@ -116,7 +116,7 @@ export function requiredGovernanceProviders(policy) {
   }
   const unapproved = required.filter((item) => item.qualificationStatus === "APPROVAL_REQUIRED");
   if (unapproved.length) {
-    throw new Error(`Cognitive analysis requires approved production model profiles: ${unapproved.map((item) => item.approvalRef).join(", ")}`);
+    throw new Error(`Cognitive analysis requires approved model profiles: ${unapproved.map((item) => item.approvalRef).join(", ")}`);
   }
   validateGovernanceRouteTopology(policy);
   return [...new Set(required.map((item) => item.provider))];

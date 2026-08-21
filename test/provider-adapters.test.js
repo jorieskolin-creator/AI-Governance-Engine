@@ -18,6 +18,7 @@ const credentials = {
   XAI_API_KEY: "xai-test-secret",
   MOONSHOT_API_KEY: "moonshot-test-secret"
 };
+const candidatePolicy = (env) => modelPolicy(env, { qualificationRequired: false });
 
 test("the canonical provider catalog contains only OpenAI, xAI and Moonshot", () => {
   assert.deepEqual([...COGNITIVE_PROVIDERS].sort(), ["MOONSHOT", "OPENAI", "XAI"]);
@@ -26,7 +27,7 @@ test("the canonical provider catalog contains only OpenAI, xAI and Moonshot", ()
 });
 
 test("role routing is deterministic and model identities are server-configurable", () => {
-  const policy = modelPolicy({
+  const policy = candidatePolicy({
     ...credentials,
     WORKHORSE_PROVIDER: "OPENAI", WORKHORSE_MODEL: "openai-workhorse",
     WORKHORSE_FALLBACK_PROVIDER: "MOONSHOT", WORKHORSE_FALLBACK_MODEL: "moonshot-workhorse",
@@ -54,21 +55,23 @@ test("role routing is deterministic and model identities are server-configurable
   assert.throws(() => modelPolicy({ ...credentials, WORKHORSE_PROVIDER: "OPENAI" }), /configured together/i);
 });
 
-test("production routing requires approval of the exact profile and model identity", () => {
-  const development = modelPolicy(credentials);
-  const approvals = [...new Set(development.profiles.map((profile) => profile.approvalRef))].join(",");
+test("runtime routing always requires approval of the exact profile and model identity", () => {
+  const candidates = candidatePolicy(credentials);
+  const approvals = [...new Set(candidates.profiles.map((profile) => profile.approvalRef))].join(",");
 
-  const unapproved = modelPolicy({ ...credentials, NODE_ENV: "production" });
-  assert.throws(() => unapproved.choose("VERIFICATION"), /approved production model profile/i);
-  assert.throws(() => requiredGovernanceProviders(unapproved), /approved production model profiles/i);
+  const unapproved = modelPolicy(credentials);
+  assert.throws(() => unapproved.choose("VERIFICATION"), /approved model profile/i);
+  assert.throws(() => requiredGovernanceProviders(unapproved), /approved model profiles/i);
+  const developmentLabelCannotBypass = modelPolicy({ ...credentials, NODE_ENV: "development" });
+  assert.equal(developmentLabelCannotBypass.profiles[0].qualificationStatus, "APPROVAL_REQUIRED");
+  assert.throws(() => developmentLabelCannotBypass.choose("VERIFICATION"), /approved model profile/i);
 
-  const approved = modelPolicy({ ...credentials, NODE_ENV: "production", MODEL_PROFILE_APPROVALS: approvals });
+  const approved = modelPolicy({ ...credentials, MODEL_PROFILE_APPROVALS: approvals });
   assert.equal(approved.choose("VERIFICATION").qualificationStatus, "APPROVED");
   assert.deepEqual(requiredGovernanceProviders(approved).sort(), ["MOONSHOT", "OPENAI", "XAI"]);
 
   const changedModel = modelPolicy({
     ...credentials,
-    NODE_ENV: "production",
     MODEL_PROFILE_APPROVALS: approvals,
     QUALITY_CHECKER_PROVIDER: "OPENAI",
     QUALITY_CHECKER_MODEL: "unreviewed-model"
@@ -76,23 +79,22 @@ test("production routing requires approval of the exact profile and model identi
   assert.equal(changedModel.choose("VERIFICATION").routePriority, "FALLBACK");
   const noApprovedQualityRoute = modelPolicy({
     ...credentials,
-    NODE_ENV: "production",
     MODEL_PROFILE_APPROVALS: approvals,
     QUALITY_CHECKER_PROVIDER: "OPENAI",
     QUALITY_CHECKER_MODEL: "unreviewed-model",
     QUALITY_CHECKER_FALLBACK_PROVIDER: "XAI",
     QUALITY_CHECKER_FALLBACK_MODEL: "unreviewed-fallback"
   });
-  assert.throws(() => noApprovedQualityRoute.choose("VERIFICATION"), /approved production model profile/i);
+  assert.throws(() => noApprovedQualityRoute.choose("VERIFICATION"), /approved model profile/i);
 });
 
 test("role topology requires independent verification and a third-provider adjudicator", () => {
-  const valid = validateGovernanceRouteTopology(modelPolicy(credentials));
+  const valid = validateGovernanceRouteTopology(candidatePolicy(credentials));
   assert.deepEqual(valid.claimFlow, { workhorse: "MOONSHOT", verifier: "OPENAI", adjudicator: "XAI" });
   assert.notEqual(valid.solutionFlow.reasoner, valid.solutionFlow.verifier);
   assert.notEqual(valid.publicationFlow.reasoner, valid.publicationFlow.qualityChecker);
 
-  const twoProviderPolicy = modelPolicy({
+  const twoProviderPolicy = candidatePolicy({
     ...credentials,
     WORKHORSE_PROVIDER: "OPENAI", WORKHORSE_MODEL: "workhorse",
     WORKHORSE_FALLBACK_PROVIDER: "XAI", WORKHORSE_FALLBACK_MODEL: "workhorse-fallback",
@@ -106,7 +108,7 @@ test("role topology requires independent verification and a third-provider adjud
 });
 
 test("provider adapters translate one canonical schema without changing it", () => {
-  const policy = modelPolicy(credentials);
+  const policy = candidatePolicy(credentials);
   const openai = serializeProviderRequest(policy.choose("VERIFICATION"), "safe packet", "result", schema);
   const xai = serializeProviderRequest(policy.choose("ADJUDICATION", { excludeProviders: ["MOONSHOT"] }), "safe packet", "result", schema);
   const moonshot = serializeProviderRequest(policy.choose("SOLUTION_UNDERSTANDING"), "safe packet", "result", schema);
@@ -122,7 +124,7 @@ test("provider adapters translate one canonical schema without changing it", () 
 });
 
 test("media bytes fail closed before adapters or custom transports can receive them", async () => {
-  const policy = modelPolicy(credentials);
+  const policy = candidatePolicy(credentials);
   const profile = policy.choose("VERIFICATION");
   const media = [{ mimeType: "image/png", data: "AA==" }];
   assert.throws(() => serializeProviderRequest(profile, "safe packet", "result", schema, media), /cannot contain media/i);
@@ -153,7 +155,7 @@ test("provider response shapes normalize to the same usage contract", () => {
 });
 
 test("strict schema and provider HTTP failures fail closed without exposing response bodies", async () => {
-  const profile = modelPolicy(credentials).choose("VERIFICATION");
+  const profile = candidatePolicy(credentials).choose("VERIFICATION");
   assert.throws(() => serializeProviderRequest(profile, "safe packet", "invalid", {
     type: "object", properties: { ok: { type: "boolean" } }, required: []
   }), /additionalProperties|required every declared/i);
@@ -165,7 +167,7 @@ test("strict schema and provider HTTP failures fail closed without exposing resp
     json: async () => ({ error: { message: "provider-internal body with endpoint and supplied evidence" } })
   });
   try {
-    const client = new StructuredModelClient({ policy: modelPolicy(credentials), budget: new ModelBudget({ maxCalls: 2, maxTokens: 10000 }) });
+    const client = new StructuredModelClient({ policy: candidatePolicy(credentials), budget: new ModelBudget({ maxCalls: 2, maxTokens: 10000 }) });
     await assert.rejects(
       client.generate({ profile, prompt: "safe packet", schemaName: "result", schema, packetHash: "hash", promptVersion: "1" }),
       (error) => error.message === "Provider request failed with HTTP 401"

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createPreflight, publicPreflightView } from "../src/cognitive/preflight.js";
 import { recheckDiscovery } from "../src/cognitive/discovery-recheck.js";
-import { modelPolicy } from "../src/cognitive/model-policy.js";
+import { modelPolicy as createModelPolicy } from "../src/cognitive/model-policy.js";
 import { ModelBudget, StructuredModelClient } from "../src/cognitive/provider-client.js";
 import { EphemeralRunStore } from "../src/cognitive/run-store.js";
 import { discoveryRecheckPrompt } from "../src/cognitive/prompts.js";
@@ -16,6 +16,7 @@ import { MEDIA_EVIDENCE_SUMMARY_VERSION, validateMediaEvidenceSummary } from "..
 import { createTabularEvidenceUnit, TABULAR_EVIDENCE_SUMMARY_VERSION, validateTabularEvidenceSummary } from "../src/intake/tabular-evidence.js";
 
 const rawMarker = "internal-project-orchid-customer-table";
+const modelPolicy = (env) => createModelPolicy(env, { qualificationRequired: false });
 
 test("raw code stays local while the provider-eligible unit contains only a validated deterministic summary", async () => {
   const screened = await parseAndScreenSources([{
@@ -126,7 +127,7 @@ test("GenAI proposal transmission contains selected acquired facts but not ineli
   }] });
   const access = run.acquiredFacts.facts.find((fact) => fact.fieldId === "exposure.currentUserAccess");
   const acquiredFactUnit = createAcquiredFactSelectionUnit(run.acquiredFacts, [access.id]);
-  const policy = modelPolicy({ MOONSHOT_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy({ MOONSHOT_API_KEY: "test" });
   let transmittedPrompt = "";
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ prompt, profile }) => {
     transmittedPrompt = prompt;
@@ -183,7 +184,7 @@ test("AI Intake recheck transmits the code summary contract and records that raw
     mimeType: "application/json",
     content: JSON.stringify({ name: rawMarker, scripts: { start: "node server.js" } })
   }] });
-  const policy = modelPolicy({ MOONSHOT_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy({ MOONSHOT_API_KEY: "test" });
   let transmittedPrompt = "";
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ prompt, profile }) => {
     transmittedPrompt = prompt;

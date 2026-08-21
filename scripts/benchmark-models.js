@@ -11,7 +11,7 @@ if (process.env.BENCHMARK_CONFIRM_LIVE_CALLS !== "true") {
   process.exit(2);
 }
 
-const policy = modelPolicy({ ...process.env, NODE_ENV: "development" });
+const policy = modelPolicy(process.env, { qualificationRequired: false });
 const selectedIds = new Set((process.env.BENCHMARK_PROFILE_IDS ?? "").split(",").map((item) => item.trim()).filter(Boolean));
 const candidates = policy.profiles.filter((item) => item.credentialAvailable && (!selectedIds.size || selectedIds.has(item.id)));
 if (!candidates.length) {

@@ -24,7 +24,7 @@ Before decision-ready use:
 
 1. Keep provider keys server-side: `OPENAI_API_KEY` (preferred) or `GPT_API_KEY`, `XAI_API_KEY`, and `MOONSHOT_API_KEY`. Configure primary and fallback provider/model pairs for `WORKHORSE`, `REASONER`, and `QUALITY_CHECKER`; provider values are exactly `OPENAI`, `XAI`, or `MOONSHOT`. The documented defaults are candidates, not qualified models.
 2. Run `pnpm run benchmark:models` in a controlled environment with `BENCHMARK_CONFIRM_LIVE_CALLS=true` and review the output against the qualification floors.
-3. Add only qualified exact `role-slot@PROVIDER:model` references exposed by `/api/v2/models` to the comma-separated `MODEL_PROFILE_APPROVALS`. Production routing fails closed when a primary or fallback role assignment is absent or its provider/model identity changes.
+3. Add only qualified exact `role-slot@PROVIDER:model` references exposed by `/api/v2/models` to the comma-separated `MODEL_PROFILE_APPROVALS`. Runtime routing always fails closed when a primary or fallback role assignment is absent or its provider/model identity changes; `NODE_ENV` cannot bypass qualification.
 4. Compare the 2.6.0 audit packages, coverage matrices, unresolved ledgers, publication gates, costs and reviewer labels against approved golden cases in a controlled environment.
 5. Verify the versioned intake questionnaire and all referenced normative sources are hash-pinned in the production manifest.
 

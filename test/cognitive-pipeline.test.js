@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { confirmPreflightDossier, createPreflight, publicPreflightView } from "../src/cognitive/preflight.js";
 import { validateExecutionApproval } from "../src/cognitive/contracts.js";
 import { executeCognitiveRun } from "../src/cognitive/pipeline.js";
-import { modelPolicy } from "../src/cognitive/model-policy.js";
+import { modelPolicy as createModelPolicy } from "../src/cognitive/model-policy.js";
 import { StructuredModelClient, ModelBudget } from "../src/cognitive/provider-client.js";
 import { loadKnowledgeSnapshot } from "../src/knowledge/provider.js";
 import { recheckDiscovery } from "../src/cognitive/discovery-recheck.js";
@@ -13,8 +13,9 @@ import { cancellationError } from "../src/cognitive/failure-policy.js";
 import { validateReadinessPackage } from "../src/readiness-package-contract.js";
 
 const ALL_PROVIDERS = ["OPENAI", "XAI", "MOONSHOT"];
-const ALL_CREDENTIALS = { OPENAI_API_KEY: "test", XAI_API_KEY: "test", MOONSHOT_API_KEY: "test", NODE_ENV: "development" };
-const MOONSHOT_CREDENTIALS = { MOONSHOT_API_KEY: "test", NODE_ENV: "development" };
+const ALL_CREDENTIALS = { OPENAI_API_KEY: "test", XAI_API_KEY: "test", MOONSHOT_API_KEY: "test" };
+const MOONSHOT_CREDENTIALS = { MOONSHOT_API_KEY: "test" };
+const modelPolicy = (env) => createModelPolicy(env, { qualificationRequired: false });
 
 function preflightInput(sources) {
   return { dossier: structuredClone(SAMPLE_REQUEST.dossier), sources };

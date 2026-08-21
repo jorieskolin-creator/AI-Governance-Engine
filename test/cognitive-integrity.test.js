@@ -8,8 +8,10 @@ import {
 import { buildActionGroundingRecords, selectPlaybookActions } from "../src/core/playbook-engine.js";
 import { assessAntiPatterns } from "../src/core/assessment.js";
 import { ModelBudget, StructuredModelClient } from "../src/cognitive/provider-client.js";
-import { modelPolicy, requiredGovernanceProviders } from "../src/cognitive/model-policy.js";
+import { modelPolicy as createModelPolicy, requiredGovernanceProviders } from "../src/cognitive/model-policy.js";
 import { cancellationError } from "../src/cognitive/failure-policy.js";
+
+const modelPolicy = (env) => createModelPolicy(env, { qualificationRequired: false });
 
 const sourceUnit = {
   id: "unit-1", sourceId: "src-1", path: "src/control.js", locator: "text;lines:1-1", sha256: "source-hash",
@@ -136,7 +138,7 @@ test("publication quality remains independent from readiness", () => {
 });
 
 test("provider responses from an unapproved model are rejected and traced", async () => {
-  const policy = modelPolicy({ OPENAI_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy({ OPENAI_API_KEY: "test" });
   const profile = policy.choose("VERIFICATION");
   const schema = { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } };
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2, maxTokens: 100000 }), transport: async () => ({ value: { ok: true }, responseModel: "different-unapproved-model", usage: { totalTokens: 1 } }) });
@@ -146,7 +148,7 @@ test("provider responses from an unapproved model are rejected and traced", asyn
 });
 
 test("provider cancellation is propagated and classified without retry", async () => {
-  const policy = modelPolicy({ OPENAI_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy({ OPENAI_API_KEY: "test" });
   const profile = policy.choose("VERIFICATION");
   const schema = { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } };
   const controller = new AbortController();
@@ -168,7 +170,7 @@ test("provider cancellation is propagated and classified without retry", async (
 });
 
 test("per-stage model-call budgets fail closed", async () => {
-  const policy = modelPolicy({ OPENAI_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy({ OPENAI_API_KEY: "test" });
   const profile = policy.choose("VERIFICATION");
   const schema = { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } };
   const budget = new ModelBudget({ maxCalls: 5, maxTokens: 100000, maxCallsByStage: { VERIFICATION: 1 } });

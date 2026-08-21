@@ -1,5 +1,6 @@
 import { classifyArtifact, invariant, normalizePath } from "../contracts.js";
 import { CODE_EVIDENCE_SUMMARY_VERSION } from "../intake/code-evidence.js";
+import { TABULAR_EVIDENCE_SUMMARY_VERSION } from "../intake/tabular-evidence.js";
 import { classifyUploadPath, ingestionCounts, SOURCE_INGESTION_VERSION } from "../../public/upload-types.js";
 import { sha256 } from "./hash.js";
 
@@ -96,6 +97,9 @@ export function validateSourceIngestionManifest(manifest) {
     if (item.acquisitionLane === "CODE_CONFIGURATION_LOCAL_ANALYSIS") {
       invariant(item.rawContentPolicy === "LOCAL_ONLY" && item.egressPolicy === "DETERMINISTIC_SUMMARY_ONLY", `Code/configuration acquisition policy is invalid for ${item.path}`);
       invariant(item.analyzerVersion === CODE_EVIDENCE_SUMMARY_VERSION && item.derivedUnitIds.length === 1, `Code/configuration derivation is invalid for ${item.path}`);
+    } else if (item.acquisitionLane === "TABULAR_LOCAL_ANALYSIS") {
+      invariant(item.rawContentPolicy === "LOCAL_ONLY" && item.egressPolicy === "DETERMINISTIC_SUMMARY_ONLY", `Tabular acquisition policy is invalid for ${item.path}`);
+      invariant(item.analyzerVersion === TABULAR_EVIDENCE_SUMMARY_VERSION && item.derivedUnitIds.length === 1, `Tabular derivation is invalid for ${item.path}`);
     } else {
       invariant(item.acquisitionLane === "DOCUMENT_MEDIA_SCREENING", `Acquisition lane is invalid for ${item.path}`);
       invariant(item.rawContentPolicy === "REDACTED_CONTENT_REQUIRES_APPROVAL" && item.egressPolicy === "REDACTED_SOURCE_UNITS", `Document/media acquisition policy is invalid for ${item.path}`);

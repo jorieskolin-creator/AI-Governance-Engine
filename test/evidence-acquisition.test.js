@@ -10,6 +10,7 @@ import { parseAndScreenSources } from "../src/cognitive/source-intake.js";
 import { sha256 } from "../src/core/hash.js";
 import { validateSourceIngestionManifest } from "../src/core/source-ingestion.js";
 import { CODE_EVIDENCE_SUMMARY_VERSION, validateCodeEvidenceSummary } from "../src/intake/code-evidence.js";
+import { createTabularEvidenceUnit, TABULAR_EVIDENCE_SUMMARY_VERSION, validateTabularEvidenceSummary } from "../src/intake/tabular-evidence.js";
 
 const rawMarker = "internal-project-orchid-customer-table";
 
@@ -19,7 +20,7 @@ test("raw code stays local while the provider-eligible unit contains only a vali
     mimeType: "text/typescript",
     format: "CODE",
     encoding: "utf8",
-    content: `const internalName = "${rawMarker}";\nexport function authorize() { return rateLimit(validate(internalName)); }`,
+    content: `const internalName = "${rawMarker}";\nconst provider = "OpenAI";\nexport function authorize() { return rateLimit(validate(internalName)); }`,
     metadata: {}
   }]);
 
@@ -33,8 +34,9 @@ test("raw code stays local while the provider-eligible unit contains only a vali
   assert.doesNotMatch(egressUnit.content, new RegExp(rawMarker));
   const summary = validateCodeEvidenceSummary(JSON.parse(egressUnit.content));
   assert.equal(summary.schemaVersion, CODE_EVIDENCE_SUMMARY_VERSION);
-  assert.deepEqual(summary.capabilitySignals, ["AUTHORIZATION", "RATE_LIMITING", "INPUT_VALIDATION"]);
+  assert.deepEqual(summary.capabilitySignals, ["AUTHORIZATION", "RATE_LIMITING", "EXTERNAL_MODEL_PROVIDER", "INPUT_VALIDATION"]);
   assert.ok(summary.limitations.includes("NO_RAW_CODE_OR_CONFIGURATION_INCLUDED"));
+  assert.doesNotMatch(egressUnit.content, /openai|anthropic|gemini|grok|kimi/i);
   const providerPrompt = discoveryRecheckPrompt([], [{ sourceUnits: screened.sourceUnits }]);
   assert.doesNotMatch(providerPrompt, new RegExp(rawMarker));
   assert.doesNotMatch(providerPrompt, /orchid-runtime|src\/private/i);
@@ -97,6 +99,45 @@ test("AI Intake recheck transmits the code summary contract and records that raw
   assert.match(transmittedPrompt, /"field":"name"[^}]*"valueWithheld":true/);
   assert.equal(run.transmissionManifest[0].containsRawEvidence, false);
   assert.deepEqual(run.transmissionManifest[0].derivationContracts, [CODE_EVIDENCE_SUMMARY_VERSION]);
+});
+
+test("CSV values and headers remain local while only a bounded tabular profile enters packets", async () => {
+  const csv = `customer_email,invoice_amount,period,status\nprivate.person@example.com,91827.45,2026-08-01,${rawMarker}\n,,2026-08-02,pending`;
+  const run = await createPreflight({ sources: [{ path: "finance/private-export.csv", mimeType: "text/csv", content: csv }] });
+  const localContent = run.localSourceUnits.map((unit) => unit.content).join("\n");
+  const egressUnit = run.packets[0].sourceUnits[0];
+  const summary = validateTabularEvidenceSummary(JSON.parse(egressUnit.content));
+
+  assert.match(localContent, new RegExp(rawMarker));
+  assert.equal(egressUnit.evidenceKind, "TABULAR_SUMMARY");
+  assert.equal(egressUnit.derivation.rawContentIncluded, false);
+  assert.doesNotMatch(egressUnit.content, new RegExp(rawMarker));
+  assert.doesNotMatch(egressUnit.content, /private\.person|customer_email|invoice_amount|91827/);
+  assert.deepEqual(summary.semanticSignals, ["IDENTIFIER_COLUMNS", "PERSONAL_DATA_COLUMNS", "FINANCIAL_DATA_COLUMNS", "TIMESTAMP_COLUMNS", "STATUS_COLUMNS"]);
+  assert.deepEqual(summary.structureSignals, ["HAS_TEXT", "HAS_NUMERIC", "HAS_DATE", "HAS_EMPTY_VALUES"]);
+  assert.equal(run.sourceIngestion.items[0].acquisitionLane, "TABULAR_LOCAL_ANALYSIS");
+  assert.equal(run.sourceIngestion.items[0].rawContentPolicy, "LOCAL_ONLY");
+  assert.equal(run.sourceIngestion.items[0].analyzerVersion, TABULAR_EVIDENCE_SUMMARY_VERSION);
+  assert.doesNotMatch(JSON.stringify(publicPreflightView(run).packets), /private\.person|91827|customer_email/);
+});
+
+test("XLSX summaries expose coarse dimensions and controlled signals without cells", () => {
+  const unit = createTabularEvidenceUnit({
+    sourceId: "src-0123456789abcdef01234567",
+    sourceHash: "a".repeat(64),
+    format: "XLSX",
+    segments: [
+      { locator: "sheet:Customers", text: `R1C1=employee_id\tR1C2=amount\nR2C1=${rawMarker}\tR2C2=1000` },
+      { locator: "sheet:Results", text: "R1C1=model\tR1C2=accuracy\nR2C1=private-model\tR2C2=0.91" }
+    ]
+  });
+  const summary = validateTabularEvidenceSummary(JSON.parse(unit.content));
+  assert.equal(summary.sheetCountRange, "2_10");
+  assert.equal(summary.rowCountRange, "1_10");
+  assert.equal(summary.columnCountRange, "1_10");
+  assert.ok(summary.semanticSignals.includes("MODEL_EVALUATION_COLUMNS"));
+  assert.doesNotMatch(unit.content, new RegExp(rawMarker));
+  assert.doesNotMatch(unit.content, /private-model|Customers|Results|employee_id/);
 });
 
 test("purging a run clears both local raw material and provider-eligible summaries", async () => {

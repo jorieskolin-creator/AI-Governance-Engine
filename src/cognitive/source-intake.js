@@ -3,6 +3,7 @@ import { classifyArtifact, HUMAN_AUTHORITIES } from "../contracts.js";
 import { sha256, stableId } from "../core/hash.js";
 import { sanitizeRestrictedText } from "../../public/content-policy.js";
 import { CODE_EVIDENCE_SUMMARY_VERSION, createCodeEvidenceUnit } from "../intake/code-evidence.js";
+import { createTabularEvidenceUnit, TABULAR_EVIDENCE_SUMMARY_VERSION } from "../intake/tabular-evidence.js";
 
 const MAX_SOURCE_BYTES = 15 * 1024 * 1024;
 const MAX_EXTRACTED_CHARACTERS = 5_000_000;
@@ -270,18 +271,23 @@ export async function parseAndScreenSources(sources, options = {}) {
       }
       const testCode = artifactClass === "TEST" && !/\.(?:md|txt|html?|pdf|docx?|xlsx?|csv)$/i.test(source.path);
       const codeOrConfiguration = ["PRODUCTION_CODE", "CONFIGURATION"].includes(artifactClass) || testCode;
-      const egressUnits = codeOrConfiguration
-        ? [createCodeEvidenceUnit({ sourceId, sourceHash, path: source.path, sourceKind, content: bytes.toString("utf8"), findings: sourceFindings })]
-        : localUnits;
+      const tabular = ["CSV", "XLSX"].includes(source.format);
+      const egressUnits = tabular
+        ? [createTabularEvidenceUnit({ sourceId, sourceHash, format: source.format, segments, findings: sourceFindings })]
+        : codeOrConfiguration
+          ? [createCodeEvidenceUnit({ sourceId, sourceHash, path: source.path, sourceKind, content: bytes.toString("utf8"), findings: sourceFindings })]
+          : localUnits;
+      const acquisitionLane = tabular ? "TABULAR_LOCAL_ANALYSIS" : codeOrConfiguration ? "CODE_CONFIGURATION_LOCAL_ANALYSIS" : "DOCUMENT_MEDIA_SCREENING";
+      const localOnly = tabular || codeOrConfiguration;
       localSourceUnits.push(...localUnits);
       sourceUnits.push(...egressUnits);
       registeredSources.push({
         id: sourceId, path: safePath, mimeType: source.mimeType, format: source.format, artifactClass, sha256: sourceHash, size: bytes.length, metadata: source.metadata,
-        acquisitionLane: codeOrConfiguration ? "CODE_CONFIGURATION_LOCAL_ANALYSIS" : "DOCUMENT_MEDIA_SCREENING",
-        rawContentPolicy: codeOrConfiguration ? "LOCAL_ONLY" : "REDACTED_CONTENT_REQUIRES_APPROVAL",
-        egressPolicy: codeOrConfiguration ? "DETERMINISTIC_SUMMARY_ONLY" : "REDACTED_SOURCE_UNITS",
-        derivedUnitIds: codeOrConfiguration ? egressUnits.map((unit) => unit.id) : [],
-        analyzerVersion: codeOrConfiguration ? CODE_EVIDENCE_SUMMARY_VERSION : null
+        acquisitionLane,
+        rawContentPolicy: localOnly ? "LOCAL_ONLY" : "REDACTED_CONTENT_REQUIRES_APPROVAL",
+        egressPolicy: localOnly ? "DETERMINISTIC_SUMMARY_ONLY" : "REDACTED_SOURCE_UNITS",
+        derivedUnitIds: localOnly ? egressUnits.map((unit) => unit.id) : [],
+        analyzerVersion: tabular ? TABULAR_EVIDENCE_SUMMARY_VERSION : codeOrConfiguration ? CODE_EVIDENCE_SUMMARY_VERSION : null
       });
     } catch (error) {
       if (!options.continueOnError) throw error;

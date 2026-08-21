@@ -180,20 +180,10 @@ const server = http.createServer(async (request, response) => {
       const payload = await readJson(request);
       const run = await createPreflight({ sources: payload.sources ?? [], sourceIngestion: payload.sourceIngestion });
       runStore.create(run);
-      let discoveryRecheck = { status: "NOT_RUN", policy: "Cited AI recheck runs automatically after local DLP screening when the configured provider route is available." };
+      let discoveryRecheck = { status: "NOT_REQUESTED", policy: "The deterministic Intake is returned without provider transmission. GenAI proposals require a separate explicit user request." };
       if (run.dlpFindings.some((item) => item.blocking)) {
         discoveryRecheck = { status: "BLOCKED_BY_LOCAL_DLP", policy: "AI recheck was not started because source transmission is blocked by local screening." };
         run.stage = "INTAKE_AI_VERIFICATION_BLOCKED";
-      } else {
-        try {
-          if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive discovery rate limit exceeded"), { statusCode: 429 });
-          const policy = modelPolicy();
-          discoveryRecheck = await recheckDiscovery(run, automaticApproval(run, policy), { policy });
-        } catch (error) {
-          discoveryRecheck = { status: "UNAVAILABLE", failureCode: safeFailureCode(error), policy: "The deterministic intake draft remains available. AI candidates were not used." };
-          run.stage = "INTAKE_AI_VERIFICATION_UNAVAILABLE";
-          run.trace.push({ stage: "DISCOVERY_RECHECK", status: "UNAVAILABLE", at: new Date().toISOString(), failureCode: discoveryRecheck.failureCode });
-        }
       }
       return sendJson(response, 200, {
         runId: run.id,
@@ -226,6 +216,8 @@ const server = http.createServer(async (request, response) => {
       const run = runStore.get(recheckMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
       if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.discoveryRecheck) return sendJson(response, 409, { error: "AI Intake verification is not available from the current run state" });
+      const consent = await readJson(request);
+      if (consent?.confirmed !== true || consent?.purpose !== "INTAKE_PROPOSALS_FROM_SAFE_SUMMARIES") return sendJson(response, 400, { error: "Explicit confirmation is required before requesting GenAI Intake proposals" });
       const blocking = run.dlpFindings.filter((item) => item.blocking);
       if (blocking.length) {
         run.stage = "INTAKE_AI_VERIFICATION_BLOCKED";
@@ -235,6 +227,7 @@ const server = http.createServer(async (request, response) => {
       }
       try {
         if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive discovery rate limit exceeded"), { statusCode: 429 });
+        run.trace.push({ stage: "INTAKE_AI_PROPOSAL_CONSENT", status: "CONFIRMED", purpose: consent.purpose, at: new Date().toISOString(), packetIds: run.packets.map((packet) => packet.id) });
         return sendJson(response, 200, await recheckDiscovery(run, automaticApproval(run), { policy: modelPolicy() }));
       } catch (error) {
         run.stage = "INTAKE_AI_VERIFICATION_UNAVAILABLE";

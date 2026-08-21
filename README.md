@@ -69,7 +69,7 @@ The dashboard can upload a codebase folder or individual supported files. **Disc
 The supported assessment workflow uses the v2 run state machine:
 
 1. `POST /api/v2/runs/preflight` parses and screens sources, then builds the deterministic Intake draft.
-2. `POST /api/v2/runs/{runId}/discover-recheck` runs the optional cited AI Intake verification while the run awaits confirmation.
+2. After reviewing the safe summary package, `POST /api/v2/runs/{runId}/discover-recheck` with explicit purpose confirmation optionally requests cited GenAI Intake proposals. Skipping this step does not block manual resolution.
 3. `POST /api/v2/runs/{runId}/confirm` requires a resolution for every applicable field plus explicit user approval, then creates the immutable approved Intake snapshot.
 4. `POST /api/v2/runs/{runId}/execute` starts A–F assessment from that snapshot.
 5. `GET /api/v2/runs/{runId}` and `GET /api/v2/runs/{runId}/result` expose progress and the result.

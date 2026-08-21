@@ -30,7 +30,7 @@
         <ol id="intake-flow" class="intake-flow" aria-label="Intake workflow">
           <li data-intake-step="UPLOAD" class="active"><span>1</span>Upload</li>
           <li data-intake-step="DETERMINISTIC"><span>2</span>Deterministic Intake</li>
-          <li data-intake-step="AI_VERIFICATION"><span>3</span>AI verification</li>
+          <li data-intake-step="AI_VERIFICATION"><span>3</span>Optional AI proposals</li>
           <li data-intake-step="USER_RESOLUTION"><span>4</span>User resolution</li>
           <li data-intake-step="ASSESSMENT"><span>5</span>A–F assessment</li>
         </ol>
@@ -42,7 +42,7 @@
           <label class="upload-box">Codebase or evidence folder<input id="source-folder" type="file" multiple webkitdirectory /><span id="folder-summary">No folder selected</span></label>
             <label class="upload-box">Individual documents and files<input id="source-files" type="file" multiple /><span id="file-summary">No individual files selected</span></label>
         </div>
-        <div class="discovery-actions"><button id="discover-button" class="primary-button" type="button">Discover case information</button><p id="discovery-status" aria-live="polite">Upload sources to generate the first cited intake draft.</p></div>
+        <div class="discovery-actions"><button id="discover-button" class="primary-button" type="button">Discover case information</button><button id="request-ai-proposals" class="secondary-button hidden" type="button">Request GenAI Proposals from Safe Summaries</button><p id="discovery-status" aria-live="polite">Upload sources to generate the first cited intake draft.</p></div>
         <div id="discovery-results" class="discovery-results hidden" aria-live="polite"></div>
       </section>
 

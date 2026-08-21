@@ -16,6 +16,7 @@ let intakeQuestionnaire = { version: "unavailable", sections: [], questions: [] 
 let intakeFieldRegistry = { version: "unavailable", fields: [] };
 let latestSolutionProfile = null;
 let latestDiscoveryRecheck = null;
+let latestDiscoveryContext = null;
 const editedIntakeFields = new Set();
 const acceptedProposalByField = new Map();
 const intakeControlBaseline = new Map();
@@ -432,6 +433,15 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
     grid.append(card);
   }
   root.append(grid);
+  if (latestDiscoveryContext?.packets?.length) {
+    const safePackage = el("details", "discovery-candidate-details");
+    safePackage.append(el("summary", "", "Review safe package available for optional GenAI proposals"));
+    const description = el("p", "field-hint", "Only these deterministic summaries can be sent by the optional proposal action. Raw documents, code, table values and image pixels remain local.");
+    const units = el("ul", "discovery-candidates");
+    for (const packet of latestDiscoveryContext.packets) for (const unit of packet.preview ?? []) units.append(el("li", "", `${unit.path} · ${unit.locator}: ${unit.excerpt}`));
+    safePackage.append(description, units);
+    root.append(safePackage);
+  }
   if (recheck) {
     const acceptedCount = recheck.candidates?.filter((item) => item.recommendation === "ACCEPT_CURRENT").length ?? 0;
     const actionCandidates = recheck.candidates?.filter((item) => item.recommendation !== "ACCEPT_CURRENT") ?? [];
@@ -481,6 +491,7 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
 
 async function discoverCaseInformation() {
   $("error").classList.add("hidden"); $("discover-button").disabled = true; $("assess-button").disabled = true;
+  $("request-ai-proposals").classList.add("hidden");
   setIntakeFlow("DETERMINISTIC");
   $("discovery-status").textContent = "Stage 2 of 5 · Parsing sources locally and building deterministic cited facts…";
   try {
@@ -489,29 +500,43 @@ async function discoverCaseInformation() {
     const preflight = await postJson("/api/v2/runs/preflight", prepared);
     activeRunId = preflight.runId;
     latestSolutionProfile = preflight.solutionProfile;
+    latestDiscoveryContext = { profile: preflight.solutionProfile, dlpFindings: preflight.dlpFindings, citationIndex: preflight.citationIndex, packets: preflight.packets };
     fillDossier(preflight.solutionProfile.suggestedDossier);
     renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, null, preflight.citationIndex);
-    setIntakeFlow("AI_VERIFICATION");
-    $("discovery-status").textContent = "Stage 3 of 5 · Deterministic Intake complete. Running cited AI verification without changing accepted values…";
-
-    let recheck;
-    try {
-      recheck = await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/discover-recheck`);
-    } catch {
-      recheck = { status: "UNAVAILABLE", failureCode: "INTAKE_AI_VERIFICATION_REQUEST_FAILED" };
-    }
-    renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, recheck, preflight.citationIndex);
-    const limited = recheck.status !== "COMPLETED";
-    setIntakeFlow("USER_RESOLUTION", { limitedSteps: limited ? ["AI_VERIFICATION"] : [] });
+    const blocked = preflight.dlpFindings.some((item) => item.blocking);
+    $("request-ai-proposals").classList.toggle("hidden", blocked);
+    $("request-ai-proposals").disabled = false;
+    setIntakeFlow("USER_RESOLUTION", { limitedSteps: ["AI_VERIFICATION"] });
     const unresolved = Object.values(preflight.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED").length;
-    $("discovery-status").textContent = limited
-      ? `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). AI verification was ${label(recheck.status).toLowerCase()}; resolve the Intake manually.`
-      : `Stage 4 of 5 · Deterministic and AI verification complete. Resolve ${unresolved} unresolved field(s), then confirm the Intake.`;
+    $("discovery-status").textContent = blocked
+      ? `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). Local screening blocks GenAI transmission; resolve the Intake manually.`
+      : `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). Resolve it manually or explicitly request optional GenAI proposals from safe summaries.`;
     $("assess-button").disabled = false;
     $("assessment-input").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     $("discovery-status").textContent = "Discovery could not be completed."; $("error").textContent = error.message; $("error").classList.remove("hidden");
   } finally { $("discover-button").disabled = false; }
+}
+
+async function requestAiProposals() {
+  if (!activeRunId || !latestDiscoveryContext) return;
+  $("error").classList.add("hidden");
+  $("request-ai-proposals").disabled = true;
+  setIntakeFlow("AI_VERIFICATION");
+  $("discovery-status").textContent = "Stage 3 of 5 · Sending only the reviewable safe summaries for optional GenAI proposals…";
+  let recheck;
+  try {
+    recheck = await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/discover-recheck`, { confirmed: true, purpose: "INTAKE_PROPOSALS_FROM_SAFE_SUMMARIES" });
+  } catch {
+    recheck = { status: "UNAVAILABLE", failureCode: "INTAKE_AI_VERIFICATION_REQUEST_FAILED" };
+  }
+  renderDiscovery(latestDiscoveryContext.profile, latestDiscoveryContext.dlpFindings, recheck, latestDiscoveryContext.citationIndex);
+  const completed = recheck.status === "COMPLETED";
+  setIntakeFlow("USER_RESOLUTION", { limitedSteps: completed ? [] : ["AI_VERIFICATION"] });
+  $("request-ai-proposals").classList.add("hidden");
+  $("discovery-status").textContent = completed
+    ? "Stage 4 of 5 · Optional GenAI proposals are ready for review. They remain editable and have not changed or approved any Intake value."
+    : `Stage 4 of 5 · GenAI proposals were ${label(recheck.status).toLowerCase()}. Continue resolving the deterministic Intake manually.`;
 }
 
 function renderRecommendation(pkg) {
@@ -620,6 +645,7 @@ async function loadSample() {
     encoding: "utf8"
   }));
   preparedSources = null; activeRunId = null;
+  latestDiscoveryContext = null; $("request-ai-proposals").classList.add("hidden");
   $("assess-button").disabled = true; setIntakeFlow("UPLOAD");
   $("folder-summary").textContent = `${sample.sources.length} controlled sample evidence files loaded`;
   $("file-summary").textContent = "No individual files selected";
@@ -673,7 +699,7 @@ async function waitForRun(runId) {
 async function runAssessment(event) {
   event.preventDefault(); $("error").classList.add("hidden"); $("progress").classList.remove("hidden"); $("assess-button").disabled = true;
   try {
-    if (!activeRunId) throw new Error("Complete deterministic discovery and AI Intake verification before starting the A–F assessment.");
+    if (!activeRunId) throw new Error("Complete deterministic discovery before starting the A–F assessment.");
     await selectedSources();
     const dossier = dossierFromForm();
     setProgress("Preparing AI analysis", "Local screening is complete. Redacted evidence will be analysed by the Engine’s configured providers.");
@@ -751,7 +777,7 @@ Promise.all([
   })));
   renderQuestionnaire();
 }).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; $("knowledge-diagnostics-content").textContent = "Knowledge connection diagnostics are unavailable."; });
-$("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("dossier-form").addEventListener("submit", runAssessment);
+$("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("request-ai-proposals").addEventListener("click", requestAiProposals); $("dossier-form").addEventListener("submit", runAssessment);
 $("dossier-form").addEventListener("input", (event) => {
   const controlId = event.target.id || event.target.closest("#data-categories")?.id;
   const field = INTAKE_CONTROL_FIELDS[controlId];
@@ -765,5 +791,5 @@ $("dossier-form").addEventListener("input", (event) => {
 });
 $("summary-tab").addEventListener("click", () => selectView("summary")); $("workspace-tab").addEventListener("click", () => selectView("workspace"));
 $("print-button").addEventListener("click", printReport); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);
-$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; });
-$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; });
+$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; $("request-ai-proposals").classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; });
+$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; $("request-ai-proposals").classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; });

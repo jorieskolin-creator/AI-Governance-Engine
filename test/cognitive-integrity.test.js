@@ -28,7 +28,7 @@ function claim(overrides = {}) {
     evidenceQuotes: [{ sourceUnitId: sourceUnit.id, quote: "validates every privileged action" }],
     controlIds: ["CTRL-D3"], antiPatternIds: [], requirementIds: ["REQ-D3"], findingDefinitionIds: ["FND-D3-001"], assessmentObjectIds: ["SC-D3"],
     domains: ["D"], severity: "HIGH", proposedAssuranceState: "IMPLEMENTED", proposedFindingState: "NOT_SATISFIED", limitations: [], ...overrides
-  }, { provider: "ANTHROPIC", model: "extractor", profileId: "extractor", domain: "D" });
+  }, { provider: "MOONSHOT", model: "extractor", profileId: "extractor", domain: "D" });
 }
 
 function verification(value = {}) {
@@ -59,7 +59,7 @@ test("extractor and verifier cannot raise assurance above the lowest accepted ce
 test("derived multimodal text preserves immutable parent lineage", () => {
   const parent = { ...sourceUnit, id: "image-unit", content: "[IMAGE CONTENT]", mimeType: "image/png", media: { mimeType: "image/png", data: "AA==" } };
   const before = structuredClone(parent);
-  const derived = createDerivedSourceUnit(parent, { description: "Architecture diagram", visibleText: "Sandbox", sensitivityWarnings: [], promptInjectionCandidates: [] }, { provider: "GEMINI", model: "vision" });
+  const derived = createDerivedSourceUnit(parent, { description: "Architecture diagram", visibleText: "Sandbox", sensitivityWarnings: [], promptInjectionCandidates: [] }, { provider: "MOONSHOT", model: "vision" });
   assert.deepEqual(parent, before);
   assert.equal(derived.parentSourceUnitId, parent.id);
   assert.equal(derived.evidenceClass, "INFERRED");
@@ -90,9 +90,9 @@ test("a searched object with no evidence is assessed but cannot become control s
 });
 
 test("the governance route requires all three server-side provider credentials", () => {
-  const complete = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test" });
-  assert.deepEqual(requiredGovernanceProviders(complete).sort(), ["ANTHROPIC", "GEMINI", "OPENAI"]);
-  assert.throws(() => requiredGovernanceProviders(modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test" })), /GEMINI/i);
+  const complete = modelPolicy({ OPENAI_API_KEY: "test", XAI_API_KEY: "test", MOONSHOT_API_KEY: "test" });
+  assert.deepEqual(requiredGovernanceProviders(complete).sort(), ["MOONSHOT", "OPENAI", "XAI"]);
+  assert.throws(() => requiredGovernanceProviders(modelPolicy({ OPENAI_API_KEY: "test", MOONSHOT_API_KEY: "test" })), /XAI/i);
 });
 
 test("cross-domain claim consolidation preserves a contradiction graph", () => {

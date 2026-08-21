@@ -126,7 +126,7 @@ test("GenAI proposal transmission contains selected acquired facts but not ineli
   }] });
   const access = run.acquiredFacts.facts.find((fact) => fact.fieldId === "exposure.currentUserAccess");
   const acquiredFactUnit = createAcquiredFactSelectionUnit(run.acquiredFacts, [access.id]);
-  const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy({ MOONSHOT_API_KEY: "test", NODE_ENV: "development" });
   let transmittedPrompt = "";
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ prompt, profile }) => {
     transmittedPrompt = prompt;
@@ -138,7 +138,7 @@ test("GenAI proposal transmission contains selected acquired facts but not ineli
       usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
     };
   } });
-  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
+  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] }));
   await recheckDiscovery(run, { approvedPackets }, { policy, client, acquiredFactUnit });
 
   assert.match(transmittedPrompt, new RegExp(ACQUIRED_FACT_SELECTION_VERSION));
@@ -183,7 +183,7 @@ test("AI Intake recheck transmits the code summary contract and records that raw
     mimeType: "application/json",
     content: JSON.stringify({ name: rawMarker, scripts: { start: "node server.js" } })
   }] });
-  const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy({ MOONSHOT_API_KEY: "test", NODE_ENV: "development" });
   let transmittedPrompt = "";
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ prompt, profile }) => {
     transmittedPrompt = prompt;
@@ -195,7 +195,7 @@ test("AI Intake recheck transmits the code summary contract and records that raw
       usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
     };
   } });
-  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
+  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] }));
   await recheckDiscovery(run, { approvedPackets }, { policy, client });
 
   assert.match(transmittedPrompt, new RegExp(CODE_EVIDENCE_SUMMARY_VERSION));

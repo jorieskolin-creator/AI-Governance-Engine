@@ -1,26 +1,10 @@
 import { sha256, stableStringify } from "../core/hash.js";
 import { classifyCognitiveFailure } from "./failure-policy.js";
+import { assertStrictSchema, normalizeProviderResponse, serializeProviderRequest } from "./provider-adapters.js";
 
 function parseJson(value, label) {
   try { return JSON.parse(value); }
   catch { throw new Error(`${label} returned malformed structured output`); }
-}
-
-function openAiOutput(body) {
-  const refusal = (body.output ?? []).flatMap((item) => item.content ?? []).find((item) => item.type === "refusal");
-  if (refusal) throw Object.assign(new Error("OpenAI refused the structured assessment request"), { refusal: true });
-  if (typeof body.output_text === "string") return body.output_text;
-  return (body.output ?? []).flatMap((item) => item.content ?? []).filter((item) => item.type === "output_text").map((item) => item.text).join("");
-}
-
-function anthropicOutput(body) {
-  if (body.stop_reason === "refusal") throw Object.assign(new Error("Anthropic refused the structured assessment request"), { refusal: true });
-  return (body.content ?? []).filter((item) => item.type === "text").map((item) => item.text).join("");
-}
-
-function geminiOutput(body) {
-  if (["SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT"].includes(body.candidates?.[0]?.finishReason)) throw Object.assign(new Error("Gemini refused the structured assessment request"), { refusal: true });
-  return (body.candidates?.[0]?.content?.parts ?? []).map((item) => item.text ?? "").join("");
 }
 
 function validateSchema(value, schema, path = "$") {
@@ -37,85 +21,33 @@ function validateSchema(value, schema, path = "$") {
     for (let index = 0; index < value.length; index += 1) validateSchema(value[index], schema.items, `${path}[${index}]`);
   } else if (types.includes("string") && typeof value !== "string") throw new Error(`${path} must be a string`);
   else if (types.includes("boolean") && typeof value !== "boolean") throw new Error(`${path} must be a boolean`);
+  else if (types.includes("integer") && (!Number.isInteger(value))) throw new Error(`${path} must be an integer`);
+  else if (types.includes("number") && (typeof value !== "number" || !Number.isFinite(value))) throw new Error(`${path} must be a number`);
 }
 
-export function assertOpenAiStrictSchema(schema, path = "$") {
-  const types = Array.isArray(schema.type) ? schema.type : [schema.type];
-  if (types.includes("object")) {
-    const propertyNames = Object.keys(schema.properties ?? {}).sort();
-    const requiredNames = [...(schema.required ?? [])].sort();
-    if (propertyNames.join("|") !== requiredNames.join("|")) throw new Error(`${path} must require every declared object property for OpenAI strict structured output`);
-    for (const [name, child] of Object.entries(schema.properties ?? {})) assertOpenAiStrictSchema(child, `${path}.${name}`);
-  }
-  if (types.includes("array") && schema.items) assertOpenAiStrictSchema(schema.items, `${path}[]`);
-}
+export const assertOpenAiStrictSchema = assertStrictSchema;
 
 async function requestJson(url, init, timeoutMs, signal) {
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const response = await fetch(url, { ...init, signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message = body?.error?.message ?? body?.message ?? `HTTP ${response.status}`;
-    throw Object.assign(new Error(`Provider request failed: ${message}`), { statusCode: response.status });
+    throw Object.assign(new Error(`Provider request failed with HTTP ${response.status}`), { statusCode: response.status });
   }
   return body;
 }
 
-function openAiRequest(profile, credential, prompt, schemaName, schema, media = [], signal) {
-  assertOpenAiStrictSchema(schema);
-  return requestJson("https://api.openai.com/v1/responses", {
+function providerRequest(profile, credential, prompt, schemaName, schema, media = [], signal) {
+  if (!credential) throw new Error(`The server credential required for ${profile.provider} is unavailable`);
+  const request = serializeProviderRequest(profile, prompt, schemaName, schema, media);
+  return requestJson(request.url, {
     method: "POST",
     headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: profile.model,
-      input: [{ role: "developer", content: [{ type: "input_text", text: prompt }, ...media.map((item) => ({ type: "input_image", image_url: `data:${item.mimeType};base64,${item.data}`, detail: "high" }))] }],
-      reasoning: { effort: profile.effort },
-      text: { verbosity: "low", format: { type: "json_schema", name: schemaName, strict: true, schema } },
-      max_output_tokens: profile.maxOutputTokens,
-      store: false
-    })
-  }, 120_000, signal).then((body) => ({
-    value: parseJson(openAiOutput(body), "OpenAI"),
-    responseModel: body.model,
-    usage: { inputTokens: body.usage?.input_tokens ?? 0, outputTokens: body.usage?.output_tokens ?? 0, totalTokens: body.usage?.total_tokens ?? 0 }
-  }));
-}
-
-function anthropicRequest(profile, credential, prompt, schemaName, schema, media = [], signal) {
-  return requestJson("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": credential, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: profile.model,
-      max_tokens: profile.maxOutputTokens,
-      thinking: { type: "adaptive" },
-      output_config: { effort: profile.effort, format: { type: "json_schema", schema } },
-      messages: [{ role: "user", content: [{ type: "text", text: prompt }, ...media.map((item) => ({ type: "image", source: { type: "base64", media_type: item.mimeType, data: item.data } }))] }]
-    })
-  }, 120_000, signal).then((body) => ({
-    value: parseJson(anthropicOutput(body), "Anthropic"),
-    responseModel: body.model,
-    usage: { inputTokens: body.usage?.input_tokens ?? 0, outputTokens: body.usage?.output_tokens ?? 0, totalTokens: (body.usage?.input_tokens ?? 0) + (body.usage?.output_tokens ?? 0) }
-  }));
-}
-
-function geminiRequest(profile, credential, prompt, schemaName, schema, media = [], signal) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(profile.model)}:generateContent`;
-  return requestJson(url, {
-    method: "POST",
-    headers: { "x-goog-api-key": credential, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }, ...media.map((item) => ({ inlineData: { mimeType: item.mimeType, data: item.data } }))] }],
-      generationConfig: {
-        responseMimeType: "application/json", responseJsonSchema: schema, maxOutputTokens: profile.maxOutputTokens,
-        thinkingConfig: { thinkingLevel: profile.thinkingLevel }
-      }
-    })
-  }, 120_000, signal).then((body) => ({
-    value: parseJson(geminiOutput(body), "Gemini"),
-    responseModel: profile.model,
-    usage: { inputTokens: body.usageMetadata?.promptTokenCount ?? 0, outputTokens: body.usageMetadata?.candidatesTokenCount ?? 0, totalTokens: body.usageMetadata?.totalTokenCount ?? 0 }
-  }));
+    body: JSON.stringify(request.body)
+  }, 120_000, signal).then((body) => {
+    const normalized = normalizeProviderResponse(profile.provider, body);
+    return { ...normalized, value: parseJson(normalized.text, profile.provider) };
+  });
 }
 
 export class ModelBudget {
@@ -194,11 +126,7 @@ export class StructuredModelClient {
       try {
         const response = this.transport
           ? await this.transport({ profile, prompt: repairPrompt, schemaName, schema, media, retry, signal: this.signal })
-          : profile.provider === "OPENAI"
-            ? await openAiRequest(profile, this.policy.credentials.OPENAI, repairPrompt, schemaName, schema, media, this.signal)
-            : profile.provider === "ANTHROPIC"
-              ? await anthropicRequest(profile, this.policy.credentials.ANTHROPIC, repairPrompt, schemaName, schema, media, this.signal)
-              : await geminiRequest(profile, this.policy.credentials.GEMINI, repairPrompt, schemaName, schema, media, this.signal);
+          : await providerRequest(profile, this.policy.credentials[profile.provider], repairPrompt, schemaName, schema, media, this.signal);
         this.signal?.throwIfAborted();
         if (!responseModelMatches(profile.model, response.responseModel)) throw new Error(`Provider returned unapproved model ${response.responseModel ?? "UNKNOWN"}; expected ${profile.model}`);
         validateSchema(response.value, schema);
@@ -222,7 +150,7 @@ export class StructuredModelClient {
       id: `model-event-${sha256({ requestHash, retry, started }).slice(0, 24)}`,
       requestId: `model-request-${requestHash.slice(0, 24)}`, provider: profile.provider, configuredModel: profile.model,
       responseModel: response?.responseModel ?? null,
-      parameters: profile.provider === "GEMINI" ? { thinkingLevel: profile.thinkingLevel } : { effort: profile.effort },
+      parameters: { effort: profile.effort },
       promptVersion, schemaName, schemaVersion: "3.1.0", packetHash, requestHash,
       usage: response?.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, latencyMs: Date.now() - started,
       retry, refusal: Boolean(error?.refusal), status: error ? "FAILED" : "COMPLETED", error: error ? error.message : null,

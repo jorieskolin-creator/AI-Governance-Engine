@@ -1,41 +1,44 @@
-const PROFILES = Object.freeze([
-  { id: "gemini-routing-minimal", provider: "GEMINI", model: "gemini-3.6-flash", role: "ROUTING", thinkingLevel: "minimal", maxOutputTokens: 4000 },
-  { id: "gemini-extraction-medium", provider: "GEMINI", model: "gemini-3.6-flash", role: "EXTRACTION", thinkingLevel: "medium", maxOutputTokens: 16000 },
-  { id: "sonnet-solution-medium", provider: "ANTHROPIC", model: "claude-sonnet-5", role: "SOLUTION_UNDERSTANDING", effort: "medium", maxOutputTokens: 16000 },
-  { id: "sonnet-assessment-medium", provider: "ANTHROPIC", model: "claude-sonnet-5", role: "DOMAIN_ASSESSMENT", effort: "medium", maxOutputTokens: 20000 },
-  { id: "openai-sol-verification-high", provider: "OPENAI", model: "gpt-5.6-sol", role: "VERIFICATION", effort: "high", maxOutputTokens: 6000 },
-  { id: "gemini-adjudication-high", provider: "GEMINI", model: "gemini-3.6-flash", role: "ADJUDICATION", thinkingLevel: "high", maxOutputTokens: 8000 },
-  { id: "openai-sol-synthesis-high", provider: "OPENAI", model: "gpt-5.6-sol", role: "SYNTHESIS", effort: "high", maxOutputTokens: 16000 },
-  { id: "sonnet-factcheck-high", provider: "ANTHROPIC", model: "claude-sonnet-5", role: "FACT_CHECK", effort: "high", maxOutputTokens: 8000 },
-  { id: "openai-sol-factcheck-high", provider: "OPENAI", model: "gpt-5.6-sol", role: "FACT_CHECK", effort: "high", maxOutputTokens: 8000 },
-  { id: "gpt-5.4-benchmark", provider: "OPENAI", model: "gpt-5.4", role: "BENCHMARK", effort: "medium", maxOutputTokens: 16000 }
+import { COGNITIVE_PROVIDERS, providerAdapter } from "./provider-adapters.js";
+
+const PROFILE_DEFINITIONS = Object.freeze([
+  { id: "moonshot-routing-low", provider: "MOONSHOT", modelEnv: "MOONSHOT_COGNITIVE_MODEL", defaultModel: "kimi-k3", role: "ROUTING", effort: "low", maxOutputTokens: 4000 },
+  { id: "moonshot-extraction-high", provider: "MOONSHOT", modelEnv: "MOONSHOT_COGNITIVE_MODEL", defaultModel: "kimi-k3", role: "EXTRACTION", effort: "high", maxOutputTokens: 16000 },
+  { id: "moonshot-solution-high", provider: "MOONSHOT", modelEnv: "MOONSHOT_COGNITIVE_MODEL", defaultModel: "kimi-k3", role: "SOLUTION_UNDERSTANDING", effort: "high", maxOutputTokens: 16000 },
+  { id: "moonshot-assessment-high", provider: "MOONSHOT", modelEnv: "MOONSHOT_COGNITIVE_MODEL", defaultModel: "kimi-k3", role: "DOMAIN_ASSESSMENT", effort: "high", maxOutputTokens: 20000 },
+  { id: "openai-verification-high", provider: "OPENAI", modelEnv: "OPENAI_COGNITIVE_MODEL", defaultModel: "gpt-5.6", role: "VERIFICATION", effort: "high", maxOutputTokens: 6000 },
+  { id: "xai-adjudication-high", provider: "XAI", modelEnv: "XAI_COGNITIVE_MODEL", defaultModel: "grok-4.6", role: "ADJUDICATION", effort: "high", maxOutputTokens: 8000 },
+  { id: "openai-synthesis-high", provider: "OPENAI", modelEnv: "OPENAI_COGNITIVE_MODEL", defaultModel: "gpt-5.6", role: "SYNTHESIS", effort: "high", maxOutputTokens: 16000 },
+  { id: "moonshot-factcheck-high", provider: "MOONSHOT", modelEnv: "MOONSHOT_COGNITIVE_MODEL", defaultModel: "kimi-k3", role: "FACT_CHECK", effort: "high", maxOutputTokens: 8000 },
+  { id: "xai-factcheck-high", provider: "XAI", modelEnv: "XAI_COGNITIVE_MODEL", defaultModel: "grok-4.6", role: "FACT_CHECK", effort: "high", maxOutputTokens: 8000 }
 ]);
 
 const ROUTE_BY_ROLE = Object.freeze({
-  ROUTING: "gemini-routing-minimal",
-  EXTRACTION: "gemini-extraction-medium",
-  SOLUTION_UNDERSTANDING: "sonnet-solution-medium",
-  DOMAIN_ASSESSMENT: "sonnet-assessment-medium",
-  VERIFICATION: "openai-sol-verification-high",
-  ADJUDICATION: "gemini-adjudication-high",
-  SYNTHESIS: "openai-sol-synthesis-high",
-  FACT_CHECK: "sonnet-factcheck-high"
+  ROUTING: "moonshot-routing-low",
+  EXTRACTION: "moonshot-extraction-high",
+  SOLUTION_UNDERSTANDING: "moonshot-solution-high",
+  DOMAIN_ASSESSMENT: "moonshot-assessment-high",
+  VERIFICATION: "openai-verification-high",
+  ADJUDICATION: "xai-adjudication-high",
+  SYNTHESIS: "openai-synthesis-high",
+  FACT_CHECK: "moonshot-factcheck-high"
 });
 
-const FALLBACKS_BY_ROLE = Object.freeze({ FACT_CHECK: ["openai-sol-factcheck-high"] });
+const FALLBACKS_BY_ROLE = Object.freeze({ FACT_CHECK: ["xai-factcheck-high"] });
 
 export function providerCredentials(env = process.env) {
   return {
     OPENAI: env.OPENAI_API_KEY || env.GPT_API_KEY || null,
-    ANTHROPIC: env.ANTHROPIC_API_KEY || null,
-    GEMINI: env.GEMINI_API_KEY || null
+    XAI: env.XAI_API_KEY || null,
+    MOONSHOT: env.MOONSHOT_API_KEY || null
   };
 }
 
 export function modelPolicy(env = process.env) {
   const credentials = providerCredentials(env);
-  const profiles = PROFILES.map((item) => ({
+  const profiles = PROFILE_DEFINITIONS.map(({ modelEnv, defaultModel, ...item }) => ({
     ...item,
+    model: env[modelEnv] || defaultModel,
+    capabilities: providerAdapter(item.provider).capabilities,
     operationalStatus: ROUTE_BY_ROLE[item.role] === item.id ? "GOVERNANCE_ROUTE" : "BENCHMARK_ONLY",
     credentialAvailable: Boolean(credentials[item.provider])
   }));
@@ -70,3 +73,5 @@ export function requiredGovernanceProviders(policy) {
   }
   return [...new Set(required.map((item) => item.provider))];
 }
+
+export { COGNITIVE_PROVIDERS };

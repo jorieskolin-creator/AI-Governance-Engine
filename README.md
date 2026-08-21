@@ -25,11 +25,11 @@ The repository is suitable for controlled development and calibration. It is not
 - The standard cognitive pipeline preserves raw/derived lineage, verifies citations and keeps unsupported claims outside deterministic decision evidence.
 - Knowledge authoring validates rich category JSON and compiles five runtime collections plus an immutable manifest.
 
-Every normal assessment uses cognitive contract `3.0.0`: independently verified solution understanding, immutable raw/derived evidence lineage, object-level assessment coverage, parallel A–F claim extraction, independent verification, bounded rescan/adjudication, deterministic assessment, controlled synthesis, repair/re-analysis, and a separate publication gate.
+Every normal assessment uses cognitive contract `3.1.0`: independently verified solution understanding, immutable raw/derived evidence lineage, object-level assessment coverage, parallel A–F claim extraction, independent verification, bounded rescan/adjudication, deterministic assessment, controlled synthesis, repair/re-analysis, and a separate publication gate.
 
 ## Authority and evidence flow
 
-The cognitive contract is `3.0.0`. It is the only implemented cognitive pipeline; there is no separate shadow or compatibility implementation. It is the normal browser assessment path; users never enter credentials or select providers.
+The cognitive contract is `3.1.0`. It is the only implemented cognitive pipeline; there is no separate shadow or compatibility implementation. It is the normal browser assessment path; users never enter credentials or select providers.
 
 ```text
 raw source (local only)
@@ -46,7 +46,7 @@ raw source (local only)
 
 Only decision-eligible adjudicated claims become locked findings and deterministic evidence. Unsupported, conflicting and unverifiable claims remain in the audit ledger. Model output cannot directly change applicability, assurance, anti-pattern state, hard gates, readiness, lifecycle boundaries or formal authority.
 
-The fixed initial route is Anthropic for discovery and A–F assessment, OpenAI for independent verification and controlled synthesis, Gemini for disputed-claim adjudication, and Anthropic for final fact-checking. Missing primary or independent-provider availability produces `COGNITIVE_ASSESSMENT_INCOMPLETE`, never a silent positive fallback.
+The fixed initial route is Moonshot Kimi for discovery, A–F assessment and final synthesis fact-checking, OpenAI for independent claim verification and controlled synthesis, and xAI Grok for disputed-claim adjudication. This preserves an independent adjudicator when a Kimi-extracted claim is challenged during final fact-check. Each provider uses a separate transport adapter behind the same application-level schemas, and every response is validated locally. Missing primary or independent-provider availability produces `COGNITIVE_ASSESSMENT_INCOMPLETE`, never a silent positive fallback.
 
 The engine returns readiness recommendations such as `READY_WITH_CONDITIONS`, `REMEDIATE_BEFORE_NEXT_STAGE`, `HUMAN_REVIEW_REQUIRED` and `BLOCKED_IN_CURRENT_FORM`. Legal, Privacy, Security, Governance, AI Forum and AI Board decisions remain human acts. `FORMALLY_APPROVED` is reserved for a future trusted decision connector that verifies identity, authority, signature, scope and validity.
 

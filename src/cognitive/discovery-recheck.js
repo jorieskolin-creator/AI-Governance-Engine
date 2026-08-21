@@ -5,12 +5,13 @@ import { discoveryRecheckPrompt, packetHash, PROMPT_VERSIONS } from "./prompts.j
 import { activeIntakeQuestionIds } from "../knowledge/intake-questionnaire.js";
 import { stableId } from "../core/hash.js";
 import { intakeField } from "../intake/field-registry.js";
+import { COGNITIVE_PROVIDERS } from "./provider-adapters.js";
 
 const MAX_RECHECK_CHARS = 60_000;
 
 function commonApprovedProviders(approval) {
   const sets = approval.approvedPackets.map((item) => new Set(item.providers));
-  return ["OPENAI", "ANTHROPIC", "GEMINI"].filter((provider) => sets.every((set) => set.has(provider)));
+  return COGNITIVE_PROVIDERS.filter((provider) => sets.every((set) => set.has(provider)));
 }
 
 function relevantPackets(run, provider, approval) {

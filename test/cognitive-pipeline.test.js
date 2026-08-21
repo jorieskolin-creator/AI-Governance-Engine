@@ -11,6 +11,10 @@ import { SAMPLE_REQUEST } from "../src/sample.js";
 import { createIntakeResolutionDraft } from "../src/intake/contracts.js";
 import { cancellationError } from "../src/cognitive/failure-policy.js";
 
+const ALL_PROVIDERS = ["OPENAI", "XAI", "MOONSHOT"];
+const ALL_CREDENTIALS = { OPENAI_API_KEY: "test", XAI_API_KEY: "test", MOONSHOT_API_KEY: "test", NODE_ENV: "development" };
+const MOONSHOT_CREDENTIALS = { MOONSHOT_API_KEY: "test", NODE_ENV: "development" };
+
 function preflightInput(sources) {
   return { dossier: structuredClone(SAMPLE_REQUEST.dossier), sources };
 }
@@ -98,7 +102,7 @@ test("a supplied dossier still requires confirmation and produces an immutable e
 test("AI discovery recheck cannot recover raw document values from a controlled summary", async () => {
   const run = await createPreflight({ sources: [{ path: "README.md", mimeType: "text/markdown", content: "# FinOps Engine\nSolution name: FinOps Engine\nIntended purpose: Assess FinOps evidence for governance decisions." }] });
   const unit = run.packets[0].sourceUnits[0];
-  const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy(MOONSHOT_CREDENTIALS);
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ profile }) => ({
     value: { candidates: [
       { field: "name", status: "CANDIDATE", recommendation: "ACCEPT_CURRENT", value: "FinOps Engine", sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote: "Solution name: FinOps Engine" }], rationale: "The product name is explicitly labelled." },
@@ -107,7 +111,7 @@ test("AI discovery recheck cannot recover raw document values from a controlled 
     responseModel: profile.model, usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
   }) });
   const before = structuredClone(run.solutionProfile);
-  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
+  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] }));
   const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
   assert.equal(result.candidates[0].status, "REJECTED_UNSUPPORTED");
   assert.equal(result.candidates[0].recommendation, "RESOLVE_CONFLICT");
@@ -119,7 +123,7 @@ test("AI discovery recheck cannot recover raw document values from a controlled 
   assert.match(result.candidates[0].limitations[0], /failed citation or recommendation validation/i);
   assert.deepEqual(run.solutionProfile, before);
   assert.equal(run.transmissionManifest[0].stage, "DISCOVERY_RECHECK");
-  assert.equal(run.transmissionManifest[0].provider, "ANTHROPIC");
+  assert.equal(run.transmissionManifest[0].provider, "MOONSHOT");
   assert.equal(run.transmissionManifest[0].containsRawEvidence, false);
   assert.deepEqual(run.transmissionManifest[0].derivationContracts, ["document-evidence-summary-1.0.0"]);
   assert.ok(run.transmissionManifest[0].approvedAt);
@@ -129,12 +133,12 @@ test("AI discovery recheck cannot recover raw document values from a controlled 
 test("AI Intake verification rejects ACCEPT_CURRENT when the returned value differs", async () => {
   const run = await createPreflight({ sources: [{ path: "README.md", mimeType: "text/markdown", content: "# Internal Assistant\nSolution name: Internal Assistant" }] });
   const unit = run.packets[0].sourceUnits[0];
-  const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy(MOONSHOT_CREDENTIALS);
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ profile }) => ({
     value: { candidates: [{ field: "name", status: "CANDIDATE", recommendation: "ACCEPT_CURRENT", value: "Public Assistant", sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote: "Solution name: Internal Assistant" }], rationale: "Incorrectly claims a different value is current." }] },
     responseModel: profile.model, usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
   }) });
-  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
+  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] }));
   const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
   const candidate = result.candidates.find((item) => item.field === "name");
   assert.equal(candidate.status, "REJECTED_UNSUPPORTED");
@@ -146,12 +150,12 @@ test("AI Intake verification excludes fields prohibited by the registered propos
   const unit = run.packets[0].sourceUnits[0];
   const quote = "document-evidence-summary-1.0.0";
   assert.match(unit.content, new RegExp(quote));
-  const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy(MOONSHOT_CREDENTIALS);
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ profile }) => ({
     value: { candidates: [{ field: "currentStage", status: "CANDIDATE", recommendation: "REVIEW_CANDIDATE", value: "DESIGN_AND_DEVELOPMENT", sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote }], rationale: "The registered field does not permit GenAI proposals." }] },
     responseModel: profile.model, usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
   }) });
-  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
+  const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] }));
   const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
   assert.equal(result.targetFields.includes("currentStage"), false);
   assert.equal(result.candidates.some((item) => item.field === "currentStage"), false);
@@ -164,14 +168,14 @@ test("AI Intake verification rejects empty and incompletely covered citations", 
       { path: "support.md", mimeType: "text/markdown", content: "Supporting product context." }
     ] });
     const units = run.packets.flatMap((packet) => packet.sourceUnits);
-    const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
+    const policy = modelPolicy(MOONSHOT_CREDENTIALS);
     const sourceUnitIds = mode === "UNCITED_SOURCE" ? units.map((unit) => unit.id) : [units[0].id];
     const quote = mode === "EMPTY_QUOTE" ? "" : "Solution name: Internal Assistant";
     const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ profile }) => ({
       value: { candidates: [{ field: "name", status: "CANDIDATE", recommendation: "ACCEPT_CURRENT", value: "Internal Assistant", sourceUnitIds, evidenceQuotes: [{ sourceUnitId: units[0].id, quote }], rationale: "Citation validation adversarial case." }] },
       responseModel: profile.model, usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
     }) });
-    const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] }));
+    const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] }));
     const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
     assert.equal(result.candidates.find((item) => item.field === "name").status, "REJECTED_UNSUPPORTED", mode);
   }
@@ -179,9 +183,9 @@ test("AI Intake verification rejects empty and incompletely covered citations", 
 
 test("v2 accepts only verified claims into the deterministic readiness package", async () => {
   const run = await createPreflight(preflightInput(broadGovernanceSource()));
-  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  const providers = ALL_PROVIDERS;
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
-  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy(ALL_CREDENTIALS);
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: mockTransport });
   const checkpoints = [];
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }), onCheckpoint: async (checkpoint) => checkpoints.push(checkpoint) });
@@ -200,9 +204,9 @@ test("v2 accepts only verified claims into the deterministic readiness package",
 
 test("a durable checkpoint failure stops execution before the next provider call", async () => {
   const run = await createPreflight(preflightInput(broadGovernanceSource()));
-  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  const providers = ALL_PROVIDERS;
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
-  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy(ALL_CREDENTIALS);
   let providerCalls = 0;
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: async (request) => { providerCalls += 1; return mockTransport(request); } });
   await assert.rejects(executeCognitiveRun(run, {
@@ -217,9 +221,9 @@ test("a durable checkpoint failure stops execution before the next provider call
 
 test("run cancellation escapes cognitive fallbacks and stops sequencing", async () => {
   const run = await createPreflight(preflightInput(broadGovernanceSource()));
-  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  const providers = ALL_PROVIDERS;
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
-  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy(ALL_CREDENTIALS);
   const controller = new AbortController();
   let providerCalls = 0;
   await assert.rejects(executeCognitiveRun(run, {
@@ -239,8 +243,8 @@ test("run cancellation escapes cognitive fallbacks and stops sequencing", async 
 
 test("single-provider approval fails closed for cross-provider verification", async () => {
   const run = await createPreflight(preflightInput([{ path: "governance/purpose.md", mimeType: "text/markdown", content: "Purpose and owner are documented." }]));
-  run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers: ["ANTHROPIC"] })) }, run);
-  const policy = modelPolicy({ ANTHROPIC_API_KEY: "test", NODE_ENV: "development" });
+  run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] })) }, run);
+  const policy = modelPolicy(MOONSHOT_CREDENTIALS);
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: mockTransport });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
   assert.equal(result.cognitive.coverage.complete, false);
@@ -250,9 +254,9 @@ test("single-provider approval fails closed for cross-provider verification", as
 
 test("a fabricated evidence quote is rejected before model verification", async () => {
   const run = await createPreflight(preflightInput(broadGovernanceSource()));
-  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  const providers = ALL_PROVIDERS;
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
-  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy(ALL_CREDENTIALS);
   const badQuoteTransport = async (args) => {
     const result = await mockTransport(args);
     if (domainFromSchema(args.schemaName)) result.value.claims[0].evidenceQuotes[0].quote = "This quote does not exist in the source.";
@@ -268,9 +272,9 @@ test("a fabricated evidence quote is rejected before model verification", async 
 
 test("unsupported synthesis is quarantined and cannot alter deterministic authority", async () => {
   const run = await createPreflight(preflightInput([{ path: "governance/purpose.md", mimeType: "text/markdown", content: "Purpose and owner are documented for a bounded prototype." }]));
-  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  const providers = ALL_PROVIDERS;
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
-  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy(ALL_CREDENTIALS);
   const adversarialSynthesis = async (args) => {
     const result = await mockTransport(args);
     if (args.schemaName === "readiness_synthesis") result.value.items[0].text = "The system is formally approved and legally compliant.";
@@ -290,9 +294,9 @@ test("unsupported synthesis is quarantined and cannot alter deterministic author
 
 test("one failed domain returns a partial deterministic package and incomplete coverage gate", async () => {
   const run = await createPreflight(preflightInput(broadGovernanceSource()));
-  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  const providers = ALL_PROVIDERS;
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
-  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy(ALL_CREDENTIALS);
   const failingDomain = async (args) => {
     if (args.schemaName === "domain_c_claims") throw new Error("Simulated domain C refusal");
     return mockTransport(args);
@@ -308,9 +312,9 @@ test("one failed domain returns a partial deterministic package and incomplete c
 
 test("fact-check repair candidates require a second successful fact-check", async () => {
   const run = await createPreflight(preflightInput([{ path: "governance/purpose.md", mimeType: "text/markdown", content: "Purpose and owner are documented for a bounded prototype." }]));
-  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  const providers = ALL_PROVIDERS;
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
-  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy(ALL_CREDENTIALS);
   let factChecks = 0;
   const repairTransport = async (args) => {
     const result = await mockTransport(args);
@@ -332,9 +336,9 @@ test("fact-check repair candidates require a second successful fact-check", asyn
 
 test("a fact-check grounding challenge reopens the affected claim and recomputes deterministically", async () => {
   const run = await createPreflight(preflightInput([{ path: "governance/purpose.md", mimeType: "text/markdown", content: "Purpose and owner are documented for a bounded prototype." }]));
-  const providers = ["OPENAI", "ANTHROPIC", "GEMINI"];
+  const providers = ALL_PROVIDERS;
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
-  const policy = modelPolicy({ OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test", NODE_ENV: "development" });
+  const policy = modelPolicy(ALL_CREDENTIALS);
   let factChecks = 0; let reanalysisCalls = 0;
   const transport = async (args) => {
     const result = await mockTransport(args);

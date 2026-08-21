@@ -1,6 +1,7 @@
 import { DOMAINS, SEVERITIES, invariant, validateDossier } from "../contracts.js";
 import { stableId } from "../core/hash.js";
 import { acceptedFormatsByMime } from "../../public/upload-types.js";
+import { COGNITIVE_PROVIDERS } from "./provider-adapters.js";
 
 export const FACT_CLASSES = Object.freeze(["DECLARED", "OBSERVED", "INFERRED"]);
 export const CLAIM_TYPES = Object.freeze(["FACT", "CONTROL_SUPPORT", "GAP", "RISK", "ANTIPATTERN", "ABSENCE_TEST", "CONTRADICTION", "UNKNOWN", "EVIDENCE_REQUEST"]);
@@ -50,7 +51,7 @@ export function validateExecutionApproval(input, run) {
     invariant(item && typeof item === "object", `approvedPackets[${index}] must be an object`);
     invariant(packetIds.has(item.packetId), `Unknown packet: ${item.packetId}`);
     invariant(stringArray(item.providers) && item.providers.length > 0, `approvedPackets[${index}].providers is required`);
-    invariant(item.providers.every((provider) => ["OPENAI", "ANTHROPIC", "GEMINI"].includes(provider)), `approvedPackets[${index}].providers contains an unsupported provider`);
+    invariant(item.providers.every((provider) => COGNITIVE_PROVIDERS.includes(provider)), `approvedPackets[${index}].providers contains an unsupported provider`);
     return { packetId: item.packetId, providers: [...new Set(item.providers)] };
   });
   invariant(approvedPackets.length === run.packets.length, "Every proposed packet requires an explicit approval entry");

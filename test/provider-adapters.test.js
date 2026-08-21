@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { COGNITIVE_PROVIDERS, modelPolicy } from "../src/cognitive/model-policy.js";
+import { COGNITIVE_PROVIDERS, modelPolicy, requiredGovernanceProviders } from "../src/cognitive/model-policy.js";
 import {
   normalizeProviderResponse, providerAdapter, serializeProviderRequest
 } from "../src/cognitive/provider-adapters.js";
@@ -40,6 +40,28 @@ test("role routing is deterministic and model identities are server-configurable
     ["OPENAI", "openai-qualified"],
     ["XAI", "xai-qualified"]
   ]);
+});
+
+test("production routing requires approval of the exact profile and model identity", () => {
+  const development = modelPolicy(credentials);
+  const governanceProfiles = development.profiles.filter((profile) => profile.operationalStatus === "GOVERNANCE_ROUTE");
+  const approvals = governanceProfiles.map((profile) => profile.approvalRef).join(",");
+
+  const unapproved = modelPolicy({ ...credentials, NODE_ENV: "production" });
+  assert.throws(() => unapproved.choose("VERIFICATION"), /approved production model profile/i);
+  assert.throws(() => requiredGovernanceProviders(unapproved), /approved production model profiles/i);
+
+  const approved = modelPolicy({ ...credentials, NODE_ENV: "production", MODEL_PROFILE_APPROVALS: approvals });
+  assert.equal(approved.choose("VERIFICATION").qualificationStatus, "APPROVED");
+  assert.deepEqual(requiredGovernanceProviders(approved).sort(), ["MOONSHOT", "OPENAI", "XAI"]);
+
+  const changedModel = modelPolicy({
+    ...credentials,
+    NODE_ENV: "production",
+    MODEL_PROFILE_APPROVALS: approvals,
+    OPENAI_COGNITIVE_MODEL: "unreviewed-model"
+  });
+  assert.throws(() => changedModel.choose("VERIFICATION"), /approved production model profile/i);
 });
 
 test("provider adapters translate one canonical schema without changing it", () => {

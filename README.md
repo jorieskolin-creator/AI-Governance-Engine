@@ -136,6 +136,8 @@ BENCHMARK_CONFIRM_LIVE_CALLS=true pnpm run benchmark:models
 
 Use `BENCHMARK_PROFILE_IDS` to constrain cost. The harness checks structured output and zero-tolerance integrity conditions, but deliberately reports `REQUIRES_HUMAN_LABEL_REVIEW`. Human-labelled precision and high/critical recall must meet the qualification floors before the fixed route is treated as qualified for decision-ready assessments.
 
+Production additionally requires each governance route's exact `profile-id@model-id` reference in `MODEL_PROFILE_APPROVALS`. This allowlist is deliberately separate from credentials: changing a configured model invalidates the approval and blocks that route until the new candidate is qualified.
+
 ## Further documentation
 
 - [Architecture and trust boundaries](docs/architecture.md)

@@ -25,6 +25,14 @@ const ROUTE_BY_ROLE = Object.freeze({
 
 const FALLBACKS_BY_ROLE = Object.freeze({ FACT_CHECK: ["xai-factcheck-high"] });
 
+function profileApprovalRef(profile) {
+  return `${profile.id}@${profile.model}`;
+}
+
+function approvedProfileRefs(value = "") {
+  return new Set(value.split(",").map((item) => item.trim()).filter(Boolean));
+}
+
 export function providerCredentials(env = process.env) {
   return {
     OPENAI: env.OPENAI_API_KEY || env.GPT_API_KEY || null,
@@ -35,13 +43,22 @@ export function providerCredentials(env = process.env) {
 
 export function modelPolicy(env = process.env) {
   const credentials = providerCredentials(env);
-  const profiles = PROFILE_DEFINITIONS.map(({ modelEnv, defaultModel, ...item }) => ({
-    ...item,
-    model: env[modelEnv] || defaultModel,
-    capabilities: providerAdapter(item.provider).capabilities,
-    operationalStatus: ROUTE_BY_ROLE[item.role] === item.id ? "GOVERNANCE_ROUTE" : "BENCHMARK_ONLY",
-    credentialAvailable: Boolean(credentials[item.provider])
-  }));
+  const production = env.NODE_ENV === "production";
+  const approvals = approvedProfileRefs(env.MODEL_PROFILE_APPROVALS);
+  const profiles = PROFILE_DEFINITIONS.map(({ modelEnv, defaultModel, ...item }) => {
+    const model = env[modelEnv] || defaultModel;
+    const approvalRef = profileApprovalRef({ ...item, model });
+    const qualificationApproved = approvals.has(approvalRef);
+    return {
+      ...item,
+      model,
+      capabilities: providerAdapter(item.provider).capabilities,
+      operationalStatus: ROUTE_BY_ROLE[item.role] === item.id ? "GOVERNANCE_ROUTE" : "BENCHMARK_ONLY",
+      credentialAvailable: Boolean(credentials[item.provider]),
+      approvalRef,
+      qualificationStatus: qualificationApproved ? "APPROVED" : production ? "APPROVAL_REQUIRED" : "NOT_ENFORCED"
+    };
+  });
   return {
     profiles,
     credentials,
@@ -51,10 +68,11 @@ export function modelPolicy(env = process.env) {
       const profileIds = [...new Set([...(options.preferredProfileIds ?? []), ROUTE_BY_ROLE[role], ...(FALLBACKS_BY_ROLE[role] ?? [])].filter(Boolean))];
       const routeProfiles = profileIds.map((id) => profiles.find((item) => item.id === id)).filter(Boolean);
       if (!routeProfiles.length) throw new Error(`No governance route is configured for ${role}`);
-      const profile = routeProfiles.find((item) => item.credentialAvailable && !excluded.has(item.provider) && (!allowed || allowed.has(item.provider)));
+      const profile = routeProfiles.find((item) => item.credentialAvailable && (!production || item.qualificationStatus === "APPROVED") && !excluded.has(item.provider) && (!allowed || allowed.has(item.provider)));
       if (profile) return profile;
       const providers = [...new Set(routeProfiles.map((item) => item.provider))];
       if (routeProfiles.every((item) => !item.credentialAvailable)) throw new Error(`The ${providers.join(" or ")} credential required for ${role} is unavailable`);
+      if (production && routeProfiles.every((item) => item.qualificationStatus !== "APPROVED")) throw new Error(`No approved production model profile is configured for ${role}`);
       if (routeProfiles.every((item) => excluded.has(item.provider))) throw new Error(`The required independent route for ${role} is unavailable`);
       throw new Error(`The required provider route for ${role} is not approved for these redacted evidence packets`);
     }
@@ -70,6 +88,10 @@ export function requiredGovernanceProviders(policy) {
   const unavailable = required.filter((item) => !item.credentialAvailable);
   if (unavailable.length) {
     throw new Error(`Cognitive analysis requires configured credentials for ${[...new Set(unavailable.map((item) => item.provider))].join(", ")}`);
+  }
+  const unapproved = required.filter((item) => item.qualificationStatus === "APPROVAL_REQUIRED");
+  if (unapproved.length) {
+    throw new Error(`Cognitive analysis requires approved production model profiles: ${unapproved.map((item) => item.approvalRef).join(", ")}`);
   }
   return [...new Set(required.map((item) => item.provider))];
 }

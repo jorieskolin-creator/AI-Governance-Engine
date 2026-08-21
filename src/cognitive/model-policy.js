@@ -93,6 +93,28 @@ export function publicModelPolicy(policy) {
   return policy.profiles.map(({ credentialAvailable, ...profile }) => ({ ...profile, credentialAvailable }));
 }
 
+export function publicModelRoleSlots(policy) {
+  const slots = new Map();
+  for (const profile of policy.profiles) {
+    const existing = slots.get(profile.approvalRef);
+    if (existing) {
+      existing.stages.push(profile.stage);
+      continue;
+    }
+    slots.set(profile.approvalRef, {
+      operationalRole: profile.operationalRole,
+      routePriority: profile.routePriority,
+      provider: profile.provider,
+      model: profile.model,
+      approvalRef: profile.approvalRef,
+      credentialAvailable: profile.credentialAvailable,
+      qualificationStatus: profile.qualificationStatus,
+      stages: [profile.stage]
+    });
+  }
+  return [...slots.values()].map((slot) => ({ ...slot, stages: [...slot.stages].sort() }));
+}
+
 export function validateGovernanceRouteTopology(policy) {
   const workhorse = policy.choose("DOMAIN_ASSESSMENT");
   const verifier = policy.choose("VERIFICATION", { excludeProviders: [workhorse.provider] });

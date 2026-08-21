@@ -7,7 +7,7 @@ import { SAMPLE_REQUEST } from "./sample.js";
 import { validateExecutionApproval } from "./cognitive/contracts.js";
 import { confirmPreflightDossier, createPreflight, publicDiscoveryView, publicPreflightView } from "./cognitive/preflight.js";
 import { executeCognitiveRun } from "./cognitive/pipeline.js";
-import { modelPolicy, modelPolicyReadiness, publicModelPolicy, requiredGovernanceProviders } from "./cognitive/model-policy.js";
+import { modelPolicy, modelPolicyReadiness, publicModelPolicy, publicModelRoleSlots, requiredGovernanceProviders } from "./cognitive/model-policy.js";
 import { createRunStore } from "./cognitive/run-persistence.js";
 import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
 import { sanitizeRestrictedValue } from "../public/content-policy.js";
@@ -302,7 +302,8 @@ const server = http.createServer(async (request, response) => {
       return sendJson(response, 410, { error: "This compatibility endpoint cannot produce a confirmed Intake pipeline result. Use /api/v2/runs/preflight, /confirm and /execute." });
     }
     if (request.method === "GET" && url.pathname === "/api/v2/models") {
-      return sendJson(response, 200, { mode: "ALWAYS_ON", profiles: publicModelPolicy(modelPolicy()) });
+      const policy = modelPolicy();
+      return sendJson(response, 200, { mode: "ALWAYS_ON", readiness: modelPolicyReadiness(policy), roleSlots: publicModelRoleSlots(policy), profiles: publicModelPolicy(policy) });
     }
     if (request.method === "POST" && url.pathname === "/api/v2/runs/preflight") {
       const run = await createPreflight(await readJson(request));

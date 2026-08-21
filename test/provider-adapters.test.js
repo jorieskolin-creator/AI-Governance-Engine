@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { COGNITIVE_PROVIDERS, modelPolicy, modelPolicyReadiness, requiredGovernanceProviders, validateGovernanceRouteTopology } from "../src/cognitive/model-policy.js";
+import { COGNITIVE_PROVIDERS, modelPolicy, modelPolicyReadiness, publicModelRoleSlots, requiredGovernanceProviders, validateGovernanceRouteTopology } from "../src/cognitive/model-policy.js";
 import {
   normalizeProviderResponse, providerAdapter, serializeProviderRequest
 } from "../src/cognitive/provider-adapters.js";
@@ -53,6 +53,11 @@ test("role routing is deterministic and model identities are server-configurable
   ]);
   assert.equal(policy.choose("VERIFICATION", { excludeProviders: ["MOONSHOT"] }).model, "openai-quality");
   assert.throws(() => modelPolicy({ ...credentials, WORKHORSE_PROVIDER: "OPENAI" }), /configured together/i);
+  const slots = publicModelRoleSlots(policy);
+  assert.equal(slots.length, 6);
+  assert.deepEqual(slots.find((slot) => slot.operationalRole === "WORKHORSE" && slot.routePriority === "PRIMARY").stages, ["DOMAIN_ASSESSMENT", "EXTRACTION", "ROUTING"]);
+  assert.deepEqual(slots.find((slot) => slot.operationalRole === "REASONER" && slot.routePriority === "PRIMARY").stages, ["ADJUDICATION", "SOLUTION_UNDERSTANDING", "SYNTHESIS"]);
+  assert.deepEqual(slots.find((slot) => slot.operationalRole === "QUALITY_CHECKER" && slot.routePriority === "PRIMARY").stages, ["FACT_CHECK", "VERIFICATION"]);
 });
 
 test("runtime routing always requires approval of the exact profile and model identity", () => {

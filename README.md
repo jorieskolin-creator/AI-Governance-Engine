@@ -46,7 +46,7 @@ raw source (local only)
 
 Only decision-eligible adjudicated claims become locked findings and deterministic evidence. Unsupported, conflicting and unverifiable claims remain in the audit ledger. Model output cannot directly change applicability, assurance, anti-pattern state, hard gates, readiness, lifecycle boundaries or formal authority.
 
-The fixed initial route is Moonshot Kimi for discovery, A–F assessment and final synthesis fact-checking, OpenAI for independent claim verification and controlled synthesis, and xAI Grok for disputed-claim adjudication. This preserves an independent adjudicator when a Kimi-extracted claim is challenged during final fact-check. Each provider uses a separate transport adapter behind the same application-level schemas, and every response is validated locally. Missing primary or independent-provider availability produces `COGNITIVE_ASSESSMENT_INCOMPLETE`, never a silent positive fallback.
+The fixed cognitive stages map to three operational roles: `WORKHORSE` handles routing, extraction and routine domain assessment; `REASONER` handles solution understanding, adjudication and synthesis; `QUALITY_CHECKER` handles verification and fact-checking. Each role has a deterministic primary and fallback provider/model assignment. Cross-provider verification and adjudication exclusions take precedence over that preference. Each provider uses a separate transport adapter behind the same application-level schemas, and every response is validated locally. Missing primary or independent qualified fallback availability produces `COGNITIVE_ASSESSMENT_INCOMPLETE`, never a silent positive fallback.
 
 The engine returns readiness recommendations such as `READY_WITH_CONDITIONS`, `REMEDIATE_BEFORE_NEXT_STAGE`, `HUMAN_REVIEW_REQUIRED` and `BLOCKED_IN_CURRENT_FORM`. Legal, Privacy, Security, Governance, AI Forum and AI Board decisions remain human acts. `FORMALLY_APPROVED` is reserved for a future trusted decision connector that verifies identity, authority, signature, scope and validity.
 
@@ -136,7 +136,7 @@ BENCHMARK_CONFIRM_LIVE_CALLS=true pnpm run benchmark:models
 
 Use `BENCHMARK_PROFILE_IDS` to constrain cost. The harness checks structured output and zero-tolerance integrity conditions, but deliberately reports `REQUIRES_HUMAN_LABEL_REVIEW`. Human-labelled precision and high/critical recall must meet the qualification floors before the fixed route is treated as qualified for decision-ready assessments.
 
-Production additionally requires each governance route's exact `profile-id@model-id` reference in `MODEL_PROFILE_APPROVALS`. This allowlist is deliberately separate from credentials: changing a configured model invalidates the approval and blocks that route until the new candidate is qualified.
+Production additionally requires each role slot's exact `role-slot@PROVIDER:model` reference in `MODEL_PROFILE_APPROVALS`. This allowlist is deliberately separate from credentials: changing a configured provider or model invalidates the approval and blocks that route until the new candidate is qualified.
 
 ## Further documentation
 

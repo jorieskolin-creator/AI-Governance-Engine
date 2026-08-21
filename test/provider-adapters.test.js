@@ -28,25 +28,35 @@ test("the canonical provider catalog contains only OpenAI, xAI and Moonshot", ()
 test("role routing is deterministic and model identities are server-configurable", () => {
   const policy = modelPolicy({
     ...credentials,
-    OPENAI_COGNITIVE_MODEL: "openai-qualified",
-    XAI_COGNITIVE_MODEL: "xai-qualified",
-    MOONSHOT_COGNITIVE_MODEL: "moonshot-qualified"
+    WORKHORSE_PROVIDER: "OPENAI", WORKHORSE_MODEL: "openai-workhorse",
+    WORKHORSE_FALLBACK_PROVIDER: "MOONSHOT", WORKHORSE_FALLBACK_MODEL: "moonshot-workhorse",
+    REASONER_PROVIDER: "XAI", REASONER_MODEL: "xai-reasoner",
+    REASONER_FALLBACK_PROVIDER: "OPENAI", REASONER_FALLBACK_MODEL: "openai-reasoner",
+    QUALITY_CHECKER_PROVIDER: "MOONSHOT", QUALITY_CHECKER_MODEL: "moonshot-quality",
+    QUALITY_CHECKER_FALLBACK_PROVIDER: "OPENAI", QUALITY_CHECKER_FALLBACK_MODEL: "openai-quality"
   });
   assert.deepEqual([
+    policy.choose("ROUTING"),
+    policy.choose("DOMAIN_ASSESSMENT"),
     policy.choose("SOLUTION_UNDERSTANDING"),
+    policy.choose("SYNTHESIS"),
     policy.choose("VERIFICATION"),
-    policy.choose("ADJUDICATION")
-  ].map((profile) => [profile.provider, profile.model]), [
-    ["MOONSHOT", "moonshot-qualified"],
-    ["OPENAI", "openai-qualified"],
-    ["XAI", "xai-qualified"]
+    policy.choose("FACT_CHECK")
+  ].map((profile) => [profile.operationalRole, profile.provider, profile.model]), [
+    ["WORKHORSE", "OPENAI", "openai-workhorse"],
+    ["WORKHORSE", "OPENAI", "openai-workhorse"],
+    ["REASONER", "XAI", "xai-reasoner"],
+    ["REASONER", "XAI", "xai-reasoner"],
+    ["QUALITY_CHECKER", "MOONSHOT", "moonshot-quality"],
+    ["QUALITY_CHECKER", "MOONSHOT", "moonshot-quality"]
   ]);
+  assert.equal(policy.choose("VERIFICATION", { excludeProviders: ["MOONSHOT"] }).model, "openai-quality");
+  assert.throws(() => modelPolicy({ ...credentials, WORKHORSE_PROVIDER: "OPENAI" }), /configured together/i);
 });
 
 test("production routing requires approval of the exact profile and model identity", () => {
   const development = modelPolicy(credentials);
-  const governanceProfiles = development.profiles.filter((profile) => profile.operationalStatus === "GOVERNANCE_ROUTE");
-  const approvals = governanceProfiles.map((profile) => profile.approvalRef).join(",");
+  const approvals = [...new Set(development.profiles.map((profile) => profile.approvalRef))].join(",");
 
   const unapproved = modelPolicy({ ...credentials, NODE_ENV: "production" });
   assert.throws(() => unapproved.choose("VERIFICATION"), /approved production model profile/i);
@@ -60,15 +70,26 @@ test("production routing requires approval of the exact profile and model identi
     ...credentials,
     NODE_ENV: "production",
     MODEL_PROFILE_APPROVALS: approvals,
-    OPENAI_COGNITIVE_MODEL: "unreviewed-model"
+    QUALITY_CHECKER_PROVIDER: "OPENAI",
+    QUALITY_CHECKER_MODEL: "unreviewed-model"
   });
-  assert.throws(() => changedModel.choose("VERIFICATION"), /approved production model profile/i);
+  assert.equal(changedModel.choose("VERIFICATION").routePriority, "FALLBACK");
+  const noApprovedQualityRoute = modelPolicy({
+    ...credentials,
+    NODE_ENV: "production",
+    MODEL_PROFILE_APPROVALS: approvals,
+    QUALITY_CHECKER_PROVIDER: "OPENAI",
+    QUALITY_CHECKER_MODEL: "unreviewed-model",
+    QUALITY_CHECKER_FALLBACK_PROVIDER: "XAI",
+    QUALITY_CHECKER_FALLBACK_MODEL: "unreviewed-fallback"
+  });
+  assert.throws(() => noApprovedQualityRoute.choose("VERIFICATION"), /approved production model profile/i);
 });
 
 test("provider adapters translate one canonical schema without changing it", () => {
   const policy = modelPolicy(credentials);
   const openai = serializeProviderRequest(policy.choose("VERIFICATION"), "safe packet", "result", schema);
-  const xai = serializeProviderRequest(policy.choose("ADJUDICATION"), "safe packet", "result", schema);
+  const xai = serializeProviderRequest(policy.choose("ADJUDICATION", { excludeProviders: ["MOONSHOT"] }), "safe packet", "result", schema);
   const moonshot = serializeProviderRequest(policy.choose("SOLUTION_UNDERSTANDING"), "safe packet", "result", schema);
 
   for (const request of [openai, xai]) {

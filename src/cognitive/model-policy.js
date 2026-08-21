@@ -1,32 +1,37 @@
 import { COGNITIVE_PROVIDERS, providerAdapter } from "./provider-adapters.js";
 
-const PROFILE_DEFINITIONS = Object.freeze([
-  { id: "moonshot-routing-low", provider: "MOONSHOT", modelEnv: "MOONSHOT_COGNITIVE_MODEL", defaultModel: "kimi-k3", role: "ROUTING", effort: "low", maxOutputTokens: 4000 },
-  { id: "moonshot-extraction-high", provider: "MOONSHOT", modelEnv: "MOONSHOT_COGNITIVE_MODEL", defaultModel: "kimi-k3", role: "EXTRACTION", effort: "high", maxOutputTokens: 16000 },
-  { id: "moonshot-solution-high", provider: "MOONSHOT", modelEnv: "MOONSHOT_COGNITIVE_MODEL", defaultModel: "kimi-k3", role: "SOLUTION_UNDERSTANDING", effort: "high", maxOutputTokens: 16000 },
-  { id: "moonshot-assessment-high", provider: "MOONSHOT", modelEnv: "MOONSHOT_COGNITIVE_MODEL", defaultModel: "kimi-k3", role: "DOMAIN_ASSESSMENT", effort: "high", maxOutputTokens: 20000 },
-  { id: "openai-verification-high", provider: "OPENAI", modelEnv: "OPENAI_COGNITIVE_MODEL", defaultModel: "gpt-5.6", role: "VERIFICATION", effort: "high", maxOutputTokens: 6000 },
-  { id: "xai-adjudication-high", provider: "XAI", modelEnv: "XAI_COGNITIVE_MODEL", defaultModel: "grok-4.6", role: "ADJUDICATION", effort: "high", maxOutputTokens: 8000 },
-  { id: "openai-synthesis-high", provider: "OPENAI", modelEnv: "OPENAI_COGNITIVE_MODEL", defaultModel: "gpt-5.6", role: "SYNTHESIS", effort: "high", maxOutputTokens: 16000 },
-  { id: "moonshot-factcheck-high", provider: "MOONSHOT", modelEnv: "MOONSHOT_COGNITIVE_MODEL", defaultModel: "kimi-k3", role: "FACT_CHECK", effort: "high", maxOutputTokens: 8000 },
-  { id: "xai-factcheck-high", provider: "XAI", modelEnv: "XAI_COGNITIVE_MODEL", defaultModel: "grok-4.6", role: "FACT_CHECK", effort: "high", maxOutputTokens: 8000 }
+const STAGE_DEFINITIONS = Object.freeze([
+  { stage: "ROUTING", operationalRole: "WORKHORSE", effort: "low", maxOutputTokens: 4000 },
+  { stage: "EXTRACTION", operationalRole: "WORKHORSE", effort: "high", maxOutputTokens: 16000 },
+  { stage: "DOMAIN_ASSESSMENT", operationalRole: "WORKHORSE", effort: "high", maxOutputTokens: 20000 },
+  { stage: "SOLUTION_UNDERSTANDING", operationalRole: "REASONER", effort: "high", maxOutputTokens: 16000 },
+  { stage: "ADJUDICATION", operationalRole: "REASONER", effort: "high", maxOutputTokens: 8000 },
+  { stage: "SYNTHESIS", operationalRole: "REASONER", effort: "high", maxOutputTokens: 16000 },
+  { stage: "VERIFICATION", operationalRole: "QUALITY_CHECKER", effort: "high", maxOutputTokens: 6000 },
+  { stage: "FACT_CHECK", operationalRole: "QUALITY_CHECKER", effort: "high", maxOutputTokens: 8000 }
 ]);
 
-const ROUTE_BY_ROLE = Object.freeze({
-  ROUTING: "moonshot-routing-low",
-  EXTRACTION: "moonshot-extraction-high",
-  SOLUTION_UNDERSTANDING: "moonshot-solution-high",
-  DOMAIN_ASSESSMENT: "moonshot-assessment-high",
-  VERIFICATION: "openai-verification-high",
-  ADJUDICATION: "xai-adjudication-high",
-  SYNTHESIS: "openai-synthesis-high",
-  FACT_CHECK: "moonshot-factcheck-high"
+const ROLE_DEFAULTS = Object.freeze({
+  WORKHORSE: Object.freeze({ PRIMARY: Object.freeze({ provider: "MOONSHOT", model: "kimi-k3" }), FALLBACK: Object.freeze({ provider: "OPENAI", model: "gpt-5.6" }) }),
+  REASONER: Object.freeze({ PRIMARY: Object.freeze({ provider: "MOONSHOT", model: "kimi-k3" }), FALLBACK: Object.freeze({ provider: "XAI", model: "grok-4.6" }) }),
+  QUALITY_CHECKER: Object.freeze({ PRIMARY: Object.freeze({ provider: "OPENAI", model: "gpt-5.6" }), FALLBACK: Object.freeze({ provider: "XAI", model: "grok-4.6" }) })
 });
 
-const FALLBACKS_BY_ROLE = Object.freeze({ FACT_CHECK: ["xai-factcheck-high"] });
+function configuredRoleSlot(env, operationalRole, slot) {
+  const prefix = `${operationalRole}_${slot === "PRIMARY" ? "" : "FALLBACK_"}`;
+  const providerValue = env[`${prefix}PROVIDER`];
+  const modelValue = env[`${prefix}MODEL`];
+  if (Boolean(providerValue) !== Boolean(modelValue)) throw new Error(`${prefix}PROVIDER and ${prefix}MODEL must be configured together`);
+  const defaults = ROLE_DEFAULTS[operationalRole][slot];
+  const provider = String(providerValue || defaults.provider).trim().toUpperCase();
+  const model = String(modelValue || defaults.model).trim();
+  providerAdapter(provider);
+  if (!model) throw new Error(`${prefix}MODEL is required`);
+  return { provider, model };
+}
 
 function profileApprovalRef(profile) {
-  return `${profile.id}@${profile.model}`;
+  return `${profile.operationalRole.toLowerCase()}-${profile.routePriority.toLowerCase()}@${profile.provider}:${profile.model}`;
 }
 
 function approvedProfileRefs(value = "") {
@@ -45,36 +50,41 @@ export function modelPolicy(env = process.env) {
   const credentials = providerCredentials(env);
   const production = env.NODE_ENV === "production";
   const approvals = approvedProfileRefs(env.MODEL_PROFILE_APPROVALS);
-  const profiles = PROFILE_DEFINITIONS.map(({ modelEnv, defaultModel, ...item }) => {
-    const model = env[modelEnv] || defaultModel;
-    const approvalRef = profileApprovalRef({ ...item, model });
-    const qualificationApproved = approvals.has(approvalRef);
+  const roleSlots = Object.fromEntries(Object.keys(ROLE_DEFAULTS).map((operationalRole) => [operationalRole, {
+    PRIMARY: configuredRoleSlot(env, operationalRole, "PRIMARY"),
+    FALLBACK: configuredRoleSlot(env, operationalRole, "FALLBACK")
+  }]));
+  const profiles = STAGE_DEFINITIONS.flatMap((definition) => ["PRIMARY", "FALLBACK"].map((routePriority) => {
+    const configured = roleSlots[definition.operationalRole][routePriority];
+    const id = `${configured.provider.toLowerCase()}-${definition.operationalRole.toLowerCase().replaceAll("_", "-")}-${definition.stage.toLowerCase().replaceAll("_", "-")}-${routePriority.toLowerCase()}`;
+    const profile = { ...definition, role: definition.stage, ...configured, id, routePriority };
+    const approvalRef = profileApprovalRef(profile);
     return {
-      ...item,
-      model,
-      capabilities: providerAdapter(item.provider).capabilities,
-      operationalStatus: ROUTE_BY_ROLE[item.role] === item.id ? "GOVERNANCE_ROUTE" : "BENCHMARK_ONLY",
-      credentialAvailable: Boolean(credentials[item.provider]),
+      ...profile,
+      capabilities: providerAdapter(profile.provider).capabilities,
+      operationalStatus: routePriority === "PRIMARY" ? "GOVERNANCE_ROUTE" : "FALLBACK_ROUTE",
+      credentialAvailable: Boolean(credentials[profile.provider]),
       approvalRef,
-      qualificationStatus: qualificationApproved ? "APPROVED" : production ? "APPROVAL_REQUIRED" : "NOT_ENFORCED"
+      qualificationStatus: approvals.has(approvalRef) ? "APPROVED" : production ? "APPROVAL_REQUIRED" : "NOT_ENFORCED"
     };
-  });
+  }));
   return {
     profiles,
     credentials,
-    choose(role, options = {}) {
+    choose(stage, options = {}) {
       const excluded = new Set(options.excludeProviders ?? []);
       const allowed = options.allowedProviders ? new Set(options.allowedProviders) : null;
-      const profileIds = [...new Set([...(options.preferredProfileIds ?? []), ROUTE_BY_ROLE[role], ...(FALLBACKS_BY_ROLE[role] ?? [])].filter(Boolean))];
-      const routeProfiles = profileIds.map((id) => profiles.find((item) => item.id === id)).filter(Boolean);
-      if (!routeProfiles.length) throw new Error(`No governance route is configured for ${role}`);
+      const stageProfiles = profiles.filter((item) => item.stage === stage);
+      const preferred = (options.preferredProfileIds ?? []).map((id) => stageProfiles.find((item) => item.id === id)).filter(Boolean);
+      const routeProfiles = [...new Map([...preferred, ...stageProfiles].map((item) => [item.id, item])).values()];
+      if (!routeProfiles.length) throw new Error(`No governance route is configured for ${stage}`);
       const profile = routeProfiles.find((item) => item.credentialAvailable && (!production || item.qualificationStatus === "APPROVED") && !excluded.has(item.provider) && (!allowed || allowed.has(item.provider)));
       if (profile) return profile;
       const providers = [...new Set(routeProfiles.map((item) => item.provider))];
-      if (routeProfiles.every((item) => !item.credentialAvailable)) throw new Error(`The ${providers.join(" or ")} credential required for ${role} is unavailable`);
-      if (production && routeProfiles.every((item) => item.qualificationStatus !== "APPROVED")) throw new Error(`No approved production model profile is configured for ${role}`);
-      if (routeProfiles.every((item) => excluded.has(item.provider))) throw new Error(`The required independent route for ${role} is unavailable`);
-      throw new Error(`The required provider route for ${role} is not approved for these redacted evidence packets`);
+      if (routeProfiles.every((item) => !item.credentialAvailable)) throw new Error(`The ${providers.join(" or ")} credential required for ${stage} is unavailable`);
+      if (production && routeProfiles.every((item) => item.qualificationStatus !== "APPROVED")) throw new Error(`No approved production model profile is configured for ${stage}`);
+      if (routeProfiles.every((item) => excluded.has(item.provider))) throw new Error(`The required independent route for ${stage} is unavailable`);
+      throw new Error(`The required provider route for ${stage} is not approved for these redacted evidence packets`);
     }
   };
 }
@@ -84,7 +94,7 @@ export function publicModelPolicy(policy) {
 }
 
 export function requiredGovernanceProviders(policy) {
-  const required = Object.values(ROUTE_BY_ROLE).map((profileId) => policy.profiles.find((item) => item.id === profileId)).filter(Boolean);
+  const required = [...new Map(policy.profiles.map((profile) => [profile.approvalRef, profile])).values()];
   const unavailable = required.filter((item) => !item.credentialAvailable);
   if (unavailable.length) {
     throw new Error(`Cognitive analysis requires configured credentials for ${[...new Set(unavailable.map((item) => item.provider))].join(", ")}`);

@@ -22,9 +22,9 @@ Contract 3.1.0 is the only implemented cognitive pipeline. There is no user-faci
 
 Before decision-ready use:
 
-1. Keep provider keys server-side: `OPENAI_API_KEY` (preferred) or `GPT_API_KEY`, `XAI_API_KEY`, and `MOONSHOT_API_KEY`. Model identities have documented route defaults but are not qualified by this repository's automated tests; pin reviewed candidates with `OPENAI_COGNITIVE_MODEL`, `XAI_COGNITIVE_MODEL`, and `MOONSHOT_COGNITIVE_MODEL` before live qualification.
+1. Keep provider keys server-side: `OPENAI_API_KEY` (preferred) or `GPT_API_KEY`, `XAI_API_KEY`, and `MOONSHOT_API_KEY`. Configure primary and fallback provider/model pairs for `WORKHORSE`, `REASONER`, and `QUALITY_CHECKER`; provider values are exactly `OPENAI`, `XAI`, or `MOONSHOT`. The documented defaults are candidates, not qualified models.
 2. Run `pnpm run benchmark:models` in a controlled environment with `BENCHMARK_CONFIRM_LIVE_CALLS=true` and review the output against the qualification floors.
-3. Add only qualified exact `profile-id@model-id` references to the comma-separated `MODEL_PROFILE_APPROVALS`. Production routing fails closed when a route is absent or its configured model identity changes.
+3. Add only qualified exact `role-slot@PROVIDER:model` references exposed by `/api/v2/models` to the comma-separated `MODEL_PROFILE_APPROVALS`. Production routing fails closed when a primary or fallback role assignment is absent or its provider/model identity changes.
 4. Compare the 2.6.0 audit packages, coverage matrices, unresolved ledgers, publication gates, costs and reviewer labels against approved golden cases in a controlled environment.
 5. Verify the versioned intake questionnaire and all referenced normative sources are hash-pinned in the production manifest.
 

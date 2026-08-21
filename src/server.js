@@ -14,7 +14,7 @@ import { sanitizeRestrictedValue } from "../public/content-policy.js";
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./intake/field-registry.js";
 import { validateApprovedIntakeSnapshot } from "./intake/contracts.js";
 import { createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "./intake/acquired-facts.js";
-import { createCognitiveStepLedger, prepareInterruptedRunRestart, recoveredExecutionDataUnavailable, RECOVERY_RESTART_PURPOSE } from "./cognitive/orchestration.js";
+import { createCognitiveStepLedger, prepareInterruptedRunRestart, recoveredExecutionDataUnavailable, RECOVERY_RESTART_PURPOSE, releaseLocalEvidenceForCognitiveExecution } from "./cognitive/orchestration.js";
 import { cancellationError, classifyCognitiveFailure } from "./cognitive/failure-policy.js";
 
 const port = Number(process.env.PORT ?? 4174);
@@ -124,9 +124,7 @@ async function enqueueCognitiveRun(run, request) {
   run.approval = approval;
   run.stepLedger = createCognitiveStepLedger();
   run.queueAttempt = (run.queueAttempt ?? 0) + 1;
-  if (runStore.instanceId && run.localSourceUnits.some((unit) => unit.media?.data)) {
-    run.executionDataAffinity = { owner: runStore.instanceId, reason: "MEMORY_ONLY_MEDIA" };
-  }
+  releaseLocalEvidenceForCognitiveExecution(run);
   for (const packet of run.packets) packet.transmissionState = "APPROVED";
   run.status = "QUEUED";
   run.stage = "COGNITIVE_EXECUTION_QUEUED";

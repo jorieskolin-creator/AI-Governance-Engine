@@ -90,7 +90,7 @@ The browser calls the normal cognitive path automatically. Provider credentials 
 - `POST /api/v2/runs/{id}/discover-recheck` performs a cited semantic recheck without overwriting deterministic facts.
 - `POST /api/v2/runs/{id}/confirm` validates explicit field resolutions and creates the user-approved Intake snapshot without erasing source conflicts.
 - `POST /api/v2/runs/{id}/execute` records the fixed server-side route and starts the run.
-- `POST /api/v2/runs/{id}/restart` requeues an interrupted non-media run only after explicit acknowledgement that prior provider-call completion may be uncertain.
+- `POST /api/v2/runs/{id}/restart` requeues an interrupted safe-summary run only after explicit acknowledgement that prior provider-call completion may be uncertain.
 - `GET /api/v2/runs/{id}` returns progress.
 - `GET /api/v2/runs/{id}/result` returns `ReadinessPackageV2` schema `2.6.0` after mandatory local structural and integrity validation.
 - `DELETE /api/v2/runs/{id}` purges the run record and evidence held by the active run store.
@@ -114,7 +114,7 @@ See [docs/knowledge-base.md](docs/knowledge-base.md) for the runtime manifest an
 
 - The service is a development skeleton, not a multi-tenant production service.
 - Without `DATABASE_URL`, the v2 run store remains process-local and restarts lose active runs. With PostgreSQL, approved Intake and terminal safe state are recoverable; pre-approval recovery requires source re-upload because raw evidence is deliberately excluded, and interrupted provider execution is never resumed automatically.
-- PostgreSQL workers atomically claim durable queued runs with bounded service concurrency. Queued work that never started can recover automatically; interrupted work never replays without the explicit recovery acknowledgement, and memory-only media requires a new evidence upload.
+- After final Intake approval, queue admission purges local raw source units and retains only the durable safe-summary package plus an audit marker. PostgreSQL workers atomically claim that work with bounded service concurrency. Queued work that never started can recover automatically; interrupted work never replays without the explicit recovery acknowledgement.
 - Cancellation aborts provider requests on the owning worker and purges evidence. In a multi-worker PostgreSQL deployment, cancellation on another worker is observed through failed heartbeat renewal; the current schema does not use PostgreSQL notifications for immediate cross-worker signalling.
 - Authentication and tenant authorization remain production-hardening work.
 - The legacy deterministic endpoint is retained for compatibility and is not the browser assessment path.

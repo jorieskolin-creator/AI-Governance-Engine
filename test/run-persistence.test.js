@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { validateDossier } from "../src/contracts.js";
 import { createPreflight, confirmPreflightDossier, publicPreflightView } from "../src/cognitive/preflight.js";
 import { createIntakeResolutionDraft } from "../src/intake/contracts.js";
+import { releaseLocalEvidenceForCognitiveExecution } from "../src/cognitive/orchestration.js";
 import { deserializeDurableRun, PostgresRunStore, serializeDurableRun } from "../src/cognitive/run-persistence.js";
 import { EphemeralRunStore } from "../src/cognitive/run-store.js";
 
@@ -15,7 +16,6 @@ class FakePool {
       const candidate = [...this.rows.entries()]
         .filter(([, row]) => row.status === "QUEUED" && !row.deleted && Date.parse(row.expiresAt) > Date.parse(parameters[2]))
         .filter(([id]) => !this.lease.has(id) || Date.parse(this.lease.get(id).expiresAt) <= Date.parse(parameters[2]))
-        .filter(([, row]) => !row.state.run.executionDataAffinity?.owner || row.state.run.executionDataAffinity.owner === parameters[0])
         .sort(([left], [right]) => left.localeCompare(right))[0];
       if (!candidate) return { rowCount: 0, rows: [] };
       const [id, row] = candidate;
@@ -233,27 +233,32 @@ test("queued runs are claimed once by memory and PostgreSQL workers", async () =
   assert.equal(await second.claimNextQueued(), null);
 });
 
-test("queued memory-only media stays with its worker and requires re-upload after recovery", async () => {
+test("approved image-summary work releases pixels and can be claimed by another worker", async () => {
   const pool = new FakePool();
   const first = await new PostgresRunStore({ pool, instanceId: "worker-a" }).initialize();
   const second = new PostgresRunStore({ pool, instanceId: "worker-b" });
+  const rawPixels = Buffer.from("89504e470d0a1a0a00000000", "hex").toString("base64");
   const run = await createPreflight({ sources: [
     { path: "case.md", mimeType: "text/markdown", content: "# Case" },
-    { path: "diagram.png", mimeType: "image/png", encoding: "base64", content: Buffer.from("89504e470d0a1a0a00000000", "hex").toString("base64") }
+    { path: "diagram.png", mimeType: "image/png", encoding: "base64", content: rawPixels }
   ] });
   assert.ok(run.localSourceUnits.some((unit) => unit.media?.data));
+  const dossier = validateDossier(run.solutionProfile.suggestedDossier);
+  await confirmPreflightDossier(run, {
+    dossier,
+    resolutions: createIntakeResolutionDraft(dossier, run.solutionProfile),
+    approval: { confirmed: true, actorRef: "TEST_USER" }
+  });
+  releaseLocalEvidenceForCognitiveExecution(run, new Date("2026-08-21T12:00:00.000Z"));
   run.status = "QUEUED";
   run.stage = "COGNITIVE_EXECUTION_QUEUED";
-  run.executionDataAffinity = { owner: first.instanceId, reason: "MEMORY_ONLY_MEDIA" };
   await first.create(run);
+  assert.equal(JSON.stringify(pool.rows.get(run.id).state).includes(rawPixels), false);
 
-  assert.equal(await second.claimNextQueued(), null);
-  assert.equal(await first.claimNextQueued(), run);
-  await first.releaseLease(run.id);
-
-  first.runs.clear();
-  const recovered = await first.get(run.id);
-  assert.equal(recovered.status, "RECOVERY_REQUIRES_REUPLOAD");
-  assert.equal(recovered.stage, "RECOVERY_MEDIA_REUPLOAD_REQUIRED");
-  assert.equal(recovered.persistence.rawEvidenceAvailable, false);
+  const claimed = await second.claimNextQueued();
+  assert.equal(claimed.id, run.id);
+  assert.equal(claimed.status, "QUEUED");
+  assert.deepEqual(claimed.localSourceUnits, []);
+  assert.equal(claimed.localEvidenceRelease.state, "PURGED_AFTER_INTAKE_APPROVAL");
+  assert.equal(await first.claimNextQueued(), null);
 });

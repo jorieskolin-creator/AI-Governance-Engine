@@ -79,10 +79,29 @@ export function completeCognitiveStep(ledger, step, status, detail = null, now =
 }
 
 export function recoveredExecutionDataUnavailable(run) {
+  if (run.localEvidenceRelease?.state === "PURGED_AFTER_INTAKE_APPROVAL") return false;
   return run.persistence?.rawEvidenceAvailable === false && (
     run.executionDataAffinity?.reason === "MEMORY_ONLY_MEDIA" ||
     run.packets?.some((packet) => packet.sourceUnits.some((unit) => unit.media && !unit.media.data || unit.durableContentState === "MODEL_DERIVED_CONTENT_EXCLUDED"))
   );
+}
+
+export function releaseLocalEvidenceForCognitiveExecution(run, now = new Date()) {
+  invariant(run?.approvedIntake?.snapshotHash, "Local evidence release requires an approved Intake snapshot");
+  const units = run.localSourceUnits ?? [];
+  for (const unit of units) {
+    unit.content = "";
+    if (unit.media) unit.media.data = "";
+    unit.transmissionState = "PURGED";
+  }
+  run.localSourceUnits = [];
+  delete run.executionDataAffinity;
+  run.localEvidenceRelease = {
+    state: "PURGED_AFTER_INTAKE_APPROVAL",
+    releasedAt: now.toISOString(),
+    unitCount: units.length
+  };
+  return run.localEvidenceRelease;
 }
 
 export function prepareInterruptedRunRestart(run, input, now = new Date()) {

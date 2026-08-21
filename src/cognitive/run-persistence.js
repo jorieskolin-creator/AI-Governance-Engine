@@ -209,7 +209,6 @@ export class PostgresRunStore {
         SELECT id FROM governance_runs
         WHERE status = 'QUEUED' AND deleted_at IS NULL AND expires_at > $3
           AND (lease_owner IS NULL OR lease_expires_at <= $3)
-          AND (state #>> '{run,executionDataAffinity,owner}' IS NULL OR state #>> '{run,executionDataAffinity,owner}' = $1)
         ORDER BY updated_at, id
         FOR UPDATE SKIP LOCKED
         LIMIT 1

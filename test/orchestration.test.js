@@ -7,6 +7,7 @@ import {
   prepareInterruptedRunRestart,
   recoveredExecutionDataUnavailable,
   RECOVERY_RESTART_PURPOSE,
+  releaseLocalEvidenceForCognitiveExecution,
   startCognitiveStep,
   validateCognitiveStepLedger
 } from "../src/cognitive/orchestration.js";
@@ -58,4 +59,19 @@ test("interrupted recovery requires explicit acknowledgement and rejects unavail
   assert.equal(restarted.executionAttemptHistory[0].transmissionManifest[0].id, "transmission-1");
   assert.ok(restarted.stepLedger.records.every((record) => record.status === "PENDING"));
   assert.equal(restarted.trace.at(-1).status, "REQUEUED_BY_USER");
+});
+
+test("approved Intake releases local evidence before durable cognitive execution", () => {
+  const run = {
+    approvedIntake: { snapshotHash: "approved-snapshot" },
+    localSourceUnits: [
+      { id: "local-text", content: "private text", transmissionState: "LOCAL" },
+      { id: "local-image", content: "[IMAGE]", media: { mimeType: "image/png", data: "AA==" }, transmissionState: "LOCAL" }
+    ],
+    executionDataAffinity: { owner: "worker-a", reason: "MEMORY_ONLY_MEDIA" }
+  };
+  const release = releaseLocalEvidenceForCognitiveExecution(run, new Date("2026-08-21T12:00:00.000Z"));
+  assert.deepEqual(run.localSourceUnits, []);
+  assert.equal(Object.hasOwn(run, "executionDataAffinity"), false);
+  assert.deepEqual(release, { state: "PURGED_AFTER_INTAKE_APPROVAL", releasedAt: "2026-08-21T12:00:00.000Z", unitCount: 2 });
 });

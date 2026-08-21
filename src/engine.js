@@ -10,6 +10,7 @@ import { buildAssuranceSummary, buildTransitionBoundary } from "./core/assurance
 import { loadKnowledgeSnapshot, knowledgeManifestView } from "./knowledge/provider.js";
 import { buildAssessmentIntake, buildDocumentationReadiness, discoverSolutionProfile } from "./core/solution-profile.js";
 import { buildSourceIngestionManifest } from "./core/source-ingestion.js";
+import { validateReadinessPackage } from "./readiness-package-contract.js";
 
 const ENGINE_VERSION = "governance-engine-0.3.0";
 const RULESET_VERSION = "readiness-rules-2.1.0";
@@ -126,8 +127,8 @@ async function buildPackage({ dossier, knowledge, registry, evidence, registryFi
     actions,
     actionGroundingRecords,
     humanDecisionRequirements: humanDecisions,
-    evidence: evidence.map((item) => ({ ...item, metadata: undefined })),
-    cognitive: cognitive ?? undefined,
+    evidence: evidence.map(({ metadata: _metadata, ...item }) => item),
+    ...(cognitive ? { cognitive } : {}),
     derivedSourceUnits: cognitive?.derivedSourceUnits ?? [],
     adjudicatedClaims: cognitive?.adjudicatedClaims ?? [],
     unresolvedClaims: cognitive?.unresolvedClaims ?? [],
@@ -158,11 +159,11 @@ export async function assessSolution(input, options = {}) {
   const sourceIngestion = input.sourceIngestion?.manifestHash ? input.sourceIngestion : buildSourceIngestionManifest({ submitted: input.sourceIngestion, parsedSources: sources });
   const solutionProfile = await timed(trace, "solution-profile", () => discoverSolutionProfile(sources, dossier));
   const evidence = [...registry.evidence, ...dossierEvidence(dossier, startedAt), ...dossierRiskEvidence(dossier, startedAt)];
-  return buildPackage({
+  return validateReadinessPackage(await buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
     solution: solutionUnderstanding(dossier, registry, evidence, sourceIngestion), solutionProfile, sourceIngestion, trace, startedAt, runId,
     schemaVersion: "1.4.0", cognitiveCoverage: null, cognitive: null, lockedFindings: []
-  });
+  }));
 }
 
 export async function assessVerifiedSolution(input, options = {}) {
@@ -178,10 +179,11 @@ export async function assessVerifiedSolution(input, options = {}) {
   const evidence = [...dossierEvidence(dossier, startedAt), ...dossierRiskEvidence(dossier, startedAt), ...(input.lockedEvidence ?? [])];
   const solutionProfile = input.solutionProfile ?? discoverSolutionProfile([], dossier, input.fieldConfirmations ?? {});
   const sourceIngestion = input.sourceIngestion?.manifestHash ? input.sourceIngestion : buildSourceIngestionManifest({ submitted: input.sourceIngestion, parsedSources: input.registeredSources ?? [] });
-  return buildPackage({
+  const pkg = await buildPackage({
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
     solution: { ...input.solutionModel, sourceIngestion }, solutionProfile, sourceIngestion, trace, startedAt, runId: input.runId,
     schemaVersion: "2.6.0", cognitiveCoverage: input.cognitiveCoverage,
     cognitive: input.cognitive, lockedFindings: input.lockedFindings ?? input.cognitive?.lockedFindings ?? []
   });
+  return options.provisional ? pkg : validateReadinessPackage(pkg);
 }

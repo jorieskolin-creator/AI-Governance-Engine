@@ -92,7 +92,7 @@ The browser calls the normal cognitive path automatically. Provider credentials 
 - `POST /api/v2/runs/{id}/execute` records the fixed server-side route and starts the run.
 - `POST /api/v2/runs/{id}/restart` requeues an interrupted non-media run only after explicit acknowledgement that prior provider-call completion may be uncertain.
 - `GET /api/v2/runs/{id}` returns progress.
-- `GET /api/v2/runs/{id}/result` returns `ReadinessPackageV2` schema `2.5.0`.
+- `GET /api/v2/runs/{id}/result` returns `ReadinessPackageV2` schema `2.6.0` after mandatory local structural and integrity validation.
 - `DELETE /api/v2/runs/{id}` purges the run record and evidence held by the active run store.
 - `GET /api/v2/models` exposes the non-secret fixed policy without credentials.
 
@@ -122,7 +122,7 @@ See [docs/knowledge-base.md](docs/knowledge-base.md) for the runtime manifest an
 - Production monitoring, centralized audit logging, malware scanning, long-term package retention, incident response and deployment security validation remain future hardening work.
 - Images currently rely on caller-provided sanitized metadata; a trusted image-sanitization service is not integrated.
 - Knowledge taxonomy, identifiers and release content are not finalized.
-- Final readiness packages are versioned by implementation contract but do not yet pass a separate runtime output-schema validator.
+- Final readiness packages pass a versioned local structural, JSON-safety, authority-boundary and integrity validator before they can be returned or persisted. Full leaf-level JSON Schema publication remains future contract hardening.
 
 These limitations are development boundaries, not evidence that the corresponding production controls exist. See [SECURITY.md](SECURITY.md) and [docs/deployment.md](docs/deployment.md) for additional security and deployment context.
 

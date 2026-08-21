@@ -408,12 +408,13 @@ export function buildAssessmentCoverageMatrix(knowledge, dossier, claims, domain
   };
   const assessed = new Set(domainResults.flatMap((item) => item.assessmentResults ?? []).filter((item) => item.status === "ASSESSED" || item.status === "NO_EVIDENCE_FOUND").map((item) => item.objectId));
   const entries = coverageObjects(knowledge, dossier).map((item) => {
+    const { lifecycleApplicable, humanInterpretationRequired, ...publicItem } = item;
     const status = !item.lifecycleApplicable ? "NOT_APPLICABLE"
       : domainStatus.get(item.domain) === "FAILED" ? "FAILED"
         : item.humanInterpretationRequired ? "HUMAN_INTERPRETATION_REQUIRED"
           : assessed.has(item.objectId) || claimed[item.kind.toLowerCase()]?.has(item.objectId) ? "ASSESSED" : "UNKNOWN";
     const evidenceStatus = status === "ASSESSED" ? (claimed[item.kind.toLowerCase()]?.has(item.objectId) ? "CLAIM_PROPOSED" : "NO_EVIDENCE_FOUND") : null;
-    return { ...item, status, mandatory: item.lifecycleApplicable, evidenceStatus, lifecycleApplicable: undefined, humanInterpretationRequired: undefined };
+    return { ...publicItem, status, mandatory: lifecycleApplicable, evidenceStatus };
   });
   const mandatory = entries.filter((item) => item.mandatory && item.status !== "NOT_APPLICABLE");
   const complete = mandatory.every((item) => ["ASSESSED", "HUMAN_INTERPRETATION_REQUIRED"].includes(item.status));

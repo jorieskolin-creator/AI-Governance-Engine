@@ -264,7 +264,7 @@ function sanitizeSynthesis(value, provisional, lockedFindings) {
     items.push({ id: stableId("narrative", normalized), supportStatus: "PENDING_FACT_CHECK", ...normalized });
   }
   if (!items.some((item) => item.section === "EXECUTIVE_DECISION")) items.unshift(deterministicNarrative(provisional, lockedFindings).items[0]);
-  return { items, integrityIncidents, quarantine: rejected.length ? { status: "QUARANTINED", rejectedItemIds: rejected, items: [] } : undefined };
+  return { items, integrityIncidents, ...(rejected.length ? { quarantine: { status: "QUARANTINED", rejectedItemIds: rejected, items: [] } } : {}) };
 }
 
 function applyFactCheck(synthesis, checked, allowCorrections) {
@@ -288,14 +288,13 @@ function applyFactCheck(synthesis, checked, allowCorrections) {
     if (repairable) items.push({ ...item, text: result.correctedText.trim(), supportStatus: "REPAIR_PENDING" });
   }
   return {
-    synthesis: { ...synthesis, items, quarantine: quarantined.length || synthesis.quarantine ? { status: "QUARANTINED", items: quarantined, rejectedItemIds: synthesis.quarantine?.rejectedItemIds ?? [] } : undefined },
+    synthesis: { ...synthesis, items, ...(quarantined.length || synthesis.quarantine ? { quarantine: { status: "QUARANTINED", items: quarantined, rejectedItemIds: synthesis.quarantine?.rejectedItemIds ?? [] } } : {}) },
     integrity, triggers, repairsPending: items.some((item) => item.supportStatus === "REPAIR_PENDING")
   };
 }
 
 async function runFactCheck({ client, policy, run, synthesis, lockedFindings, provisional, excludeProviders = [] }) {
-  const critical = lockedFindings.some((item) => HIGH_INTEGRITY.has(item.severity));
-  const profile = chooseForPackets(policy, "FACT_CHECK", run, [], { excludeProviders, requireAll: false, preferredProfileIds: critical ? ["opus-factcheck-high", "sonnet-factcheck-high", "openai-sol-factcheck-high"] : ["sonnet-factcheck-high", "openai-sol-factcheck-high"] });
+  const profile = chooseForPackets(policy, "FACT_CHECK", run, [], { excludeProviders, requireAll: false });
   recordTransmission(run, "FINAL_FACT_CHECK", profile, [], false);
   const checked = await client.generate({ profile, prompt: factCheckPrompt(synthesis, lockedFindings, provisional), schemaName: "narrative_fact_check", schema: FACT_CHECK_SCHEMA, packetHash: sha256({ synthesis, lockedFindings: lockedFindings.map((item) => item.id) }), promptVersion: PROMPT_VERSIONS.factCheck });
   return { profile, value: checked.value };
@@ -483,7 +482,7 @@ export async function executeCognitiveRun(run, options = {}) {
   const buildProvisional = async () => {
     const lockedEvidence = [...evidenceFromLockedFindings(lockedFindings, sourceUnits, now), ...scanner.evidence];
     const cognitiveCoverage = { required: true, complete: failedStages.length === 0 && coverageMatrix.complete, failedStages: unique(failedStages), domainCount: Object.keys(DOMAINS).length, assessedDomainCount: domainResults.filter((item) => item.status === "COMPLETED").length, claimCount: claimRecords.size, verifiedClaimCount: lockedFindings.length, coverageMatrix };
-    return assessVerifiedSolution({ runId: run.id, dossier: run.dossier, registeredSources: run.registeredSources, sourceIngestion: run.sourceIngestion, registryFindings: scanner.registryFindings, solutionModel, solutionProfile: run.solutionProfile, lockedEvidence, lockedFindings, cognitiveCoverage, cognitive: { solutionModel, claims: [...claimRecords.values()], verificationRecords, adjudicatedClaims, unresolvedClaims, lockedFindings, findingLockRecords, coverageMatrix } }, { knowledge });
+    return assessVerifiedSolution({ runId: run.id, dossier: run.dossier, registeredSources: run.registeredSources, sourceIngestion: run.sourceIngestion, registryFindings: scanner.registryFindings, solutionModel, solutionProfile: run.solutionProfile, lockedEvidence, lockedFindings, cognitiveCoverage, cognitive: { solutionModel, claims: [...claimRecords.values()], verificationRecords, adjudicatedClaims, unresolvedClaims, lockedFindings, findingLockRecords, coverageMatrix } }, { knowledge, provisional: true });
   };
   let provisional = await buildProvisional(); let synthesis = deterministicNarrative(provisional, lockedFindings); let factCheck = { supported: false, itemResults: [], limitation: "Model synthesis was not completed." }; let factCheckIntegrity = { valid: false }; let synthesisProvider = null;
 

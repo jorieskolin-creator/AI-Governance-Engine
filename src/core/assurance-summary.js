@@ -59,6 +59,9 @@ export function buildTransitionBoundary({ dossier, gates, domains, readiness, hu
   if (documentationReadiness?.sandboxRequired) {
     prohibitedUses.push(boundaryItem("Do not use production access, uncontrolled external users, consequential decisions, or unapproved sensitive data while documentation remains incomplete.", basis({ ruleIds: ["RULE-BOUNDARY-DOCUMENTATION-SANDBOX"] })));
   }
+  if (documentationReadiness?.maximumLifecycleStage) {
+    prohibitedUses.push(boundaryItem(`Do not progress beyond ${label(documentationReadiness.maximumLifecycleStage)} while Intake information remains self-declared.`, basis({ ruleIds: ["RULE-BOUNDARY-SELF-DECLARED-INTAKE"] })));
+  }
   for (const gate of gates.filter((item) => item.outcome === "BLOCK")) {
     prohibitedUses.push(boundaryItem(`Do not progress until “${gate.title}” is resolved.`, basis({
       gateIds: [gate.id], evidenceIds: gate.evidenceIds, controlIds: gate.controlIds, ruleIds: gate.ruleIds
@@ -91,6 +94,7 @@ export function buildTransitionBoundary({ dossier, gates, domains, readiness, hu
   const boundary = {
     currentStage: dossier.currentStage,
     targetStage: dossier.targetStage,
+    maximumLifecycleStage: documentationReadiness?.maximumLifecycleStage ?? null,
     label: ["DEPLOYMENT", "OPERATION_AND_MONITORING"].includes(dossier.targetStage) ? "Deterministic Production Boundary" : "Deterministic Lifecycle Transition Boundary",
     status,
     headline: boundaryHeadline(status, dossier),
@@ -239,11 +243,13 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
     ...(knowledge.releaseStatus !== "APPROVED" ? [`The assessment uses ${knowledge.releaseStatus ?? "UNSPECIFIED"} knowledge rather than an approved production normative mapping.`] : []),
     ...(cognitive?.coverage && !cognitive.coverage.complete ? [`Cognitive assessment incomplete: ${cognitive.coverage.failedStages.join(", ")}.`] : []),
     ...(cognitive?.publicationGate?.status === "REPORT_WITH_LIMITATIONS" ? cognitive.publicationGate.limitations.map((item) => `Publication limitation: ${item}.`) : []),
-    ...(cognitive?.publicationGate?.status === "REPORT_WITHHELD" ? ["Generated assurance narrative was withheld; use the deterministic package and audit ledger."] : [])
+    ...(cognitive?.publicationGate?.status === "REPORT_WITHHELD" ? ["Generated assurance narrative was withheld; use the deterministic package and audit ledger."] : []),
+    ...(documentationReadiness.questionnaireUnknowns?.length ? [`${documentationReadiness.questionnaireUnknowns.length} applicability or classification question(s) remain unknown or require human interpretation.`] : []),
+    ...(documentationReadiness.unsupportedNegativeAnswers?.length ? [`${documentationReadiness.unsupportedNegativeAnswers.length} negative or not-applicable declaration(s) lack sufficient support and cannot clear a gate.`] : [])
   ]);
 
   return {
-    version: "assurance-summary-1.4.0",
+    version: "assurance-summary-1.5.0",
     assessmentMode: mode,
     decision: recommendation,
     dimensions,

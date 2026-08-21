@@ -7,7 +7,7 @@ import { SAMPLE_REQUEST } from "../src/sample.js";
 import { loadKnowledgeSnapshot } from "../src/knowledge/provider.js";
 
 if (process.env.BENCHMARK_CONFIRM_LIVE_CALLS !== "true") {
-  console.error("Set BENCHMARK_CONFIRM_LIVE_CALLS=true to authorize live provider calls. The benchmark never changes MODEL_PROFILE_APPROVALS.");
+  console.error("Set BENCHMARK_CONFIRM_LIVE_CALLS=true to authorize live provider calls. The benchmark never changes the fixed governance route.");
   process.exit(2);
 }
 
@@ -88,7 +88,7 @@ report.summary = {
   failed: report.results.filter((item) => item.status === "FAILED").length,
   skipped: report.results.filter((item) => item.status === "SKIPPED").length,
   zeroToleranceFailures: report.results.filter((item) => item.integrity && !item.integrity.zeroTolerancePassed).map((item) => item.profileId),
-  note: "No profile is promoted automatically. Human-labelled claim precision and high/critical recall must be added before MODEL_PROFILE_APPROVALS is changed."
+  note: "The fixed route is not treated as decision-ready automatically. Human-labelled claim precision and high/critical recall must be reviewed before decision-ready use."
 };
 
 console.log(JSON.stringify(report, null, 2));

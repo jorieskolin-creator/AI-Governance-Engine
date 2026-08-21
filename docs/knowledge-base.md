@@ -4,8 +4,9 @@ Production knowledge is loaded from `VERCEL_KB_MANIFEST_URL`. The manifest and e
 
 ```json
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.1.0",
   "version": "ai-governance-approved-2026-08-01",
+  "releaseStatus": "APPROVED",
   "documents": [
     {
       "id": "normative-sources-2026-08",
@@ -17,7 +18,7 @@ Production knowledge is loaded from `VERCEL_KB_MANIFEST_URL`. The manifest and e
 }
 ```
 
-Exactly one or more documents must collectively populate each type: `normativeSources`, `requirements`, `controls`, `antipatterns`, and `tactics`. A document may be a JSON array or `{ "entries": [...] }`.
+Exactly one or more documents must collectively populate each type: `normativeSources`, `requirements`, `controls`, `antipatterns`, and `tactics`. `intakeQuestionnaire` is optional. Maintainer collection artifacts use `{ "schemaVersion": "1.0.0", "type": "...", "entries": [...] }`; the loader also accepts a bare array for compatibility.
 
 The example hash is a placeholder. Calculate the SHA-256 over the exact uploaded bytes. The engine verifies each value before accepting the snapshot. Knowledge entries should carry stable IDs, versions, authority classification, effective dates, owner authority, and approval status where applicable.
 
@@ -35,6 +36,12 @@ Diagnostic status meanings:
 - `WARN`: the snapshot is usable for calibration, but contains a non-blocking issue such as a non-approved release or an unmapped tactic.
 - `FAIL`: integrity or referential checks failed; the snapshot is rejected and the Engine does not start with it.
 
+## Producer and activation boundary
+
+The Maintainer owns authoring, governance, publication evidence, Drive archiving and immutable Blob distribution. The Engine owns consumption, activation and runtime diagnostics. `PUBLISHED` therefore means the runtime manifest is available and hash-verified in storage; it does not claim that any Engine deployment has activated it.
+
+Before changing a deployment, run the Engine-owned `verify-knowledge-manifest` GitHub workflow with the immutable manifest URL, or run `VERCEL_KB_MANIFEST_URL=https://... pnpm run kb:verify-runtime` in an authorized environment. Private Blob access uses `BLOB_READ_WRITE_TOKEN`. The verification loads the real Engine provider and requires `APPROVED` plus `PASS` diagnostics without checking out or importing Maintainer code.
+
 ## Authoring and compilation
 
 Rich capability, anti-pattern and tactic JSON must not be uploaded as direct runtime collections. Use the category authoring toolchain documented in [knowledge-authoring/README.md](../knowledge-authoring/README.md):
@@ -43,8 +50,8 @@ Rich capability, anti-pattern and tactic JSON must not be uploaded as direct run
 2. Maintain one shared Tactic Catalog and reciprocal tactic references.
 3. Generate human PDFs from the canonical JSON.
 4. Validate all 60 objects together.
-5. Compile the approved authoring package into the five runtime collections.
-6. Upload those five exact files and generate the runtime manifest last from their immutable URLs and byte hashes.
+5. Compile the approved authoring package into the five governance collections and, when governed, the versioned assessment-intake questionnaire.
+6. Upload those exact files and generate the runtime manifest last from their immutable URLs and byte hashes.
 
 The compiler preserves rich authoring metadata as additive fields while emitting the existing runtime keys. Lifecycle-specific assurance targets are retained in `targetStateByLifecycle`; the Engine selects the target for the requested transition and falls back to `targetState` for older collections.
 

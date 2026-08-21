@@ -1,5 +1,6 @@
 import { classifyArtifact, HUMAN_AUTHORITIES } from "../contracts.js";
 import { sha256, stableId } from "./hash.js";
+import { activeIntakeAnswers, INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
 
 const SECRET_PATTERNS = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
@@ -164,10 +165,27 @@ export function dossierEvidence(dossier, now = new Date()) {
     { signal: "accountable-owner", excerpt: dossier.accountableOwner, domains: ["A", "F"], controls: ["CTRL-A-01", "CTRL-F-01"] },
     { signal: "classification", excerpt: dossier.classification.prohibitedPractice === null && dossier.classification.highRiskCandidate === null ? "" : `Prohibited=${dossier.classification.prohibitedPractice}; highRiskCandidate=${dossier.classification.highRiskCandidate}`, domains: ["A"], controls: ["CTRL-A-02"] }
   ];
-  return entries.filter((entry) => typeof entry.excerpt === "string" && entry.excerpt.trim()).map((entry) => ({
+  const coreEvidence = entries.filter((entry) => typeof entry.excerpt === "string" && entry.excerpt.trim()).map((entry) => ({
     ...common, id: stableId("evd", { sourceId: "dossier", signal: entry.signal, excerpt: entry.excerpt }), excerpt: entry.excerpt, signal: entry.signal, domainIds: entry.domains,
     controlIds: entry.controls, antiPatternIds: [], polarity: "SUPPORT"
   }));
+  const questions = new Map(INTAKE_QUESTIONNAIRE.questions.map((item) => [item.id, item]));
+  const sectionDomains = { SYSTEM: ["A", "C"], ACTOR: ["A", "F"], RISK: ["A", "F"], PROHIBITED: ["A", "E", "F"], TRANSPARENCY: ["E", "F"] };
+  const intakeEvidence = Object.entries(activeIntakeAnswers(dossier.intakeAnswers ?? {})).filter(([, answer]) => answer.answerState !== "UNKNOWN" || answer.confirmedAt).map(([questionId, answer]) => {
+    const question = questions.get(questionId);
+    const excerpt = `${question?.prompt ?? questionId}: ${answer.values?.length ? answer.values.join(", ") : answer.answerState}`;
+    return {
+      ...common,
+      id: stableId("evd", { sourceId: "dossier", signal: "intake-declaration", questionId, excerpt }),
+      excerpt,
+      signal: "intake-declaration",
+      domainIds: sectionDomains[question?.sectionId] ?? ["A", "F"],
+      controlIds: [], antiPatternIds: [], polarity: answer.answerState === "YES" ? "RISK_OR_APPLICABILITY" : "DECLARATION",
+      eligibleForAssurance: false,
+      metadata: { questionId, origin: answer.origin, supportStatus: answer.supportStatus, requirementMappings: question?.sourceMappings ?? [] }
+    };
+  });
+  return [...coreEvidence, ...intakeEvidence];
 }
 
 export function dossierRiskEvidence(dossier, now = new Date()) {

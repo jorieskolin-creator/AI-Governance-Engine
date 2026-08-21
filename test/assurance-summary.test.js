@@ -13,8 +13,8 @@ function request(overrides = {}) {
 
 test("v1 includes complete case context and a deterministic lifecycle boundary", async () => {
   const result = await assessSolution(request());
-  assert.equal(result.schemaVersion, "1.3.0");
-  assert.equal(result.assuranceSummary.version, "assurance-summary-1.4.0");
+  assert.equal(result.schemaVersion, "1.4.0");
+  assert.equal(result.assuranceSummary.version, "assurance-summary-1.5.0");
   assert.equal(result.transitionBoundary.immutable, true);
   assert.equal(result.transitionBoundary.currentStage, result.solution.currentStage);
   assert.equal(result.transitionBoundary.targetStage, result.solution.targetStage);
@@ -30,12 +30,16 @@ test("v1 includes complete case context and a deterministic lifecycle boundary",
   assert.deepEqual(result.assuranceSummary.strengths, []);
   assert.ok(result.assuranceSummary.blockingFindings.every((item) => item.supportStatus === "COGNITIVE_VERIFICATION_NOT_RUN"));
   assert.ok(result.assuranceSummary.executiveGapGroups.length <= 8);
-  assert.equal(result.assessmentIntake.version, "assessment-intake-1.2.0");
+  assert.equal(result.assessmentIntake.version, "assessment-intake-1.3.0");
+  assert.ok(result.assessmentIntake.questionnaire.answers.length > 0);
+  assert.ok(result.assuranceSummary.caseProfile.classificationScreening.length > 0);
 });
 
 test("deployment targets use the production boundary label", async () => {
   const result = await assessSolution(request({ dossier: { targetStage: "DEPLOYMENT" } }));
   assert.equal(result.transitionBoundary.label, "Deterministic Production Boundary");
+  assert.equal(result.transitionBoundary.maximumLifecycleStage, "VERIFICATION_AND_VALIDATION");
+  assert.ok(result.hardGates.some((item) => item.code === "SELF_DECLARED_INTAKE_BOUNDARY" && item.outcome === "BLOCK"));
   assert.ok(["PROGRESSION_BLOCKED", "HUMAN_DECISION_REQUIRED", "CURRENT_STAGE_ONLY", "CONDITIONALLY_ALLOWED", "PROGRESSION_ALLOWED"].includes(result.transitionBoundary.status));
 });
 

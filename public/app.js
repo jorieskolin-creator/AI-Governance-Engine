@@ -1,5 +1,6 @@
 import { renderAssuranceSummary, standaloneReportHtml } from "/report.js";
 import { binaryMimeTypes, classifyUploadPath, provisionalIngestionManifest } from "/upload-types.js";
+import { sanitizeRestrictedValue } from "/content-policy.js";
 
 const STAGES = [
   "QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION",
@@ -10,6 +11,22 @@ let lastPackage = null;
 let sampleSources = [];
 let summaryEnabled = true;
 let preparedSources = null;
+let activeRunId = null;
+let intakeQuestionnaire = { version: "unavailable", sections: [], questions: [] };
+let latestSolutionProfile = null;
+let latestDiscoveryRecheck = null;
+const editedIntakeFields = new Set();
+const intakeControlBaseline = new Map();
+const INTAKE_CONTROL_FIELDS = Object.freeze({
+  name: "name", owner: "accountableOwner", purpose: "intendedPurpose", value: "expectedValue",
+  "current-stage": "currentStage", "target-stage": "targetStage", jurisdictions: "jurisdictions", roles: "roles", users: "users",
+  "allowed-uses": "operatingBoundary.allowedUses", "excluded-uses": "operatingBoundary.excludedUses", "boundary-environment": "operatingBoundary.environment",
+  "boundary-users": "operatingBoundary.userScope", "boundary-data": "operatingBoundary.dataScope", "boundary-expiry": "operatingBoundary.expiresAt",
+  "boundary-integrations": "operatingBoundary.integrationScope", "boundary-permissions": "operatingBoundary.permissionScope", "boundary-autonomy": "operatingBoundary.autonomyScope", "boundary-monitoring": "operatingBoundary.monitoringOwner",
+  "data-categories": "data.categories", "current-user-access": "exposure.currentUserAccess", "intended-user-access": "exposure.intendedUserAccess",
+  "production-access": "exposure.productionAccess", consequential: "exposure.consequentialDecisions", "uses-agents": "agent.usesAgents",
+  "takes-actions": "agent.canTakeActions", irreversible: "agent.irreversibleActions", "human-override": "agent.humanOverride"
+});
 
 const $ = (id) => document.getElementById(id);
 const label = (value) => String(value ?? "").replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -24,18 +41,30 @@ const el = (tag, className, text) => {
   return node;
 };
 const badge = (text, tone = text) => el("span", `badge ${tone}`, label(text));
+const INTAKE_FLOW_STEPS = ["UPLOAD", "DETERMINISTIC", "AI_VERIFICATION", "USER_RESOLUTION", "ASSESSMENT"];
+
+function setIntakeFlow(activeStep, { limitedSteps = [] } = {}) {
+  const activeIndex = activeStep === null ? INTAKE_FLOW_STEPS.length : INTAKE_FLOW_STEPS.indexOf(activeStep);
+  for (const node of $("intake-flow")?.querySelectorAll("[data-intake-step]") ?? []) {
+    const index = INTAKE_FLOW_STEPS.indexOf(node.dataset.intakeStep);
+    node.classList.toggle("complete", index < activeIndex);
+    node.classList.toggle("active", index === activeIndex);
+    node.classList.toggle("limited", limitedSteps.includes(node.dataset.intakeStep));
+  }
+}
 
 function stageOptions() {
   for (const id of ["current-stage", "target-stage"]) {
     const select = $(id);
+    const unknown = el("option", "", "Unknown"); unknown.value = "UNKNOWN"; select.append(unknown);
     for (const stage of STAGES) {
       const option = el("option", "", label(stage));
       option.value = stage;
       select.append(option);
     }
   }
-  $("current-stage").value = "DESIGN_AND_DEVELOPMENT";
-  $("target-stage").value = "VERIFICATION_AND_VALIDATION";
+  $("current-stage").value = "UNKNOWN";
+  $("target-stage").value = "UNKNOWN";
   for (const select of document.querySelectorAll("select.tri-state")) {
     for (const [value, text] of [["UNKNOWN", "Unknown"], ["NO", "No"], ["YES", "Yes"]]) {
       const option = el("option", "", text); option.value = value; select.append(option);
@@ -48,11 +77,132 @@ function stageOptions() {
   }
 }
 
+function renderQuestionnaire() {
+  const root = $("intake-questionnaire"); root.replaceChildren();
+  $("questionnaire-version").textContent = intakeQuestionnaire.version ?? "Unknown version";
+  for (const section of intakeQuestionnaire.sections ?? []) {
+    const details = el("details", "questionnaire-section");
+    details.dataset.sectionTitle = section.title;
+    details.append(el("summary", "", section.title), el("p", "questionnaire-section-description", section.description));
+    const grid = el("div", "questionnaire-grid");
+    for (const question of (intakeQuestionnaire.questions ?? []).filter((item) => item.sectionId === section.id)) {
+      const card = el("article", "question-card"); card.dataset.questionId = question.id;
+      card.append(el("span", "question-prompt", question.prompt));
+      if (question.help) card.append(el("span", "question-help", question.help));
+      if (question.type === "SINGLE") {
+        const select = el("select", "question-answer"); select.dataset.questionId = question.id;
+        for (const value of question.options) { const option = el("option", "", label(value)); option.value = value; select.append(option); }
+        select.value = "UNKNOWN"; card.append(select);
+      } else {
+        const options = el("div", "question-options");
+        for (const value of question.options) {
+          const input = document.createElement("input"); input.type = "checkbox"; input.value = value; input.dataset.questionId = question.id;
+          const optionLabel = document.createElement("label"); optionLabel.append(input, document.createTextNode(label(value))); options.append(optionLabel);
+        }
+        card.append(options);
+      }
+      card.append(el("span", "question-evidence-state", "Unknown · no documentary support confirmed"));
+      grid.append(card);
+    }
+    details.append(grid); root.append(details);
+  }
+  root.addEventListener("change", (event) => {
+    if (event.target.type === "checkbox") {
+      const card = event.target.closest(".question-card");
+      const exclusive = ["UNKNOWN", "NONE_OF_THE_ABOVE"];
+      if (event.target.checked && exclusive.includes(event.target.value)) for (const input of card.querySelectorAll('input[type="checkbox"]')) if (input !== event.target) input.checked = false;
+      else if (event.target.checked) for (const input of card.querySelectorAll('input[type="checkbox"]')) if (exclusive.includes(input.value)) input.checked = false;
+    }
+    const card = event.target.closest(".question-card");
+    if (card) {
+      const question = (intakeQuestionnaire.questions ?? []).find((item) => item.id === card.dataset.questionId);
+      const answer = question ? collectedQuestionAnswer(question) : { answerState: "UNKNOWN" };
+      card.querySelector(".question-evidence-state").textContent = answer.answerState === "UNKNOWN"
+        ? "Unknown · no information detected or declared"
+        : "Self-Declared · unsupported until documentary evidence is verified";
+    }
+    updateQuestionnaireConditions();
+  });
+  updateQuestionnaireConditions();
+}
+
+function collectedQuestionAnswer(question) {
+  const card = document.querySelector(`.question-card[data-question-id="${question.id}"]`);
+  if (!card) return { answerState: "UNKNOWN", values: [] };
+  if (question.type === "SINGLE") return { answerState: card.querySelector("select")?.value ?? "UNKNOWN", values: [] };
+  const values = [...card.querySelectorAll('input[type="checkbox"]:checked')].map((item) => item.value);
+  if (!values.length || values.includes("UNKNOWN")) return { answerState: "UNKNOWN", values: values.length ? ["UNKNOWN"] : [] };
+  if (values.includes("NONE_OF_THE_ABOVE")) return { answerState: "NO", values: ["NONE_OF_THE_ABOVE"] };
+  return { answerState: "YES", values };
+}
+
+function questionnaireAnswerRecord(question, now = new Date().toISOString()) {
+  const answer = collectedQuestionAnswer(question);
+  const previous = latestSolutionProfile?.assessmentIntakeFacts?.[question.id];
+  const unchanged = previous && previous.answerState === answer.answerState && JSON.stringify(previous.value === previous.answerState ? [] : previous.value) === JSON.stringify(answer.values);
+  return {
+    ...answer,
+    origin: unchanged ? previous.origin : "SELF_DECLARED",
+    supportStatus: unchanged ? previous.supportStatus : answer.answerState === "UNKNOWN" ? "NOT_CHECKED" : "UNSUPPORTED",
+    sourceUnitIds: unchanged ? previous.sourceUnitIds : [], evidenceLinks: unchanged ? previous.evidenceLinks : [],
+    limitations: answer.answerState === "UNKNOWN" ? ["No answer was detected or declared."] : unchanged ? previous.limitations : ["Self-Declared information is not documentary evidence."],
+    confirmedBy: answer.answerState === "UNKNOWN" ? null : "USER", confirmedAt: answer.answerState === "UNKNOWN" ? null : now
+  };
+}
+
+function updateQuestionnaireConditions() {
+  for (const question of intakeQuestionnaire.questions ?? []) {
+    const card = document.querySelector(`.question-card[data-question-id="${question.id}"]`);
+    if (!card || !question.showWhen) continue;
+    const parent = (intakeQuestionnaire.questions ?? []).find((item) => item.id === question.showWhen.questionId);
+    const answer = parent ? collectedQuestionAnswer(parent) : { answerState: "UNKNOWN", values: [] };
+    const visible = !question.showWhen.answerStates || question.showWhen.answerStates.includes(answer.answerState);
+    card.classList.toggle("is-conditional-hidden", !visible);
+    if (!visible) {
+      card.dataset.conditionAutoHidden = "true";
+      const select = card.querySelector("select"); if (select) select.value = "NOT_APPLICABLE";
+      for (const input of card.querySelectorAll('input[type="checkbox"]')) input.checked = false;
+    } else if (card.dataset.conditionAutoHidden === "true") {
+      delete card.dataset.conditionAutoHidden;
+      const select = card.querySelector("select"); if (select) select.value = "UNKNOWN";
+      card.querySelector(".question-evidence-state").textContent = "Unknown · no information detected or declared";
+    }
+  }
+  for (const details of document.querySelectorAll(".questionnaire-section")) {
+    const cards = [...details.querySelectorAll(".question-card:not(.is-conditional-hidden)")];
+    const actionCount = cards.filter((card) => {
+      const question = (intakeQuestionnaire.questions ?? []).find((item) => item.id === card.dataset.questionId);
+      const answer = question ? questionnaireAnswerRecord(question) : { answerState: "UNKNOWN", supportStatus: "NOT_CHECKED" };
+      return answer.answerState === "UNKNOWN" || ["UNSUPPORTED", "CONFLICTING", "NOT_CHECKED"].includes(answer.supportStatus);
+    }).length;
+    const summary = details.querySelector("summary");
+    if (summary) summary.textContent = `${details.dataset.sectionTitle} · ${actionCount ? `${actionCount} action${actionCount === 1 ? "" : "s"}` : "complete"}`;
+  }
+}
+
+function questionnaireAnswers() {
+  const now = new Date().toISOString();
+  return Object.fromEntries((intakeQuestionnaire.questions ?? []).map((question) => [question.id, questionnaireAnswerRecord(question, now)]));
+}
+
+function fillQuestionnaire(answers = {}) {
+  for (const question of intakeQuestionnaire.questions ?? []) {
+    const answer = answers[question.id]; if (!answer) continue;
+    const card = document.querySelector(`.question-card[data-question-id="${question.id}"]`); if (!card) continue;
+    if (question.type === "SINGLE") card.querySelector("select").value = answer.answerState ?? "UNKNOWN";
+    else for (const input of card.querySelectorAll('input[type="checkbox"]')) input.checked = (answer.values ?? []).includes(input.value);
+    card.querySelector(".question-evidence-state").textContent = `${label(answer.origin ?? "SELF_DECLARED")} · ${label(answer.supportStatus ?? "NOT_CHECKED")} · ${answer.sourceUnitIds?.length ?? 0} cited source unit(s)`;
+  }
+  updateQuestionnaireConditions();
+}
+
 function fillDossier(dossier) {
+  editedIntakeFields.clear();
+  latestDiscoveryRecheck = null;
   const boundary = dossier.operatingBoundary ?? {};
   $("name").value = dossier.name ?? ""; $("owner").value = dossier.accountableOwner ?? "";
   $("purpose").value = dossier.intendedPurpose ?? ""; $("value").value = dossier.expectedValue ?? "";
-  $("current-stage").value = dossier.currentStage ?? "QUALIFICATION_AND_REGISTRATION"; $("target-stage").value = dossier.targetStage ?? "DESIGN_AND_DEVELOPMENT";
+  $("current-stage").value = dossier.lifecycleDeclaration?.currentStage ?? dossier.currentStage ?? "UNKNOWN"; $("target-stage").value = dossier.lifecycleDeclaration?.targetStage ?? dossier.targetStage ?? "UNKNOWN";
   $("jurisdictions").value = (dossier.jurisdictions ?? []).join(", "); $("roles").value = (dossier.roles ?? []).join(", "); $("users").value = (dossier.users ?? []).join(", ");
   $("allowed-uses").value = (boundary.allowedUses ?? []).join("\n"); $("excluded-uses").value = (boundary.excludedUses ?? []).join("\n");
   $("boundary-environment").value = boundary.environment ?? "UNKNOWN"; $("boundary-users").value = boundary.userScope ?? ""; $("boundary-data").value = boundary.dataScope ?? "";
@@ -65,17 +215,70 @@ function fillDossier(dossier) {
   setTri("production-access", dossier.exposure?.productionAccess); setTri("consequential", dossier.exposure?.consequentialDecisions);
   setTri("uses-agents", dossier.agent?.usesAgents); setTri("takes-actions", dossier.agent?.canTakeActions); setTri("irreversible", dossier.agent?.irreversibleActions); setTri("human-override", dossier.agent?.humanOverride);
   setTri("prohibited", dossier.classification?.prohibitedPractice); setTri("high-risk", dossier.classification?.highRiskCandidate);
+  fillQuestionnaire(dossier.intakeAnswers ?? {});
+  intakeControlBaseline.clear();
+  for (const controlId of Object.keys(INTAKE_CONTROL_FIELDS)) intakeControlBaseline.set(controlId, intakeControlValue(controlId));
+}
+
+function intakeControlValue(controlId) {
+  if (controlId === "data-categories") return JSON.stringify(checkedValues(controlId).sort());
+  return String($(controlId)?.value ?? "");
+}
+
+function renderIntakeWorkspace(profile, recheck = null) {
+  if (!profile) return;
+  latestDiscoveryRecheck = recheck ?? latestDiscoveryRecheck;
+  const aiByField = new Map((latestDiscoveryRecheck?.candidates ?? []).map((item) => [item.field, item]));
+  for (const [controlId, field] of Object.entries(INTAKE_CONTROL_FIELDS)) {
+    const control = $(controlId); if (!control) continue;
+    const host = control.closest("label") ?? control.closest("fieldset"); if (!host) continue;
+    host.querySelector(`.field-provenance[data-field="${field}"]`)?.remove();
+    const fact = profile.fields[field];
+    const ai = aiByField.get(field);
+    const edited = editedIntakeFields.has(field);
+    const state = edited ? { tone: "self-declared", text: "Self-Declared · changed by user · V&V lifecycle cap applies" }
+      : fact?.status === "CONFLICTING" ? { tone: "conflicting", text: "Conflict · source values require resolution" }
+        : ai?.recommendation === "REVIEW_REWRITE" ? { tone: "review", text: "AI wording proposal available · accepting it becomes Self-Declared" }
+          : ai?.recommendation === "REVIEW_CANDIDATE" ? { tone: "review", text: "AI source-grounded candidate available · user decision required" }
+            : !fact || fact.status === "UNKNOWN" ? { tone: "missing", text: "Missing · submitted material did not establish this information" }
+              : fact.factClass === "OBSERVED" ? { tone: "observed", text: `Source-derived · ${fact.sourceUnitIds?.length ?? 0} cited unit(s) · user confirmation required` }
+                : fact.factClass === "SELF_DECLARED" ? { tone: "self-declared", text: "Self-Declared · documentary support not established" }
+                  : { tone: "missing", text: "Provisional default · verify or provide information" };
+    const note = el("span", `field-provenance ${state.tone}`, state.text); note.dataset.field = field; host.append(note);
+  }
+  const facts = Object.values(profile.fields);
+  const declaredFields = new Set(facts.filter((item) => item.factClass === "SELF_DECLARED").map((item) => item.field));
+  for (const field of editedIntakeFields) declaredFields.add(field);
+  const counts = {
+    observed: facts.filter((item) => item.factClass === "OBSERVED" && item.status !== "CONFLICTING").length,
+    missing: facts.filter((item) => item.status === "UNKNOWN" && !editedIntakeFields.has(item.field)).length,
+    conflicting: facts.filter((item) => item.status === "CONFLICTING").length,
+    declared: declaredFields.size
+  };
+  const summary = $("intake-review-summary"); summary.replaceChildren(
+    el("strong", "", "Review exceptions first"),
+    el("span", "observed", `${counts.observed} source-derived`),
+    el("span", "missing", `${counts.missing} missing`),
+    el("span", "conflicting", `${counts.conflicting} conflicting`),
+    el("span", "self-declared", `${counts.declared} Self-Declared`)
+  );
 }
 
 function dossierFromForm() {
+  const intakeAnswers = questionnaireAnswers();
+  const rolesAnswer = intakeAnswers.REGULATORY_ROLES;
+  const prohibitedAnswer = intakeAnswers.PROHIBITED_PRACTICE_CATEGORIES;
+  const highRiskAnswerIds = ["ANNEX_III_USE_AREAS", "PRODUCT_SAFETY_COMPONENT", "ANNEX_I_PRODUCT", "THIRD_PARTY_CONFORMITY"];
+  const highRiskAnswers = highRiskAnswerIds.map((id) => intakeAnswers[id]).filter(Boolean);
   return {
     name: $("name").value, intendedPurpose: $("purpose").value, expectedValue: $("value").value,
     currentStage: $("current-stage").value, targetStage: $("target-stage").value,
-    jurisdictions: commaList($("jurisdictions").value), roles: commaList($("roles").value), users: commaList($("users").value), accountableOwner: $("owner").value,
+    jurisdictions: commaList($("jurisdictions").value), roles: rolesAnswer?.answerState === "YES" ? rolesAnswer.values.filter((item) => !["OTHER", "NONE_OF_THE_ABOVE", "UNKNOWN"].includes(item)) : commaList($("roles").value), users: commaList($("users").value), accountableOwner: $("owner").value,
     data: { categories: checkedValues("data-categories") },
     exposure: { currentUserAccess: $("current-user-access").value, intendedUserAccess: $("intended-user-access").value, productionAccess: triState("production-access"), consequentialDecisions: triState("consequential") },
     agent: { usesAgents: triState("uses-agents"), canTakeActions: triState("takes-actions"), irreversibleActions: triState("irreversible"), humanOverride: triState("human-override") },
-    classification: { prohibitedPractice: triState("prohibited"), highRiskCandidate: triState("high-risk") },
+    classification: { prohibitedPractice: prohibitedAnswer?.answerState === "YES" ? true : prohibitedAnswer?.answerState === "NO" ? false : null, highRiskCandidate: highRiskAnswers.some((item) => item.answerState === "YES") ? true : highRiskAnswers.length && highRiskAnswers.every((item) => ["NO", "NOT_APPLICABLE"].includes(item.answerState)) ? false : null },
+    intakeAnswers,
     operatingBoundary: {
       allowedUses: lineList($("allowed-uses").value), excludedUses: lineList($("excluded-uses").value), environment: $("boundary-environment").value,
       userScope: $("boundary-users").value, dataScope: $("boundary-data").value, integrationScope: $("boundary-integrations").value,
@@ -129,7 +332,9 @@ async function selectedSources() {
   return preparedSources;
 }
 
-function renderDiscovery(profile, dlpFindings = [], recheck = null) {
+function renderDiscovery(profile, dlpFindings = [], recheck = null, citationIndex = []) {
+  latestSolutionProfile = profile;
+  const citations = new Map(citationIndex.map((item) => [item.sourceUnitId, item]));
   const root = $("discovery-results"); root.replaceChildren();
   const heading = el("div", "discovery-heading");
   heading.append(el("strong", "", "Detected Assessment Intake draft"), el("span", "", `${profile.sourceCount} parsed source(s) · ${dlpFindings.length} local screening indicator(s)`));
@@ -139,32 +344,82 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null) {
   for (const field of fields) {
     const fact = profile.fields[field]; const card = el("article", "discovery-fact");
     card.append(el("span", "", label(field)), el("strong", "", fact?.value === null ? "Unknown" : Array.isArray(fact?.value) ? fact.value.join(", ") || "Unknown" : String(fact?.value ?? "Unknown")));
-    card.append(badge(fact?.status ?? "UNKNOWN"), el("small", "", fact?.sourceUnitIds?.length ? `${fact.sourceUnitIds.length} cited source unit(s)` : "No documentary source located"));
+    const sourceText = fact?.sourceUnitIds?.length ? fact.sourceUnitIds.map((id) => citations.get(id)).filter(Boolean).map((item) => `${item.path} · ${item.locator}`).join("; ") || `${fact.sourceUnitIds.length} cited source unit(s)` : "No documentary source located";
+    card.append(badge(fact?.status ?? "UNKNOWN"), el("small", "", sourceText));
     grid.append(card);
   }
   root.append(grid);
   if (recheck) {
-    root.append(el("p", "discovery-recheck-note", recheck.status === "AVAILABLE_AFTER_APPROVAL"
-      ? "AI semantic recheck is available in the authenticated v2 flow after explicit packet and provider approval. It proposes cited candidates only; it never overwrites this deterministic draft."
-      : "AI semantic recheck is disabled. Missing fields remain unknown until documented or declared by the user."));
+    const acceptedCount = recheck.candidates?.filter((item) => item.recommendation === "ACCEPT_CURRENT").length ?? 0;
+    const actionCandidates = recheck.candidates?.filter((item) => item.recommendation !== "ACCEPT_CURRENT") ?? [];
+    const message = recheck.status === "COMPLETED"
+      ? `AI Intake verification completed: ${acceptedCount} current value(s) supported as written; ${actionCandidates.length} field(s) need review or more information. AI proposals do not overwrite the deterministic Intake draft.`
+      : recheck.status === "BLOCKED_BY_LOCAL_DLP"
+        ? "AI semantic recheck was blocked by local source screening. Missing fields remain unknown until documented or declared by the user."
+        : `AI semantic recheck is unavailable: ${label(recheck.failureCode ?? recheck.status)}. The deterministic intake draft remains available.`;
+    root.append(el("p", "discovery-recheck-note", message));
+    if (actionCandidates.length) {
+      const details = el("details", "discovery-candidate-details");
+      details.append(el("summary", "", `Review ${actionCandidates.length} AI verification exception(s)`));
+      const candidates = el("ul", "discovery-candidates");
+      for (const candidate of actionCandidates) {
+        const displayedValue = candidate.value || (candidate.recommendation === "PROVIDE_INFORMATION" ? "Information not found in submitted material" : "No usable proposal");
+        const item = el("li", "", `${label(candidate.field)} · ${label(candidate.recommendation)}: ${displayedValue}. ${candidate.rationale}`);
+        const controlId = Object.entries(INTAKE_CONTROL_FIELDS).find(([, field]) => field === candidate.field)?.[0];
+        const control = controlId ? $(controlId) : null;
+        if (control && ["INPUT", "TEXTAREA"].includes(control.tagName) && ["REVIEW_REWRITE", "REVIEW_CANDIDATE"].includes(candidate.recommendation) && candidate.value) {
+          const apply = el("button", "candidate-apply-button", "Use proposal"); apply.type = "button";
+          apply.addEventListener("click", () => { control.value = candidate.value; control.dispatchEvent(new Event("input", { bubbles: true })); control.focus(); });
+          item.append(apply);
+        }
+        candidates.append(item);
+        if (candidate.field?.startsWith("intakeAnswers.")) {
+          const questionId = candidate.field.slice("intakeAnswers.".length);
+          const card = document.querySelector(`.question-card[data-question-id="${questionId}"]`);
+          if (card) {
+            card.querySelector(".question-candidate")?.remove();
+            const note = el("div", "question-candidate", `AI verification: ${label(candidate.recommendation)} · ${displayedValue} · ${candidate.sourceUnitIds?.length ?? 0} cited unit(s). Review and select the answer yourself.`);
+            card.append(note);
+          }
+        }
+      }
+      details.append(candidates);
+      root.append(details);
+    }
   }
+  renderIntakeWorkspace(profile, recheck);
   root.classList.remove("hidden");
 }
 
 async function discoverCaseInformation() {
-  $("error").classList.add("hidden"); $("discover-button").disabled = true; $("discovery-status").textContent = "Parsing sources locally on the Engine and building cited facts…";
+  $("error").classList.add("hidden"); $("discover-button").disabled = true; $("assess-button").disabled = true;
+  setIntakeFlow("DETERMINISTIC");
+  $("discovery-status").textContent = "Stage 2 of 5 · Parsing sources locally and building deterministic cited facts…";
   try {
     const prepared = await selectedSources();
     if (!prepared.sources.length) throw new Error("Select a folder or one or more supported files first.");
-    if (!prepared.sources.some((item) => item.mimeType)) {
-      const sample = await fetch("/api/sample").then((response) => response.json());
-      fillDossier(sample.dossier); $("discovery-status").textContent = "Controlled sample dossier loaded for deterministic calibration."; return;
+    const preflight = await postJson("/api/v2/runs/preflight", prepared);
+    activeRunId = preflight.runId;
+    latestSolutionProfile = preflight.solutionProfile;
+    fillDossier(preflight.solutionProfile.suggestedDossier);
+    renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, null, preflight.citationIndex);
+    setIntakeFlow("AI_VERIFICATION");
+    $("discovery-status").textContent = "Stage 3 of 5 · Deterministic Intake complete. Running cited AI verification without changing accepted values…";
+
+    let recheck;
+    try {
+      recheck = await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/discover-recheck`);
+    } catch {
+      recheck = { status: "UNAVAILABLE", failureCode: "INTAKE_AI_VERIFICATION_REQUEST_FAILED" };
     }
-    const response = await fetch("/api/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(prepared) });
-    const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Source discovery failed");
-    fillDossier(body.solutionProfile.suggestedDossier); renderDiscovery(body.solutionProfile, body.dlpFindings, body.discoveryRecheck);
-    const unresolved = Object.values(body.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED").length;
-    $("discovery-status").textContent = `Draft ready with ${unresolved} unresolved field(s). Confirm or correct the draft; approved v2 runs may use a cited AI recheck.`;
+    renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, recheck, preflight.citationIndex);
+    const limited = recheck.status !== "COMPLETED";
+    setIntakeFlow("USER_RESOLUTION", { limitedSteps: limited ? ["AI_VERIFICATION"] : [] });
+    const unresolved = Object.values(preflight.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED").length;
+    $("discovery-status").textContent = limited
+      ? `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). AI verification was ${label(recheck.status).toLowerCase()}; resolve the Intake manually.`
+      : `Stage 4 of 5 · Deterministic and AI verification complete. Resolve ${unresolved} unresolved field(s), then confirm the Intake.`;
+    $("assess-button").disabled = false;
     $("assessment-input").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     $("discovery-status").textContent = "Discovery could not be completed."; $("error").textContent = error.message; $("error").classList.remove("hidden");
@@ -257,6 +512,7 @@ function selectView(view) {
 }
 
 function renderPackage(pkg) {
+  pkg = sanitizeRestrictedValue(pkg);
   lastPackage = pkg;
   renderAssuranceSummary($("assurance-summary"), pkg);
   renderRecommendation(pkg); renderMetrics(pkg); renderLifecycle(pkg); renderHumanDecisions(pkg); renderGates(pkg); renderDomains(pkg); renderActions(pkg); renderTrace(pkg);
@@ -268,20 +524,86 @@ function renderPackage(pkg) {
 
 async function loadSample() {
   const response = await fetch("/api/sample"); const sample = await response.json();
-  fillDossier(sample.dossier); sampleSources = sample.sources; preparedSources = null;
+  fillDossier(sample.dossier);
+  latestSolutionProfile = null;
+  sampleSources = sample.sources.map((source) => ({
+    ...source,
+    mimeType: source.path.endsWith(".json") ? "application/json" : source.path.endsWith(".js") ? "application/javascript" : "text/markdown",
+    encoding: "utf8"
+  }));
+  preparedSources = null; activeRunId = null;
+  $("assess-button").disabled = true; setIntakeFlow("UPLOAD");
   $("folder-summary").textContent = `${sample.sources.length} controlled sample evidence files loaded`;
   $("file-summary").textContent = "No individual files selected";
-  $("discovery-status").textContent = "Controlled sample and its dossier are ready for deterministic calibration.";
+  $("discovery-status").textContent = "Controlled sample loaded. Discover case information to run the same source-first AI workflow.";
+}
+
+function setProgress(title, detail) {
+  $("progress-title").textContent = title;
+  $("progress-detail").textContent = detail;
+}
+
+function progressText(run) {
+  const domain = Object.entries(run.domainProgress ?? {}).find(([, value]) => value.status === "RUNNING")?.[0];
+  if (domain) return `Assessing governance domain ${domain}.`;
+  return {
+    PREFLIGHT: "Screening sources and creating redacted evidence packets.",
+    INTAKE_CONFIRMED: "Preparing verified solution understanding.",
+    SOLUTION_UNDERSTANDING: "Building and independently verifying solution understanding.",
+    PACKET_ROUTING: "Routing redacted evidence to governance domains.",
+    DOMAIN_ASSESSMENT: "Assessing A–F governance evidence.",
+    EVIDENCE_VERIFICATION: "Independently verifying candidate claims.",
+    CONTROLLED_SYNTHESIS: "Writing a summary from locked findings only.",
+    FINAL_FACT_CHECK: "Fact-checking the decision-ready narrative.",
+    COMPLETED: "Cognitive assessment completed."
+  }[run.stage] ?? "Processing the evidence-gated assessment.";
+}
+
+async function postJson(path, body = undefined) {
+  const response = await fetch(path, {
+    method: "POST", headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  const value = await response.json();
+  if (!response.ok) throw new Error(`${value.detail || value.error || "Cognitive assessment failed"}${value.failureCode ? ` (${label(value.failureCode)})` : ""}`);
+  return value;
+}
+
+async function waitForRun(runId) {
+  for (let attempt = 0; attempt < 750; attempt += 1) {
+    const response = await fetch(`/api/v2/runs/${encodeURIComponent(runId)}`);
+    const run = await response.json();
+    if (!response.ok) throw new Error(run.detail || run.error || "Cognitive run status is unavailable");
+    setProgress("Evidence-gated AI analysis", progressText(run));
+    if (run.status === "COMPLETED") return run;
+    if (["FAILED", "PURGED", "CANCELLED"].includes(run.status)) throw new Error(`${run.error || "Cognitive analysis did not complete."}${run.failureCode ? ` (${label(run.failureCode)})` : ""}`);
+    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+  }
+  throw new Error("Cognitive analysis exceeded the browser waiting limit. The server may still be processing the run.");
 }
 
 async function runAssessment(event) {
   event.preventDefault(); $("error").classList.add("hidden"); $("progress").classList.remove("hidden"); $("assess-button").disabled = true;
   try {
+    if (!activeRunId) throw new Error("Complete deterministic discovery and AI Intake verification before starting the A–F assessment.");
     const prepared = await selectedSources();
-    const response = await fetch("/api/assess", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dossier: dossierFromForm(), ...prepared }) });
-    const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Assessment failed"); renderPackage(body);
+    const dossier = dossierFromForm();
+    setProgress("Preparing AI analysis", "Local screening is complete. Redacted evidence will be analysed by the Engine’s configured providers.");
+    const confirmations = {};
+    for (const [field, item] of Object.entries(latestSolutionProfile?.fields ?? {})) {
+      if (item.value !== null && item.value !== "" && item.value !== "UNKNOWN" && (!Array.isArray(item.value) || item.value.length)) confirmations[field] = { confirmed: true };
+    }
+    await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, { dossier, confirmations });
+    setIntakeFlow("ASSESSMENT");
+    await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/execute`);
+    await waitForRun(activeRunId);
+    const response = await fetch(`/api/v2/runs/${encodeURIComponent(activeRunId)}/result`);
+    const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Cognitive result is unavailable");
+    renderPackage(body);
+    setIntakeFlow(null);
+    activeRunId = null;
   } catch (error) { $("error").textContent = error.message; $("error").classList.remove("hidden"); }
-  finally { $("progress").classList.add("hidden"); $("assess-button").disabled = false; }
+  finally { $("progress").classList.add("hidden"); $("assess-button").disabled = activeRunId === null; }
 }
 
 function download(content, type, suffix) {
@@ -324,13 +646,25 @@ function renderKnowledgeDiagnostics(kb, diagnostics) {
 Promise.all([
   fetch("/api/knowledge").then((response) => response.json()),
   fetch("/api/config").then((response) => response.json()).catch(() => ({ assuranceSummaryEnabled: true })),
-  fetch("/api/knowledge/diagnostics").then((response) => response.json()).catch(() => ({ status: "UNKNOWN", issues: [] }))
-]).then(([kb, config, diagnostics]) => {
+  fetch("/api/knowledge/diagnostics").then((response) => response.json()).catch(() => ({ status: "UNKNOWN", issues: [] })),
+  fetch("/api/intake-questionnaire").then((response) => response.json()).catch(() => ({ version: "unavailable", sections: [], questions: [] }))
+]).then(([kb, config, diagnostics, questionnaire]) => {
   renderKnowledgeDiagnostics(kb, diagnostics);
   summaryEnabled = config.assuranceSummaryEnabled !== false;
+  intakeQuestionnaire = questionnaire;
+  renderQuestionnaire();
 }).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; $("knowledge-diagnostics-content").textContent = "Knowledge connection diagnostics are unavailable."; });
 $("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("dossier-form").addEventListener("submit", runAssessment);
+$("dossier-form").addEventListener("input", (event) => {
+  const controlId = event.target.id || event.target.closest("#data-categories")?.id;
+  const field = INTAKE_CONTROL_FIELDS[controlId];
+  if (field && latestSolutionProfile) {
+    if (intakeControlValue(controlId) === intakeControlBaseline.get(controlId)) editedIntakeFields.delete(field);
+    else editedIntakeFields.add(field);
+    renderIntakeWorkspace(latestSolutionProfile, latestDiscoveryRecheck);
+  }
+});
 $("summary-tab").addEventListener("click", () => selectView("summary")); $("workspace-tab").addEventListener("click", () => selectView("workspace"));
 $("print-button").addEventListener("click", printReport); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);
-$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; });
-$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; });
+$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; });
+$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; });

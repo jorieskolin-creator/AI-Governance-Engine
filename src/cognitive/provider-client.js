@@ -24,16 +24,29 @@ function geminiOutput(body) {
 
 function validateSchema(value, schema, path = "$") {
   if (schema.enum && !schema.enum.includes(value)) throw new Error(`${path} is outside the allowed enum`);
-  if (schema.type === "object") {
+  const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (value === null && types.includes("null")) return;
+  if (types.includes("object")) {
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${path} must be an object`);
     for (const key of schema.required ?? []) if (!Object.hasOwn(value, key)) throw new Error(`${path}.${key} is required`);
     if (schema.additionalProperties === false) for (const key of Object.keys(value)) if (!Object.hasOwn(schema.properties ?? {}, key)) throw new Error(`${path}.${key} is not allowed`);
     for (const [key, child] of Object.entries(schema.properties ?? {})) if (Object.hasOwn(value, key)) validateSchema(value[key], child, `${path}.${key}`);
-  } else if (schema.type === "array") {
+  } else if (types.includes("array")) {
     if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
     for (let index = 0; index < value.length; index += 1) validateSchema(value[index], schema.items, `${path}[${index}]`);
-  } else if (schema.type === "string" && typeof value !== "string") throw new Error(`${path} must be a string`);
-  else if (schema.type === "boolean" && typeof value !== "boolean") throw new Error(`${path} must be a boolean`);
+  } else if (types.includes("string") && typeof value !== "string") throw new Error(`${path} must be a string`);
+  else if (types.includes("boolean") && typeof value !== "boolean") throw new Error(`${path} must be a boolean`);
+}
+
+export function assertOpenAiStrictSchema(schema, path = "$") {
+  const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (types.includes("object")) {
+    const propertyNames = Object.keys(schema.properties ?? {}).sort();
+    const requiredNames = [...(schema.required ?? [])].sort();
+    if (propertyNames.join("|") !== requiredNames.join("|")) throw new Error(`${path} must require every declared object property for OpenAI strict structured output`);
+    for (const [name, child] of Object.entries(schema.properties ?? {})) assertOpenAiStrictSchema(child, `${path}.${name}`);
+  }
+  if (types.includes("array") && schema.items) assertOpenAiStrictSchema(schema.items, `${path}[]`);
 }
 
 async function requestJson(url, init, timeoutMs) {
@@ -47,6 +60,7 @@ async function requestJson(url, init, timeoutMs) {
 }
 
 function openAiRequest(profile, credential, prompt, schemaName, schema, media = []) {
+  assertOpenAiStrictSchema(schema);
   return requestJson("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" },
@@ -104,17 +118,17 @@ function geminiRequest(profile, credential, prompt, schemaName, schema, media = 
 
 export class ModelBudget {
   constructor(options = {}) {
-    this.maxCalls = options.maxCalls ?? 40;
-    this.maxTokens = options.maxTokens ?? 500_000;
-    this.maxMs = options.maxMs ?? 12 * 60 * 1000;
+    this.maxCalls = options.maxCalls ?? 180;
+    this.maxTokens = options.maxTokens ?? 1_500_000;
+    this.maxMs = options.maxMs ?? 15 * 60 * 1000;
     this.startedAt = Date.now();
     this.calls = 0;
     this.tokens = 0;
     this.callsByStage = new Map();
     this.tokensByStage = new Map();
     this.startedAtByStage = new Map();
-    this.maxCallsByStage = options.maxCallsByStage ?? { ROUTING: 2, EXTRACTION: 20, SOLUTION_UNDERSTANDING: 2, DOMAIN_ASSESSMENT: 16, VERIFICATION: 100, ADJUDICATION: 20, SYNTHESIS: 3, FACT_CHECK: 4 };
-    this.maxTokensByStage = options.maxTokensByStage ?? { ROUTING: 20000, EXTRACTION: 200000, SOLUTION_UNDERSTANDING: 100000, DOMAIN_ASSESSMENT: 300000, VERIFICATION: 300000, ADJUDICATION: 120000, SYNTHESIS: 100000, FACT_CHECK: 100000 };
+    this.maxCallsByStage = options.maxCallsByStage ?? { ROUTING: 4, EXTRACTION: 20, SOLUTION_UNDERSTANDING: 2, DOMAIN_ASSESSMENT: 48, VERIFICATION: 160, ADJUDICATION: 32, SYNTHESIS: 3, FACT_CHECK: 4 };
+    this.maxTokensByStage = options.maxTokensByStage ?? { ROUTING: 40000, EXTRACTION: 200000, SOLUTION_UNDERSTANDING: 100000, DOMAIN_ASSESSMENT: 700000, VERIFICATION: 500000, ADJUDICATION: 200000, SYNTHESIS: 150000, FACT_CHECK: 100000 };
     this.maxMsByStage = options.maxMsByStage ?? { ROUTING: 120000, EXTRACTION: 300000, SOLUTION_UNDERSTANDING: 240000, DOMAIN_ASSESSMENT: 600000, VERIFICATION: 600000, ADJUDICATION: 300000, SYNTHESIS: 240000, FACT_CHECK: 240000 };
   }
 
@@ -203,7 +217,7 @@ export class StructuredModelClient {
       requestId: `model-request-${requestHash.slice(0, 24)}`, provider: profile.provider, configuredModel: profile.model,
       responseModel: response?.responseModel ?? null,
       parameters: profile.provider === "GEMINI" ? { thinkingLevel: profile.thinkingLevel } : { effort: profile.effort },
-      promptVersion, schemaName, schemaVersion: "3.0.0", packetHash, requestHash,
+      promptVersion, schemaName, schemaVersion: "3.1.0", packetHash, requestHash,
       usage: response?.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, latencyMs: Date.now() - started,
       retry, refusal: Boolean(error?.refusal), status: error ? "FAILED" : "COMPLETED", error: error ? error.message : null,
       outputHash: response ? sha256(stableStringify(response.value)) : null

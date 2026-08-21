@@ -368,23 +368,14 @@ function inLifecycle(entry, dossier) {
   return !stages.length || stages.includes(dossier.currentStage) || stages.includes(dossier.targetStage);
 }
 
-export function buildAssessmentCoverageMatrix(knowledge, dossier, claims, domainResults) {
-  const domainStatus = new Map(domainResults.map((item) => [item.domain, item.status]));
-  const claimed = {
-    requirement: new Set(claims.flatMap((item) => item.requirementIds)),
-    control: new Set(claims.flatMap((item) => item.controlIds)),
-    antipattern: new Set(claims.flatMap((item) => item.antiPatternIds)),
-    assessment: new Set(claims.flatMap((item) => item.assessmentObjectIds)),
-    finding: new Set(claims.flatMap((item) => item.findingDefinitionIds))
-  };
+function coverageObjects(knowledge, dossier) {
   const entries = [];
   const add = (kind, item, parentId = null) => {
-    const lifecycleApplicable = inLifecycle(item, dossier);
-    const status = !lifecycleApplicable ? "NOT_APPLICABLE"
-      : domainStatus.get(item.domain) === "FAILED" ? "FAILED"
-        : item.humanInterpretationRequired ? "HUMAN_INTERPRETATION_REQUIRED"
-          : claimed[kind]?.has(item.id) ? "ASSESSED" : "UNKNOWN";
-    entries.push({ id: stableId("coverage", { kind, objectId: item.id, parentId }), objectId: item.id, parentId, kind: kind.toUpperCase(), domain: item.domain, status, mandatory: lifecycleApplicable, lifecycleStages: item.lifecycleStages ?? [], title: item.title ?? item.question ?? item.test ?? item.id });
+    entries.push({
+      id: stableId("coverage", { kind, objectId: item.id, parentId }), objectId: item.id, parentId, kind: kind.toUpperCase(), domain: item.domain,
+      lifecycleApplicable: inLifecycle(item, dossier), lifecycleStages: item.lifecycleStages ?? [], title: item.title ?? item.question ?? item.test ?? item.id,
+      humanInterpretationRequired: Boolean(item.humanInterpretationRequired)
+    });
   };
   for (const requirement of knowledge.requirements) { add("requirement", requirement); for (const finding of array(requirement.findingDefinitions)) add("finding", { ...finding, domain: requirement.domain, lifecycleStages: requirement.lifecycleStages }, requirement.id); }
   for (const control of knowledge.controls) {
@@ -397,6 +388,33 @@ export function buildAssessmentCoverageMatrix(knowledge, dossier, claims, domain
     for (const object of array(antiPattern.atomicTests)) add("assessment", { ...object, domain: antiPattern.domain, lifecycleStages: antiPattern.lifecycleStages }, antiPattern.id);
     for (const finding of array(antiPattern.findingDefinitions)) add("finding", { ...finding, domain: antiPattern.domain, lifecycleStages: antiPattern.lifecycleStages }, antiPattern.id);
   }
+  return entries;
+}
+
+export function assessmentWorkItems(knowledge, dossier, domain) {
+  return coverageObjects(knowledge, dossier)
+    .filter((item) => item.domain === domain && item.lifecycleApplicable && !item.humanInterpretationRequired)
+    .map(({ id, objectId, parentId, kind, domain: itemDomain, title }) => ({ id: objectId, objectId, parentId, kind, domain: itemDomain, title }));
+}
+
+export function buildAssessmentCoverageMatrix(knowledge, dossier, claims, domainResults) {
+  const domainStatus = new Map(domainResults.map((item) => [item.domain, item.status]));
+  const claimed = {
+    requirement: new Set(claims.flatMap((item) => item.requirementIds)),
+    control: new Set(claims.flatMap((item) => item.controlIds)),
+    antipattern: new Set(claims.flatMap((item) => item.antiPatternIds)),
+    assessment: new Set(claims.flatMap((item) => item.assessmentObjectIds)),
+    finding: new Set(claims.flatMap((item) => item.findingDefinitionIds))
+  };
+  const assessed = new Set(domainResults.flatMap((item) => item.assessmentResults ?? []).filter((item) => item.status === "ASSESSED" || item.status === "NO_EVIDENCE_FOUND").map((item) => item.objectId));
+  const entries = coverageObjects(knowledge, dossier).map((item) => {
+    const status = !item.lifecycleApplicable ? "NOT_APPLICABLE"
+      : domainStatus.get(item.domain) === "FAILED" ? "FAILED"
+        : item.humanInterpretationRequired ? "HUMAN_INTERPRETATION_REQUIRED"
+          : assessed.has(item.objectId) || claimed[item.kind.toLowerCase()]?.has(item.objectId) ? "ASSESSED" : "UNKNOWN";
+    const evidenceStatus = status === "ASSESSED" ? (claimed[item.kind.toLowerCase()]?.has(item.objectId) ? "CLAIM_PROPOSED" : "NO_EVIDENCE_FOUND") : null;
+    return { ...item, status, mandatory: item.lifecycleApplicable, evidenceStatus, lifecycleApplicable: undefined, humanInterpretationRequired: undefined };
+  });
   const mandatory = entries.filter((item) => item.mandatory && item.status !== "NOT_APPLICABLE");
   const complete = mandatory.every((item) => ["ASSESSED", "HUMAN_INTERPRETATION_REQUIRED"].includes(item.status));
   return {

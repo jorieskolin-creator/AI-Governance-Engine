@@ -4,7 +4,7 @@ import { sha256, stableStringify } from "../core/hash.js";
 export const PROMPT_VERSIONS = Object.freeze({
   solution: "solution-understanding-2.1.0",
   solutionVerification: "solution-fact-verification-3.0.0",
-  discoveryRecheck: "discovery-recheck-1.0.0",
+  discoveryRecheck: "discovery-recheck-1.2.0",
   imageExtraction: "image-extraction-2.0.0",
   routing: "semantic-routing-2.0.0",
   domain: "domain-assessment-3.0.0",
@@ -81,9 +81,11 @@ END_SOURCE_PACKET`;
 export function discoveryRecheckPrompt(targetFields, packets) {
   return `${TRUST_PREAMBLE}
 
-Task: recheck only the unresolved or conflicting Assessment Intake fields listed below. Return a candidate only when the supplied source explicitly and contextually supports the field. A generic keyword occurrence is not support. Short jurisdiction codes such as FI count only in a labelled jurisdiction, deployment, contract, customer, or processing context. Regulatory roles require an explicit role statement. Product-name variants may be treated as aliases only when the source connects them to the same repository or product. Use NOT_FOUND when the information is genuinely unavailable.
+Task: verify only the Assessment Intake fields listed below. This is Intake verification, not an A-F assessment, legal classification, risk decision, readiness decision or approval. Return exactly one result for every target field and no result for any other field. A generic keyword occurrence is not support. Short jurisdiction codes such as FI count only in a labelled jurisdiction, deployment, contract, customer, or processing context. Regulatory roles require an explicit role statement. Product-name variants may be treated as aliases only when the source connects them to the same repository or product.
 
-Every CANDIDATE or CONFLICTING result must cite at least one supplied source-unit ID and one exact short quote copied from that unit. Return field values as concise display text; never rewrite the dossier or decide legal classification.
+Use ACCEPT_CURRENT when the current value is clear and contextually supported as written. Use REVIEW_REWRITE only when a source-grounded wording improvement would make the same meaning clearer; intendedPurpose is the primary field where this can be useful. A rewrite must preserve the source meaning and is only a proposal for the user. Use REVIEW_CANDIDATE when a missing value can be proposed from explicit source content. Use PROVIDE_INFORMATION with NOT_FOUND and an empty value when the sources do not answer the field. Use RESOLVE_CONFLICT with CONFLICTING when supplied sources materially disagree. Do not infer or rewrite legal classifications, questionnaire determinations, lifecycle authority, or risk conclusions.
+
+Every result other than NOT_FOUND must cite at least one supplied source-unit ID and one exact short quote copied from that unit. Return field values as concise display text. The Engine will validate citations and will not apply any returned value automatically.
 
 TARGET_FIELDS
 ${stableStringify(targetFields)}
@@ -92,13 +94,13 @@ ${renderUnits(packets)}
 END_SOURCE_PACKET`;
 }
 
-export function domainPrompt({ domain, dossier, solutionModel, packets, controls, requirements, antiPatterns }) {
+export function domainPrompt({ domain, dossier, solutionModel, packets, controls, requirements, antiPatterns, assessmentWorkItems = [] }) {
   return `${TRUST_PREAMBLE}
 
 Task: assess governance domain ${domain}: ${DOMAINS[domain]}.
-Generate candidate claims, not conclusions. Control support and anti-pattern assessment are separate streams.
+Assess only the listed ASSESSMENT_WORK_ITEMS in this bounded batch. Generate candidate claims, not conclusions. Control support and anti-pattern assessment are separate streams. Every listed work item has been searched in the supplied packet scope. If no relevant evidence is found, return no claim for that work item; the Engine will record an explicit assessed-but-unknown result. Never treat missing evidence as support.
 Every factual claim needs at least one exact source-unit ID and an exact, short verbatim quote copied from that source unit. Map claims to exact finding-definition and atomic assessment-object IDs when those IDs exist in the supplied Knowledge Base objects. When a finding-definition ID is mapped, return proposedFindingState using one of that definition's eligible_states. Missing evidence is UNKNOWN. A test source supports TESTED only when it contains successful execution results and adequate scope; test code alone can support at most IMPLEMENTED. Code or configuration can support at most IMPLEMENTED. Human validation requires an attributable human review record and does not equal formal approval. Use ABSENCE_TEST only when the evidence records test scope, method, execution date, system version, successful result and limitations.
-Evaluate contextual relevance before creating a claim. Documentation describing a desired control, a knowledge-base rule, a test fixture, an example, or an unrelated domain implementation is not evidence that the assessed solution implements that control. Generic keyword overlap is never sufficient. Use CONTROL_SUPPORT only when the cited artifact performs or records the precise assessed control for this solution.
+Evaluate contextual relevance before creating a claim. Documentation describing a desired control, a knowledge-base rule, a test fixture, an example, or an unrelated domain implementation is not evidence that the assessed solution implements that control. Generic keyword overlap is never sufficient. Use CONTROL_SUPPORT only when the cited artifact performs or records the precise assessed control for this solution. For every returned claim, provide every schema field: use empty arrays for no mappings and null for proposedFindingState or absenceTest when not applicable. Never invent an absence test.
 For gaps or evidence requests, cite the source unit that demonstrates the limitation or contradiction; if no source shows it, cite the dossier-derived source IDs already present in the solution model and state the limitation explicitly.
 
 DOMAIN_CONTROLS
@@ -107,6 +109,8 @@ DOMAIN_REQUIREMENTS
 ${stableStringify(requirements)}
 DOMAIN_ANTIPATTERNS
 ${stableStringify(antiPatterns)}
+ASSESSMENT_WORK_ITEMS
+${stableStringify(assessmentWorkItems)}
 SOLUTION_MODEL
 ${stableStringify(solutionModel)}
 DOSSIER
@@ -120,7 +124,7 @@ END_SOURCE_PACKET`;
 export function verificationPrompt(claim, sourceUnits) {
   return `${TRUST_PREAMBLE}
 
-Task: independently verify one candidate governance claim. Check whether the cited source locations and exact quotes support the precise statement, whether the claim scope or evidence strength is overstated, whether the control/requirement/anti-pattern/finding mappings are appropriate, and whether any supplied unit conflicts. Return the strongest accepted assurance state and explicit quote, scope and mapping statuses when possible. Classify as SUPPORTED, PARTIAL, UNSUPPORTED, CONFLICTING, or NOT_VERIFIABLE. Do not decide readiness.
+Task: independently verify one candidate governance claim. Check whether the cited source locations and exact quotes support the precise statement, whether the claim scope or evidence strength is overstated, whether the control/requirement/anti-pattern/finding mappings are appropriate, and whether any supplied unit conflicts. Return the strongest accepted assurance state and explicit quote, scope and mapping statuses. Classify as SUPPORTED, PARTIAL, UNSUPPORTED, CONFLICTING, or NOT_VERIFIABLE. Always provide acceptedAssuranceState; use UNKNOWN when no state is justified. Always provide mappingStatus, scopeStatus, and quoteStatus; use NOT_CHECKED only when the supplied evidence prevents that check. Do not decide readiness.
 
 CANDIDATE_CLAIM
 ${stableStringify(claim)}
@@ -177,7 +181,7 @@ export function synthesisPrompt({ solutionModel, lockedFindings, deterministic, 
   };
   return `${TRUST_PREAMBLE}
 
-Task: write concise, decision-ready narrative items using only the locked data below. Every item must use a unique draft ID and cite the existing finding, gate, control, evidence and action IDs that support its exact text. Use sections EXECUTIVE_DECISION, DOMAIN_NARRATIVE, CONFIRMED_STRENGTH, BLOCKING_FINDING, CONDITION, HUMAN_QUESTION or LIMITATION. DOMAIN_NARRATIVE items require a domain; HUMAN_QUESTION items require an authority. Do not introduce new facts. Do not say compliant, approved, certified, safe or authorized. Do not define, rewrite, relax or contradict the deterministic transition boundary, recommendation, dimensions, gates or human authority.
+Task: write concise, decision-ready narrative items using only the locked data below. Every item must use a unique draft ID and cite the existing finding, gate, control, evidence and action IDs that support its exact text. Use sections EXECUTIVE_DECISION, DOMAIN_NARRATIVE, CONFIRMED_STRENGTH, BLOCKING_FINDING, CONDITION, HUMAN_QUESTION or LIMITATION. DOMAIN_NARRATIVE items require a domain; HUMAN_QUESTION items require an authority. Return every schema field for every item; use null for an inapplicable domain or authority and empty arrays for no actions or references. Do not introduce new facts. Do not say compliant, approved, certified, safe or authorized. Do not define, rewrite, relax or contradict the deterministic transition boundary, recommendation, dimensions, gates or human authority.
 
 LOCKED_DECISION_DATA
 ${stableStringify(allowed)}
@@ -187,7 +191,7 @@ END_LOCKED_DECISION_DATA`;
 export function factCheckPrompt(synthesis, lockedFindings, deterministic) {
   return `${TRUST_PREAMBLE}
 
-Task: fact-check every synthesis item and action explanation against the locked findings and deterministic decision. Return exactly one item result for each supplied non-deterministic item ID, with no duplicates or additional IDs. Classify failures as NARRATIVE_WORDING_ERROR, REFERENCE_OR_GROUNDING_ERROR, DETERMINISTIC_INCONSISTENCY, TACTIC_GROUNDING_ERROR, or AUTHORITY_OVERREACH. Include affected finding and action IDs. Mark unsupported or partially supported text and provide correctedText only as a repair candidate; it will not be published until a second independent check. Use an empty correctedText when correction is impossible. You cannot change the transition boundary, gates, readiness, evidence states or human authority requirements.
+Task: fact-check every synthesis item and action explanation against the locked findings and deterministic decision. Return exactly one item result for each supplied non-deterministic item ID, with no duplicates or additional IDs. Classify failures as NARRATIVE_WORDING_ERROR, REFERENCE_OR_GROUNDING_ERROR, DETERMINISTIC_INCONSISTENCY, TACTIC_GROUNDING_ERROR, or AUTHORITY_OVERREACH. Include affected finding and action IDs. Return every schema field for every item: use null for issueType when the item is supported and empty arrays when no findings or actions are affected. Mark unsupported or partially supported text and provide correctedText only as a repair candidate; it will not be published until a second independent check. Use an empty correctedText when correction is impossible. You cannot change the transition boundary, gates, readiness, evidence states or human authority requirements.
 
 SYNTHESIS
 ${stableStringify(synthesis)}

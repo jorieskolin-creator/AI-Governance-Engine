@@ -34,11 +34,11 @@ test("compatibility mode maps legacy lifecycle labels with visible warnings", as
   assert.equal(result.issues.filter((item) => item.code === "LEGACY_LIFECYCLE_MAPPED").length, 4);
 });
 
-test("compiler writes only the five runtime collections plus its report", async () => {
+test("compiler writes the governance collections and versioned intake questionnaire", async () => {
   const validation = validateAuthoringWorkspace(await loadAuthoringWorkspace(example));
   const output = await mkdtemp(path.join(tmpdir(), "kb-runtime-"));
   const report = await compileRuntimeCollections(validation, output, { version: "test-1", releaseStatus: "APPROVED" });
-  assert.deepEqual(Object.keys(report.files), ["normativeSources", "requirements", "controls", "antipatterns", "tactics"]);
+  assert.deepEqual(Object.keys(report.files), ["normativeSources", "requirements", "controls", "antipatterns", "tactics", "intakeQuestionnaire"]);
   const controls = JSON.parse(await readFile(path.join(output, "controls.json"), "utf8")).entries;
   assert.equal(controls[0].targetStateByLifecycle.DEPLOYMENT, "HUMAN_VALIDATED");
   assert.equal(controls[0].targetStateByLifecycle.OPERATION_AND_MONITORING, "OPERATIONALLY_OBSERVED");
@@ -50,9 +50,10 @@ test("manifest is generated last from exact compiled hashes and immutable URLs",
   const validation = validateAuthoringWorkspace(await loadAuthoringWorkspace(example));
   const output = await mkdtemp(path.join(tmpdir(), "kb-manifest-"));
   await compileRuntimeCollections(validation, output, { version: "test-1", releaseStatus: "APPROVED" });
-  const urls = Object.fromEntries(["normativeSources", "requirements", "controls", "antipatterns", "tactics"].map((type) => [type, `https://blob.vendor.invalid/release/${type}.json`]));
+  const urls = Object.fromEntries(["normativeSources", "requirements", "controls", "antipatterns", "tactics", "intakeQuestionnaire"].map((type) => [type, `https://blob.vendor.invalid/release/${type}.json`]));
   const manifest = await createRuntimeManifest(output, urls, { version: "test-1", releaseStatus: "APPROVED" });
-  assert.equal(manifest.documents.length, 5);
+  assert.equal(manifest.schemaVersion, "1.1.0");
+  assert.equal(manifest.documents.length, 6);
   assert.match(manifest.documents[0].sha256, /^[a-f0-9]{64}$/);
   await assert.rejects(() => createRuntimeManifest(output, { ...urls, controls: "https://example.com/controls.json" }), /immutable HTTPS URL/);
   await writeFile(path.join(output, "controls.json"), "changed", "utf8");

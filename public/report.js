@@ -1,8 +1,10 @@
-export const REPORT_VERSION = "assurance-report-1.4.0";
+import { sanitizeRestrictedText, sanitizeRestrictedValue } from "./content-policy.js";
+
+export const REPORT_VERSION = "assurance-report-1.5.0";
 
 const array = (value) => Array.isArray(value) ? value : [];
 const label = (value) => String(value ?? "").replaceAll("_", " ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
-const escapeHtml = (value) => String(value ?? "")
+const escapeHtml = (value) => sanitizeRestrictedText(String(value ?? ""))
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 
@@ -78,14 +80,14 @@ function decisionMarkup(pkg, summary) {
 
 function caseProfileMarkup(summary) {
   const profile = summary.caseProfile ?? {};
-  return section("02", "Case identification", "Case Profile and Assessment Scope", `<div class="case-grid">${caseGroup("Identity and intent", profile.identityAndIntent)}${caseGroup("Assessment scope", profile.assessmentScope)}${caseGroup("Declared operating boundary", profile.operatingBoundary)}${caseGroup("Risk-relevant declarations", profile.riskDeclarations)}</div>`);
+  return section("02", "Case identification", "Case Profile and Assessment Scope", `<div class="case-grid">${caseGroup("Identity and intent", profile.identityAndIntent)}${caseGroup("Assessment scope", profile.assessmentScope)}${caseGroup("Declared operating boundary", profile.operatingBoundary)}${caseGroup("Risk-relevant declarations", profile.riskDeclarations)}${caseGroup("Applicability and classification screening", profile.classificationScreening)}</div>`);
 }
 
 function documentationMarkup(summary) {
   const doc = summary.documentationAlignment ?? {};
   const unknown = array(doc.unknownFields);
   const conflicts = array(doc.contradictions).map((item) => item.statement);
-  const declaredOnly = array(doc.userDeclaredOnlyFields);
+  const declaredOnly = array(doc.selfDeclaredIntakeFields ?? doc.selfDeclaredOnlyFields ?? doc.userDeclaredOnlyFields);
   const metrics = [
     ["Overall status", label(doc.status ?? "UNKNOWN")],
     ["Deployment-profile completeness", `${doc.satisfiedFieldCount ?? doc.documentedAndConfirmedCount ?? 0} / ${doc.mandatoryFieldCount ?? 0}`],
@@ -94,7 +96,7 @@ function documentationMarkup(summary) {
     ["Source coverage", label(doc.sourceCoverageStatus ?? "SUBMITTED_SCOPE_ONLY")]
   ];
   const issues = [
-    ["Unknown fields", unknown], ["User-declared only", declaredOnly], ["Contradictions", conflicts]
+    ["Unknown fields", unknown], ["Self-Declared only", declaredOnly], ["Contradictions", conflicts]
   ];
   return section("03", "Documentation gate", "Documentation Alignment", `<div class="documentation-summary">${metrics.map(([name, value]) => `<div><span>${escapeHtml(name)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div><div class="documentation-issues">${issues.map(([name, values]) => `<article><h3>${escapeHtml(name)}</h3><p>${values.length ? escapeHtml(values.map(label).join(", ")) : "None recorded"}</p></article>`).join("")}</div>${doc.sandboxRequired ? `<p class="boundary-warning"><strong>Effective boundary:</strong> Isolated Sandbox until the critical documentation conditions are resolved.</p>` : ""}`);
 }
@@ -151,6 +153,7 @@ function reportBodyMarkup(pkg) {
 }
 
 export function renderAssuranceSummary(root, pkg) {
+  pkg = sanitizeRestrictedValue(pkg);
   root.replaceChildren();
   if (!pkg.assuranceSummary) {
     const message = document.createElement("p");
@@ -167,6 +170,7 @@ const staticCss = `
 `;
 
 export function standaloneReportHtml(pkg) {
+  pkg = sanitizeRestrictedValue(pkg);
   const body = reportBodyMarkup(pkg);
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(solutionName(pkg))} — Assurance Summary</title><style>${staticCss}</style></head><body>${body}</body></html>`;
 }

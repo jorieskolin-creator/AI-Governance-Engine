@@ -39,6 +39,16 @@ export function evaluateKnowledgeSnapshot(snapshot) {
   const unmappedTactics = (snapshot.tactics ?? []).filter((item) => !Array.isArray(item.findingSignals) || !item.findingSignals.some((signal) => knownSignals.has(signal))).map((item) => item.id);
   if (unmappedTactics.length) add("WARNING", "TACTIC_WITHOUT_KNOWN_FINDING_SIGNAL", "Tactics have no exact finding signal in the active controls or anti-patterns.", unmappedTactics);
   if (snapshot.releaseStatus !== "APPROVED") add("WARNING", "KNOWLEDGE_NOT_APPROVED", `Knowledge release status is ${snapshot.releaseStatus ?? "UNSPECIFIED"}; it is not an approved production mapping.`);
+  const questionnaire = snapshot.intakeQuestionnaire;
+  if (!questionnaire || !Array.isArray(questionnaire.questions) || !questionnaire.questions.length) add("ERROR", "INTAKE_QUESTIONNAIRE_MISSING", "The versioned assessment-intake questionnaire is missing.");
+  else {
+    const questionIds = questionnaire.questions.map((item) => item?.id).filter(Boolean);
+    if (questionIds.length !== new Set(questionIds).size) add("ERROR", "DUPLICATE_INTAKE_QUESTION_ID", "Assessment-intake question IDs must be unique.", questionIds.filter((id, index) => questionIds.indexOf(id) !== index));
+    const sourceIds = new Set(snapshot.normativeSources?.map((item) => item.id) ?? []);
+    const broken = questionnaire.questions.filter((item) => (item.sourceMappings ?? []).some((mapping) => !sourceIds.has(mapping.sourceId))).map((item) => item.id);
+    if (broken.length && snapshot.intakeQuestionnaireSource === "MANIFEST") add("ERROR", "BROKEN_INTAKE_SOURCE_REFERENCE", "Assessment-intake questions reference missing normative sources.", broken);
+    if (snapshot.intakeQuestionnaireSource === "BUNDLED_FALLBACK" && snapshot.source !== "LOCAL_BOOTSTRAP") add("WARNING", "INTAKE_QUESTIONNAIRE_NOT_MANIFEST_PINNED", "The remote manifest does not pin the assessment-intake questionnaire; bundled fallback content is active.");
+  }
 
   const errorCount = issues.filter((item) => item.severity === "ERROR").length;
   const warningCount = issues.filter((item) => item.severity === "WARNING").length;

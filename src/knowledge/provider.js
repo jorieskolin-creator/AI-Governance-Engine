@@ -5,8 +5,9 @@ import { CONTROLS } from "./controls.js";
 import { ANTIPATTERNS } from "./antipatterns.js";
 import { TACTICS } from "./playbook.js";
 import { evaluateKnowledgeSnapshot } from "./diagnostics.js";
+import { INTAKE_QUESTIONNAIRE } from "./intake-questionnaire.js";
 
-const DOCUMENT_TYPES = new Set(["normativeSources", "requirements", "controls", "antipatterns", "tactics"]);
+const DOCUMENT_TYPES = new Set(["normativeSources", "requirements", "controls", "antipatterns", "tactics", "intakeQuestionnaire"]);
 const RELEASE_STATUSES = new Set(["APPROVED", "CALIBRATION_TEST_ONLY", "PILOT", "DRAFT", "UNSPECIFIED"]);
 
 function localSnapshot() {
@@ -19,7 +20,8 @@ function localSnapshot() {
     requirements: [...REQUIREMENTS],
     controls: [...CONTROLS],
     antipatterns: [...ANTIPATTERNS],
-    tactics: [...TACTICS]
+    tactics: [...TACTICS],
+    intakeQuestionnaire: structuredClone(INTAKE_QUESTIONNAIRE)
   };
   const complete = { ...snapshot, manifestHash: sha256(snapshot), documentChecks: [] };
   return { ...complete, diagnostics: evaluateKnowledgeSnapshot(complete) };
@@ -43,7 +45,7 @@ function decodeJson(bytes, label) {
 }
 
 function validateManifest(manifest) {
-  if (!manifest || manifest.schemaVersion !== "1.0.0" || typeof manifest.version !== "string") {
+  if (!manifest || !["1.0.0", "1.1.0"].includes(manifest.schemaVersion) || typeof manifest.version !== "string") {
     throw new Error("Unsupported Vercel knowledge manifest");
   }
   if (!Array.isArray(manifest.documents) || manifest.documents.length === 0) {
@@ -69,7 +71,7 @@ export async function loadKnowledgeSnapshot(options = {}) {
   const manifestBytes = await fetchBytes(manifestUrl, token);
   const manifest = decodeJson(manifestBytes, manifestUrl);
   validateManifest(manifest);
-  const loaded = { normativeSources: [], requirements: [], controls: [], antipatterns: [], tactics: [] };
+  const loaded = { normativeSources: [], requirements: [], controls: [], antipatterns: [], tactics: [], intakeQuestionnaire: [] };
   const documentChecks = [];
 
   for (const item of manifest.documents) {
@@ -84,8 +86,11 @@ export async function loadKnowledgeSnapshot(options = {}) {
   }
 
   for (const [key, entries] of Object.entries(loaded)) {
-    if (entries.length === 0) throw new Error(`Knowledge snapshot is missing ${key}`);
+    if (key !== "intakeQuestionnaire" && entries.length === 0) throw new Error(`Knowledge snapshot is missing ${key}`);
   }
+  const questionnaireEntries = loaded.intakeQuestionnaire;
+  loaded.intakeQuestionnaire = questionnaireEntries[0] ?? structuredClone(INTAKE_QUESTIONNAIRE);
+  const intakeQuestionnaireSource = questionnaireEntries.length ? "MANIFEST" : "BUNDLED_FALLBACK";
   const snapshot = {
     version: manifest.version,
     source: "VERCEL_BLOB",
@@ -93,6 +98,7 @@ export async function loadKnowledgeSnapshot(options = {}) {
     manifestUrl,
     manifestHash: sha256(manifestBytes),
     documentChecks,
+    intakeQuestionnaireSource,
     ...loaded
   };
   const diagnostics = evaluateKnowledgeSnapshot(snapshot);
@@ -123,7 +129,8 @@ export function knowledgeManifestView(snapshot) {
       requirements: snapshot.requirements.length,
       controls: snapshot.controls.length,
       antipatterns: snapshot.antipatterns.length,
-      tactics: snapshot.tactics.length
+      tactics: snapshot.tactics.length,
+      intakeQuestions: snapshot.intakeQuestionnaire?.questions?.length ?? 0
     }
   };
 }

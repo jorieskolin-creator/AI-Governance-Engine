@@ -1,3 +1,5 @@
+import { sanitizeRestrictedText, sanitizeRestrictedValue } from "../public/content-policy.js";
+
 export const DOMAINS = Object.freeze({
   A: "Purpose, context, value, roles and AI classification",
   B: "Data, privacy, confidentiality and intellectual property",
@@ -101,6 +103,10 @@ export const DATA_CATEGORIES = Object.freeze([
   "CONFIDENTIAL_OR_PROPRIETARY"
 ]);
 
+export const INTAKE_ANSWER_STATES = Object.freeze(["YES", "NO", "UNKNOWN", "NOT_APPLICABLE", "HUMAN_REVIEW_REQUIRED"]);
+export const INTAKE_FACT_ORIGINS = Object.freeze(["OBSERVED", "AI_CANDIDATE", "SELF_DECLARED", "USER_DECLARED", "HUMAN_CLASSIFIED"]);
+export const INTAKE_SUPPORT_STATUSES = Object.freeze(["SUPPORTED", "PARTIAL", "UNSUPPORTED", "CONFLICTING", "NOT_CHECKED"]);
+
 export const STATE_WEIGHT = Object.freeze({
   UNKNOWN: 0,
   DECLARED: 0.15,
@@ -128,12 +134,37 @@ function booleanValue(value, field) {
 
 function optionalString(value, field) {
   invariant(value === undefined || value === null || typeof value === "string", `${field} must be a string`);
-  return typeof value === "string" ? value.trim() : "";
+  return typeof value === "string" ? sanitizeRestrictedText(value.trim()) : "";
 }
 
 function optionalStringArray(value, field) {
   invariant(value === undefined || (Array.isArray(value) && value.every((item) => typeof item === "string")), `${field} must be an array of strings`);
-  return [...new Set((value ?? []).map((item) => item.trim()).filter(Boolean))];
+  return [...new Set((value ?? []).map((item) => sanitizeRestrictedText(item.trim())).filter(Boolean))];
+}
+
+function validateIntakeAnswers(value) {
+  invariant(value === undefined || (value && typeof value === "object" && !Array.isArray(value)), "dossier.intakeAnswers must be an object");
+  const entries = {};
+  for (const [questionId, answer] of Object.entries(value ?? {})) {
+    invariant(/^[A-Z0-9][A-Z0-9_-]{2,80}$/.test(questionId), `Invalid intake question ID: ${questionId}`);
+    invariant(answer && typeof answer === "object" && !Array.isArray(answer), `dossier.intakeAnswers.${questionId} must be an object`);
+    const answerState = answer.answerState ?? "UNKNOWN";
+    enumValue(answerState, INTAKE_ANSWER_STATES, `dossier.intakeAnswers.${questionId}.answerState`);
+    const values = optionalStringArray(answer.values, `dossier.intakeAnswers.${questionId}.values`);
+    const origin = answer.origin === "USER_DECLARED" ? "SELF_DECLARED" : answer.origin;
+    entries[questionId] = {
+      answerState,
+      values,
+      origin: INTAKE_FACT_ORIGINS.includes(origin) ? origin : "SELF_DECLARED",
+      supportStatus: INTAKE_SUPPORT_STATUSES.includes(answer.supportStatus) ? answer.supportStatus : "NOT_CHECKED",
+      sourceUnitIds: optionalStringArray(answer.sourceUnitIds, `dossier.intakeAnswers.${questionId}.sourceUnitIds`),
+      evidenceLinks: Array.isArray(answer.evidenceLinks) ? sanitizeRestrictedValue(structuredClone(answer.evidenceLinks)) : [],
+      limitations: optionalStringArray(answer.limitations, `dossier.intakeAnswers.${questionId}.limitations`),
+      confirmedBy: optionalString(answer.confirmedBy, `dossier.intakeAnswers.${questionId}.confirmedBy`) || null,
+      confirmedAt: optionalString(answer.confirmedAt, `dossier.intakeAnswers.${questionId}.confirmedAt`) || null
+    };
+  }
+  return entries;
 }
 
 export function validateDossier(input) {
@@ -141,11 +172,13 @@ export function validateDossier(input) {
   for (const field of ["name", "intendedPurpose", "expectedValue", "accountableOwner"]) {
     invariant(input[field] === undefined || typeof input[field] === "string", `dossier.${field} must be a string`);
   }
-  const currentStage = input.currentStage ?? "QUALIFICATION_AND_REGISTRATION";
-  const targetStage = input.targetStage ?? "DESIGN_AND_DEVELOPMENT";
-  enumValue(currentStage, LIFECYCLE_STAGES, "dossier.currentStage");
-  enumValue(targetStage, LIFECYCLE_STAGES, "dossier.targetStage");
-  invariant(LIFECYCLE_STAGES.indexOf(targetStage) >= LIFECYCLE_STAGES.indexOf(currentStage), "targetStage cannot precede currentStage");
+  const declaredCurrentStage = input.currentStage ?? "UNKNOWN";
+  const declaredTargetStage = input.targetStage ?? "UNKNOWN";
+  invariant(declaredCurrentStage === "UNKNOWN" || LIFECYCLE_STAGES.includes(declaredCurrentStage), "dossier.currentStage is invalid");
+  invariant(declaredTargetStage === "UNKNOWN" || LIFECYCLE_STAGES.includes(declaredTargetStage), "dossier.targetStage is invalid");
+  const currentStage = declaredCurrentStage === "UNKNOWN" ? "QUALIFICATION_AND_REGISTRATION" : declaredCurrentStage;
+  const targetStage = declaredTargetStage === "UNKNOWN" ? "DESIGN_AND_DEVELOPMENT" : declaredTargetStage;
+  if (declaredCurrentStage !== "UNKNOWN" && declaredTargetStage !== "UNKNOWN") invariant(LIFECYCLE_STAGES.indexOf(targetStage) >= LIFECYCLE_STAGES.indexOf(currentStage), "targetStage cannot precede currentStage");
   invariant(input.jurisdictions === undefined || Array.isArray(input.jurisdictions), "dossier.jurisdictions must be an array");
   invariant(input.roles === undefined || Array.isArray(input.roles), "dossier.roles must be an array");
   invariant(input.users === undefined || Array.isArray(input.users), "dossier.users must be an array");
@@ -173,6 +206,12 @@ export function validateDossier(input) {
   const categorizedPersonal = dataCategories.includes("PERSONAL_DATA") || dataCategories.includes("SPECIAL_CATEGORY_DATA") || dataCategories.includes("PSEUDONYMIZED");
   const categorizedProduction = dataCategories.includes("CLEANED_APPROVED_PRODUCTION") || dataCategories.includes("RAW_PRODUCTION");
   const categorizedExternal = !["UNKNOWN", "INTERNAL_ONLY"].includes(intendedUserAccess);
+  const intakeAnswers = validateIntakeAnswers(input.intakeAnswers);
+  const regulatoryRoleValues = intakeAnswers.REGULATORY_ROLES?.values?.filter((item) => !["UNKNOWN", "NONE_OF_THE_ABOVE", "OTHER"].includes(item)) ?? [];
+  const prohibitedAnswer = intakeAnswers.PROHIBITED_PRACTICE_CATEGORIES;
+  const highRiskAnswers = [intakeAnswers.ANNEX_III_USE_AREAS, intakeAnswers.PRODUCT_SAFETY_COMPONENT, intakeAnswers.ANNEX_I_PRODUCT, intakeAnswers.THIRD_PARTY_CONFORMITY];
+  const derivedProhibited = prohibitedAnswer?.answerState === "YES" ? true : prohibitedAnswer?.answerState === "NO" ? false : null;
+  const derivedHighRisk = highRiskAnswers.some((answer) => answer?.answerState === "YES") ? true : highRiskAnswers.every((answer) => answer?.answerState === "NO" || answer?.answerState === "NOT_APPLICABLE") ? false : null;
 
   return {
     ...structuredClone(input),
@@ -182,8 +221,9 @@ export function validateDossier(input) {
     accountableOwner: optionalString(input.accountableOwner, "dossier.accountableOwner"),
     currentStage,
     targetStage,
+    lifecycleDeclaration: { currentStage: declaredCurrentStage, targetStage: declaredTargetStage, provisional: declaredCurrentStage === "UNKNOWN" || declaredTargetStage === "UNKNOWN" },
     jurisdictions: optionalStringArray(input.jurisdictions, "dossier.jurisdictions"),
-    roles: optionalStringArray(input.roles, "dossier.roles"),
+    roles: optionalStringArray(input.roles, "dossier.roles").length ? optionalStringArray(input.roles, "dossier.roles") : regulatoryRoleValues,
     users: optionalStringArray(input.users, "dossier.users"),
     data: {
       categories: dataCategories,
@@ -199,7 +239,11 @@ export function validateDossier(input) {
       consequentialDecisions: input.exposure?.consequentialDecisions ?? null
     },
     agent: Object.fromEntries(["usesAgents", "canTakeActions", "irreversibleActions", "humanOverride"].map((field) => [field, input.agent?.[field] ?? null])),
-    classification: Object.fromEntries(["prohibitedPractice", "highRiskCandidate"].map((field) => [field, input.classification?.[field] ?? null])),
+    classification: {
+      prohibitedPractice: input.classification?.prohibitedPractice ?? derivedProhibited,
+      highRiskCandidate: input.classification?.highRiskCandidate ?? derivedHighRisk
+    },
+    intakeAnswers,
     operatingBoundary: {
       allowedUses: optionalStringArray(rawBoundary.allowedUses, "dossier.operatingBoundary.allowedUses"),
       excludedUses: optionalStringArray(rawBoundary.excludedUses, "dossier.operatingBoundary.excludedUses"),

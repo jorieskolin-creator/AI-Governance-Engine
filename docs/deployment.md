@@ -4,7 +4,7 @@
 
 1. Connect `jorieskolin-creator/AI-Governance-Engine` to a Railway service.
 2. Set the root directory to the repository root and use the checked-in `railway.json`.
-3. Configure `NODE_ENV=production`.
+3. Keep the checked-in Railway start command, which enforces `NODE_ENV=production`; an external variable may repeat this value but must not override it.
 4. Configure `VERCEL_KB_MANIFEST_URL` to the immutable, approved Vercel knowledge manifest.
 5. Configure `BLOB_READ_WRITE_TOKEN` only if the Blob objects require bearer authentication.
 6. Run the manual `verify-knowledge-manifest` workflow against the same URL, or execute `pnpm run kb:verify-runtime` in an authorized environment.

@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 const app = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 const index = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
 const server = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+const railway = JSON.parse(await readFile(new URL("../railway.json", import.meta.url), "utf8"));
 
 test("the browser assessment workflow starts and waits for the cognitive run", () => {
   assert.match(app, /\/api\/v2\/runs\/preflight/);
@@ -51,6 +52,10 @@ test("the service exposes an always-on cognitive contract without client credent
   assert.match(server, /url\.pathname === "\/api\/assess"[\s\S]*?sendJson\(response, 410/);
   assert.doesNotMatch(server, /COGNITIVE_PIPELINE_ENABLED/);
   assert.doesNotMatch(server, /COGNITIVE_API_TOKEN/);
+});
+
+test("the Railway deployment always enforces production policy", () => {
+  assert.match(railway.deploy.startCommand, /(?:^|\s)NODE_ENV=production(?:\s|$)/);
 });
 
 test("asynchronous provider failures expose a stable limitation instead of provider detail", () => {

@@ -5,7 +5,7 @@
     "buildCommand": "pnpm run check"
   },
   "deploy": {
-    "startCommand": "pnpm start",
+    "startCommand": "NODE_ENV=production pnpm start",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",

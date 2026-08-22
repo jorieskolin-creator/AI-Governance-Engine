@@ -1,6 +1,7 @@
 import { LIFECYCLE_STAGES } from "../contracts.js";
 import { sha256, stableId } from "./hash.js";
 import { activeIntakeQuestionIds, INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
+import { classifyIntakeSearchEvidence, INTAKE_SEARCH_REGISTRY, intakeSearchField } from "../intake/search-registry.js";
 
 export const SOLUTION_FACT_CLASSES = Object.freeze(["OBSERVED", "INFERRED", "SELF_DECLARED"]);
 export const SOLUTION_FACT_STATUSES = Object.freeze(["CANDIDATE", "CONFIRMED", "CONFLICTING", "UNKNOWN"]);
@@ -76,37 +77,31 @@ function fact(field, value, options = {}) {
 }
 
 function sourceText(sources) {
-  return sources.map((source) => ({
-    id: source.id ?? source.sourceUnitId ?? stableId("source-unit", { path: source.path, content: source.content }),
-    path: source.path,
-    artifactClass: source.artifactClass ?? artifactClass(source.path, source.metadata),
-    content: String(source.content ?? "")
-  }));
+  return sources.map((source, index) => {
+    const item = {
+      id: source.id ?? source.sourceUnitId ?? stableId("source-unit", { path: source.path, content: source.content }),
+      sourceId: source.sourceId ?? null,
+      path: source.path,
+      artifactClass: source.artifactClass ?? artifactClass(source.path, source.metadata),
+      format: source.format ?? null,
+      evidenceKind: source.evidenceKind ?? null,
+      evidenceClass: source.evidenceClass ?? null,
+      locator: source.locator ?? null,
+      content: String(source.content ?? ""),
+      index
+    };
+    return { ...item, searchEvidenceType: classifyIntakeSearchEvidence(item) };
+  });
 }
 
 function explicitMatches(sources, value, field) {
   const needles = (Array.isArray(value) ? value : [value]).map(normalize).filter(Boolean);
-  const eligibleClasses = field === "name" ? ["DOCUMENTATION", "CONFIGURATION"] : ["DOCUMENTATION"];
-  const eligible = sources.filter((source) => eligibleClasses.includes(source.artifactClass));
   if (!needles.length) return [];
-  const aliases = {
-    name: ["solution name", "system name", "product name", "package name"], accountableOwner: ["accountable owner", "system owner", "solution owner", "product owner"],
-    intendedPurpose: ["intended purpose", "purpose", "mission"], expectedValue: ["expected value", "business value", "expected outcome", "value hypothesis"],
-    jurisdictions: ["jurisdictions?", "deployment countries", "operating countries"], roles: ["regulatory roles?", "ai act roles?", "roles"], users: ["users", "affected groups", "user groups"],
-    "data.categories": ["data categories", "approved data classes"], "exposure.currentUserAccess": ["current user access"], "exposure.intendedUserAccess": ["intended user access"]
-  };
-  const fieldAliases = aliases[field] ?? [field.split(".").at(-1).replace(/([a-z])([A-Z])/g, "$1 $2")];
-  const labelPattern = `(?:${fieldAliases.join("|")})`;
-  if (needles.length === 1 && ["true", "false"].includes(needles[0])) {
-    const expected = needles[0] === "true" ? "(?:yes|true)" : "(?:no|false)";
-    const pattern = new RegExp(`${labelPattern}\\s*[:=\\-]\\s*${expected}\\b`, "i");
-    return eligible.filter((source) => pattern.test(source.content)).map((source) => source.id);
-  }
-  return eligible.filter((source) => source.content.split(/\r?\n/).some((line) => new RegExp(`${labelPattern}\\s*[:=\\-]`, "i").test(line) && needles.every((needle) => normalize(line).includes(needle)))).map((source) => source.id);
+  return unique(searchEntries(sources, field).filter((entry) => needles.every((needle) => normalize(entry.text).includes(needle))).map((entry) => entry.sourceUnitId));
 }
 
-function labelledValue(sources, labels) {
-  const entry = labelledEntry(sources, labels);
+function labelledValue(sources, field) {
+  const entry = labelledEntry(sources, field);
   if (!entry) return null;
   if (entry.conflict) return { value: null, sourceUnitIds: entry.sourceUnitIds, candidates: entry.candidates, conflict: true };
   const candidate = entry.text;
@@ -118,15 +113,90 @@ function labelledValue(sources, labels) {
 const escaped = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const words = (value) => String(value).replaceAll("_", " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\s+/g, " ").trim();
 
-function labelledEntry(sources, labels) {
-  const pattern = new RegExp(`^\\s*(?:[-*]\\s*)?(?:${labels.map(escaped).join("|")})\\s*\\??\\s*[:=\\-]\\s*(.+?)\\s*$`, "i");
+function searchEntries(sources, fieldId) {
+  const rule = intakeSearchField(fieldId);
+  if (!rule) return [];
+  const strategies = new Set(rule.extractionStrategies);
+  const eligible = sources.filter((source) => rule.evidenceTypes.includes(source.searchEvidenceType))
+    .sort((a, b) => rule.sourcePriorities.indexOf(a.searchEvidenceType) - rule.sourcePriorities.indexOf(b.searchEvidenceType) || a.index - b.index);
   const entries = [];
-  for (const source of sources.filter((item) => item.artifactClass === "DOCUMENTATION")) {
-    for (const line of source.content.split(/\r?\n/)) {
-      const match = line.match(pattern);
-      if (match?.[1]?.trim()) entries.push({ text: match[1].trim(), sourceUnitId: source.id });
+  const seen = new Set();
+  const add = (text, source) => {
+    const value = Array.isArray(text) ? text.join(", ") : typeof text === "boolean" ? String(text) : String(text ?? "").trim();
+    if (!value || value.length > 10_000) return;
+    const key = `${source.id}:${normalize(value)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    entries.push({ text: value, sourceUnitId: source.id, sourcePriority: rule.sourcePriorities.indexOf(source.searchEvidenceType), sourceIndex: source.index });
+  };
+  const labelPattern = new RegExp(`^\\s*(?:[-*]\\s*)?(?:${rule.labels.map(escaped).join("|")})\\s*\\??\\s*[:=\\-]\\s*(.+?)\\s*$`, "i");
+  if (["LABELLED_VALUE", "LABELLED_ENUM", "LABELLED_BOOLEAN", "LABELLED_LIST", "LABELLED_QUESTION"].some((strategy) => strategies.has(strategy))) {
+    for (const source of eligible) {
+      for (const line of source.content.split(/\r?\n/)) {
+        const match = line.match(labelPattern);
+        if (match?.[1]?.trim()) add(match[1], source);
+      }
     }
   }
+  if (strategies.has("HEADING_VALUE")) {
+    const headingPattern = new RegExp(`^\\s*#{1,6}\\s+(?:${rule.headingAliases.map(escaped).join("|")})\\s*#*\\s*$`, "i");
+    for (const source of eligible) {
+      const lines = source.content.split(/\r?\n/);
+      for (let index = 0; index < lines.length; index += 1) {
+        if (!headingPattern.test(lines[index])) continue;
+        const value = lines.slice(index + 1).find((line) => line.trim());
+        if (value && !/^\s*#/.test(value)) add(value.replace(/^\s*[-*]\s*/, ""), source);
+      }
+      if (!/;heading:\d+:h[1-6](?:;lines:\d+-\d+)?$/.test(source.locator ?? "") || !rule.headingAliases.some((label) => normalize(label) === normalize(source.content))) continue;
+      const next = eligible.find((candidate) => candidate.index > source.index && (candidate.sourceId ? candidate.sourceId === source.sourceId : candidate.path === source.path));
+      if (next && !/;heading:\d+:h[1-6](?:;lines:\d+-\d+)?$/.test(next.locator ?? "")) add(next.content, next);
+    }
+  }
+  if (strategies.has("TABLE_KEY_VALUE")) {
+    const tableLabels = new Set(rule.tableLabels.map(normalize));
+    for (const source of eligible.filter((item) => /;table:\d+;row:\d+(?:;lines:\d+-\d+)?$/.test(item.locator ?? ""))) {
+      const cells = source.content.split("|").map((cell) => cell.trim()).filter(Boolean);
+      const index = cells.findIndex((cell) => tableLabels.has(normalize(cell)));
+      if (index >= 0 && cells[index + 1]) add(cells[index + 1], source);
+    }
+  }
+  if (strategies.has("STRUCTURED_PROPERTY") || strategies.has("MANIFEST_PROPERTY")) {
+    const keys = new Set([...rule.labels, fieldId.split(".").at(-1)].map((label) => normalize(words(label))));
+    for (const source of eligible) {
+      if (strategies.has("MANIFEST_PROPERTY") && source.searchEvidenceType === "PROJECT_MANIFEST" && fieldId === "name") {
+        try { add(JSON.parse(source.content).name, source); } catch {
+          const assignment = source.content.match(/^\s*name\s*=\s*["']([^"']+)["']\s*$/m);
+          const module = source.content.match(/^\s*module\s+([^\s]+)\s*$/m);
+          if (assignment?.[1]) add(assignment[1], source);
+          else if (module?.[1]) add(module[1], source);
+        }
+      }
+      if (!strategies.has("STRUCTURED_PROPERTY")) continue;
+      try {
+        const state = { nodes: 0 };
+        const visit = (value, depth = 0) => {
+          if (!value || typeof value !== "object") return;
+          if (depth > 25 || ++state.nodes > 20_000) throw new Error("Structured search limit exceeded");
+          for (const [key, child] of Object.entries(value)) {
+            if (keys.has(normalize(words(key))) && (typeof child === "string" || typeof child === "boolean" || Array.isArray(child) && child.every((item) => ["string", "boolean"].includes(typeof item)))) add(child, source);
+            if (child && typeof child === "object") visit(child, depth + 1);
+          }
+        };
+        visit(JSON.parse(source.content));
+      } catch { /* non-JSON and redaction-invalidated structures use other registered strategies */ }
+    }
+  }
+  if (strategies.has("README_TITLE")) {
+    for (const source of eligible.filter((item) => item.searchEvidenceType === "README")) {
+      const heading = source.content.match(/^\s*#\s+(.{2,140})$/m);
+      if (heading) add(heading[1].trim(), source);
+    }
+  }
+  return entries.sort((a, b) => a.sourcePriority - b.sourcePriority || a.sourceIndex - b.sourceIndex);
+}
+
+function labelledEntry(sources, field) {
+  const entries = searchEntries(sources, field);
   if (!entries.length) return null;
   const candidates = unique(entries.map((entry) => entry.text));
   const normalizedCandidates = unique(candidates.map(normalize));
@@ -135,8 +205,8 @@ function labelledEntry(sources, labels) {
     : { text: entries[0].text, conflict: false, candidates, sourceUnitIds: unique(entries.map((entry) => entry.sourceUnitId)) };
 }
 
-function detectedEnum(sources, labels, options) {
-  const entry = labelledEntry(sources, labels);
+function detectedEnum(sources, field, options) {
+  const entry = labelledEntry(sources, field);
   if (!entry) return null;
   if (entry.conflict) return { value: null, sourceUnitIds: entry.sourceUnitIds, candidates: entry.candidates, conflict: true };
   const normalized = words(entry.text).toLowerCase();
@@ -146,13 +216,12 @@ function detectedEnum(sources, labels, options) {
   return matches.length ? { value: matches[0][0], sourceUnitIds: entry.sourceUnitIds } : null;
 }
 
-function detectedBoolean(sources, labels) {
-  return detectedEnum(sources, labels, [[true, ["yes", "true"]], [false, ["no", "false"]]]);
+function detectedBoolean(sources, field) {
+  return detectedEnum(sources, field, [[true, ["yes", "true"]], [false, ["no", "false"]]]);
 }
 
 function detectedQuestionAnswer(sources, question) {
-  const fieldLabel = words(question.fieldId.split(".").at(-1));
-  const entry = labelledEntry(sources, [words(question.id), fieldLabel, question.prompt.replace(/\?$/, "")]);
+  const entry = labelledEntry(sources, `intakeAnswers.${question.id}`);
   if (!entry) return null;
   if (entry.conflict) return { answerState: "HUMAN_REVIEW_REQUIRED", values: [], sourceUnitIds: entry.sourceUnitIds, supportStatus: "CONFLICTING", candidates: entry.candidates };
   const normalized = words(entry.text).toLowerCase();
@@ -179,22 +248,7 @@ function detectedQuestionAnswer(sources, question) {
 }
 
 function detectedName(sources) {
-  const candidates = [];
-  for (const source of sources) {
-    if (/package\.json$/i.test(source.path)) {
-      try {
-        const parsed = JSON.parse(source.content);
-        if (typeof parsed.name === "string" && parsed.name.trim()) candidates.push({ value: parsed.name.trim(), sourceUnitId: source.id });
-      } catch { /* malformed configuration remains ordinary source evidence */ }
-    }
-  }
-  for (const source of sources.filter((item) => /readme|overview|product/i.test(item.path))) {
-    const heading = source.content.match(/^\s*#\s+(.{2,140})$/m);
-    if (heading) candidates.push({ value: heading[1].trim(), sourceUnitId: source.id });
-  }
-  const labelled = labelledValue(sources, ["solution name", "system name", "product name"]);
-  if (labelled?.conflict) return labelled;
-  if (labelled?.value) for (const sourceUnitId of labelled.sourceUnitIds) candidates.push({ value: labelled.value, sourceUnitId });
+  const candidates = searchEntries(sources, "name").map((entry) => ({ value: entry.text, sourceUnitId: entry.sourceUnitId }));
   if (!candidates.length) return null;
   const canonical = new Map();
   for (const candidate of candidates) canonical.set(normalizedFieldValue("name", candidate.value), [...(canonical.get(normalizedFieldValue("name", candidate.value)) ?? []), candidate]);
@@ -202,16 +256,17 @@ function detectedName(sources) {
   return { value: candidates[0].value, sourceUnitIds: unique(candidates.map((item) => item.sourceUnitId)), strength: "EXPLICIT" };
 }
 
-function detectedList(sources, labels, values) {
-  const found = [];
-  const ids = [];
-  const labelPattern = new RegExp(`^\\s*(?:[-*]\\s*)?(?:${labels.map(escaped).join("|")})\\s*\\??\\s*[:=\\-]`, "i");
-  const labelled = sources.filter((source) => source.artifactClass === "DOCUMENTATION")
-    .flatMap((source) => source.content.split(/\r?\n/).filter((line) => labelPattern.test(line)).map((line) => ({ source, line })));
-  for (const [canonical, pattern] of values) {
-    for (const item of labelled) if (pattern.test(item.line)) { found.push(canonical); ids.push(item.source.id); break; }
-  }
-  return { value: unique(found), sourceUnitIds: unique(ids) };
+function detectedList(sources, field, values) {
+  const entries = searchEntries(sources, field);
+  const candidates = entries.map((entry) => ({
+    text: entry.text,
+    value: unique(values.filter(([, pattern]) => pattern.test(entry.text)).map(([canonical]) => canonical)),
+    sourceUnitId: entry.sourceUnitId
+  })).filter((entry) => entry.value.length);
+  if (!candidates.length) return { value: [], sourceUnitIds: [] };
+  const distinct = unique(candidates.map((entry) => [...entry.value].sort().join("|")));
+  if (distinct.length > 1) return { value: null, sourceUnitIds: unique(candidates.map((entry) => entry.sourceUnitId)), candidates: unique(candidates.map((entry) => entry.text)), conflict: true };
+  return { value: candidates[0].value, sourceUnitIds: unique(candidates.map((entry) => entry.sourceUnitId)) };
 }
 
 function provisionalDossier(detected) {
@@ -253,7 +308,7 @@ function provisionalDossier(detected) {
     exposure: {
       currentUserAccess: detected.currentUserAccess?.value ?? "UNKNOWN",
       intendedUserAccess: detected.intendedUserAccess?.value ?? "UNKNOWN",
-      externalUsers: null,
+      externalUsers: detected.externalUsers?.value ?? null,
       productionAccess: detected.productionAccess?.value ?? null,
       consequentialDecisions: detected.consequentialDecisions?.value ?? null
     },
@@ -346,44 +401,45 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
   const intakeAnswers = Object.fromEntries(INTAKE_QUESTIONNAIRE.questions.map((question) => [question.id, detectedQuestionAnswer(sources, question)]).filter(([, answer]) => answer));
   const detected = {
     name: detectedName(sources),
-    intendedPurpose: labelledValue(sources, ["intended purpose", "purpose", "mission"]),
-    expectedValue: labelledValue(sources, ["expected value", "business value", "expected outcome", "outcome"]),
-    accountableOwner: labelledValue(sources, ["accountable owner", "system owner", "solution owner", "product owner"]),
-    currentStage: detectedEnum(sources, ["current lifecycle stage", "current stage", "lifecycle stage"], lifecycleOptions),
-    targetStage: detectedEnum(sources, ["target lifecycle stage", "target stage", "requested stage"], lifecycleOptions),
-    jurisdictions: detectedList(sources, ["jurisdiction", "jurisdictions", "deployment countries", "operating countries"], [["FI", /\b(?:Finland|Finnish|FI|FIN)\b/i], ["EU", /\b(?:European Union|EU|EEA)\b/i]]),
-    roles: detectedList(sources, ["regulatory role", "regulatory roles", "ai act role", "ai act roles", "roles"], [["PROVIDER", /\bprovider\b/i], ["DEPLOYER", /\bdeployer\b/i], ["IMPORTER", /\bimporter\b/i], ["DISTRIBUTOR", /\bdistributor\b/i]]),
-    users: detectedList(sources, ["users", "affected groups", "user groups"], [["EMPLOYEES", /\b(?:employees?|internal users?|staff)\b/i], ["CUSTOMERS", /\b(?:customers?|end users?|consumers?)\b/i]]),
-    dataCategories: detectedList(sources, ["data categories", "approved data classes"], [
+    intendedPurpose: labelledValue(sources, "intendedPurpose"),
+    expectedValue: labelledValue(sources, "expectedValue"),
+    accountableOwner: labelledValue(sources, "accountableOwner"),
+    currentStage: detectedEnum(sources, "currentStage", lifecycleOptions),
+    targetStage: detectedEnum(sources, "targetStage", lifecycleOptions),
+    jurisdictions: detectedList(sources, "jurisdictions", [["FI", /\b(?:Finland|Finnish|FI|FIN)\b/i], ["EU", /\b(?:European Union|EU|EEA)\b/i]]),
+    roles: detectedList(sources, "roles", [["PROVIDER", /\bprovider\b/i], ["DEPLOYER", /\bdeployer\b/i], ["IMPORTER", /\bimporter\b/i], ["DISTRIBUTOR", /\bdistributor\b/i]]),
+    users: detectedList(sources, "users", [["EMPLOYEES", /\b(?:employees?|internal users?|staff)\b/i], ["CUSTOMERS", /\b(?:customers?|end users?|consumers?)\b/i]]),
+    dataCategories: detectedList(sources, "data.categories", [
       ["SYNTHETIC", /\b(?:synthetic|simulated)\b/i], ["PUBLIC_NON_PERSONAL", /\bpublic[-_ ]non[-_ ]personal(?:[-_ ]data)?\b/i], ["ANONYMIZED", /\banonymi[sz]ed\b/i],
       ["PSEUDONYMIZED", /\bpseudonymi[sz]ed\b/i], ["CLEANED_APPROVED_PRODUCTION", /\bcleaned (?:and )?approved production\b/i], ["RAW_PRODUCTION", /\braw production\b/i],
       ["PERSONAL_DATA", /(?<!non[-_ ])\bpersonal[-_ ]data\b/i], ["SPECIAL_CATEGORY_DATA", /\bspecial[-_ ]category[-_ ]data\b/i], ["CONFIDENTIAL_OR_PROPRIETARY", /\b(?:confidential|proprietary)\b/i]
     ]),
-    personalData: detectedBoolean(sources, ["personal data"]),
-    specialCategoryData: detectedBoolean(sources, ["special category data", "special-category data"]),
-    productionData: detectedBoolean(sources, ["production data"]),
-    currentUserAccess: detectedEnum(sources, ["current user access"], accessOptions),
-    intendedUserAccess: detectedEnum(sources, ["intended user access", "target user access"], accessOptions),
-    productionAccess: detectedBoolean(sources, ["production access"]),
-    consequentialDecisions: detectedBoolean(sources, ["consequential decisions", "consequential decision support"]),
-    usesAgents: detectedBoolean(sources, ["uses agents", "agent use"]),
-    canTakeActions: detectedBoolean(sources, ["can take actions", "action taking"]),
-    irreversibleActions: detectedBoolean(sources, ["irreversible actions"]),
-    humanOverride: detectedBoolean(sources, ["human override"]),
-    prohibitedPractice: detectedBoolean(sources, ["prohibited practice candidate", "prohibited practice"]),
-    highRiskCandidate: detectedBoolean(sources, ["high risk candidate", "high-risk candidate"]),
-    allowedUses: labelledValue(sources, ["allowed uses", "approved uses"]),
-    excludedUses: labelledValue(sources, ["excluded uses", "prohibited uses"]),
-    environment: detectedEnum(sources, ["operating environment", "environment"], [
+    personalData: detectedBoolean(sources, "data.personalData"),
+    specialCategoryData: detectedBoolean(sources, "data.specialCategoryData"),
+    productionData: detectedBoolean(sources, "data.productionData"),
+    currentUserAccess: detectedEnum(sources, "exposure.currentUserAccess", accessOptions),
+    intendedUserAccess: detectedEnum(sources, "exposure.intendedUserAccess", accessOptions),
+    externalUsers: detectedBoolean(sources, "exposure.externalUsers"),
+    productionAccess: detectedBoolean(sources, "exposure.productionAccess"),
+    consequentialDecisions: detectedBoolean(sources, "exposure.consequentialDecisions"),
+    usesAgents: detectedBoolean(sources, "agent.usesAgents"),
+    canTakeActions: detectedBoolean(sources, "agent.canTakeActions"),
+    irreversibleActions: detectedBoolean(sources, "agent.irreversibleActions"),
+    humanOverride: detectedBoolean(sources, "agent.humanOverride"),
+    prohibitedPractice: detectedBoolean(sources, "classification.prohibitedPractice"),
+    highRiskCandidate: detectedBoolean(sources, "classification.highRiskCandidate"),
+    allowedUses: labelledValue(sources, "operatingBoundary.allowedUses"),
+    excludedUses: labelledValue(sources, "operatingBoundary.excludedUses"),
+    environment: detectedEnum(sources, "operatingBoundary.environment", [
       ["ISOLATED_SANDBOX", ["isolated sandbox", "sandbox"]], ["CONTROLLED_PILOT", ["controlled pilot", "pilot"]], ["PRODUCTION", ["production"]], ["UNKNOWN", ["unknown"]]
     ]),
-    userScope: labelledValue(sources, ["user scope"]),
-    dataScope: labelledValue(sources, ["data scope"]),
-    integrationScope: labelledValue(sources, ["integration scope"]),
-    permissionScope: labelledValue(sources, ["permission scope"]),
-    autonomyScope: labelledValue(sources, ["autonomy scope"]),
-    monitoringOwner: labelledValue(sources, ["monitoring owner"]),
-    expiresAt: labelledValue(sources, ["boundary expiry", "expires at", "expiry"]),
+    userScope: labelledValue(sources, "operatingBoundary.userScope"),
+    dataScope: labelledValue(sources, "operatingBoundary.dataScope"),
+    integrationScope: labelledValue(sources, "operatingBoundary.integrationScope"),
+    permissionScope: labelledValue(sources, "operatingBoundary.permissionScope"),
+    autonomyScope: labelledValue(sources, "operatingBoundary.autonomyScope"),
+    monitoringOwner: labelledValue(sources, "operatingBoundary.monitoringOwner"),
+    expiresAt: labelledValue(sources, "operatingBoundary.expiresAt"),
     intakeAnswers
   };
   const detectedByField = {
@@ -404,6 +460,7 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
     "data.productionData": detected.productionData,
     "exposure.currentUserAccess": detected.currentUserAccess,
     "exposure.intendedUserAccess": detected.intendedUserAccess,
+    "exposure.externalUsers": detected.externalUsers,
     "exposure.productionAccess": detected.productionAccess,
     "exposure.consequentialDecisions": detected.consequentialDecisions,
     "agent.usesAgents": detected.usesAgents,
@@ -486,7 +543,9 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
     return [question.id, { ...item, hash: sha256(item) }];
   }));
   const profile = {
-    version: "solution-profile-1.1.0",
+    version: "solution-profile-1.2.0",
+    searchRegistryVersion: INTAKE_SEARCH_REGISTRY.version,
+    searchRegistryHash: INTAKE_SEARCH_REGISTRY.hash,
     fields: facts,
     assessmentIntakeFacts,
     contradictions,

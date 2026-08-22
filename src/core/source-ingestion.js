@@ -9,7 +9,7 @@ import { sha256 } from "./hash.js";
 export const INGESTION_DISPOSITIONS = Object.freeze([
   "ACCEPTED", "PARSED", "KNOWN_IRRELEVANT", "UNSUPPORTED_SOURCE_LIKE", "UNSUPPORTED_BINARY", "PARSE_FAILED", "REJECTED_UNSAFE"
 ]);
-export const EVIDENCE_ACQUISITION_VERSION = "evidence-acquisition-1.0.0";
+export const EVIDENCE_ACQUISITION_VERSION = "evidence-acquisition-1.1.0";
 
 const riskyDispositions = new Set(["UNSUPPORTED_SOURCE_LIKE", "PARSE_FAILED", "REJECTED_UNSAFE"]);
 
@@ -102,10 +102,10 @@ export function validateSourceIngestionManifest(manifest) {
     } else if (item.acquisitionLane === "TABULAR_LOCAL_ANALYSIS") {
       invariant(item.rawContentPolicy === "LOCAL_ONLY" && item.egressPolicy === "DETERMINISTIC_SUMMARY_ONLY", `Tabular acquisition policy is invalid for ${item.path}`);
       invariant(item.analyzerVersion === TABULAR_EVIDENCE_SUMMARY_VERSION && item.derivedUnitIds.length === 1, `Tabular derivation is invalid for ${item.path}`);
-    } else if (item.acquisitionLane === "MEDIA_LOCAL_METADATA") {
+    } else if (item.acquisitionLane === "MEDIA_LOCAL_OCR_ANALYSIS") {
       invariant(item.rawContentPolicy === "LOCAL_ONLY" && item.egressPolicy === "DETERMINISTIC_SUMMARY_ONLY", `Media acquisition policy is invalid for ${item.path}`);
       invariant(item.analyzerVersion === MEDIA_EVIDENCE_SUMMARY_VERSION && item.derivedUnitIds.length === 1, `Media derivation is invalid for ${item.path}`);
-    } else if (item.acquisitionLane === "DOCUMENT_LOCAL_ANALYSIS") {
+    } else if (["DOCUMENT_LOCAL_ANALYSIS", "DOCUMENT_LOCAL_OCR_ANALYSIS"].includes(item.acquisitionLane)) {
       invariant(item.rawContentPolicy === "LOCAL_ONLY" && item.egressPolicy === "DETERMINISTIC_SUMMARY_ONLY", `Document acquisition policy is invalid for ${item.path}`);
       invariant(item.analyzerVersion === DOCUMENT_EVIDENCE_SUMMARY_VERSION && item.derivedUnitIds.length === 1, `Document derivation is invalid for ${item.path}`);
     } else {

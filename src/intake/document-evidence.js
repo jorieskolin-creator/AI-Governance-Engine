@@ -78,7 +78,7 @@ export function validateDocumentEvidenceSummary(summary) {
 }
 
 export function createDocumentEvidenceUnit({ sourceId, sourceHash, format, sourceKind, segments, findings = [] }) {
-  const text = segments.map((segment) => segment.text ?? "").join("\n");
+  const text = segments.filter((segment) => !segment.ocr || segment.ocr.qualificationState === "QUALIFIED").map((segment) => segment.text ?? "").join("\n");
   const summary = validateDocumentEvidenceSummary({
     schemaVersion: DOCUMENT_EVIDENCE_SUMMARY_VERSION,
     sourceRef: sourceId,

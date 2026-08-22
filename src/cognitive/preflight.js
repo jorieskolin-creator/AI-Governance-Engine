@@ -62,7 +62,7 @@ export function publicPreflightView(run) {
 
 export async function createPreflight(input, options = {}) {
   const validated = validatePreflightInput(input, { dossierOptional: true });
-  const screened = await parseAndScreenSources(validated.sources, { continueOnError: true });
+  const screened = await parseAndScreenSources(validated.sources, { continueOnError: true, ...options.sourceIntake });
   const now = options.now ?? new Date();
   const ttlMs = options.ttlMs ?? 60 * 60 * 1000;
   const run = {
@@ -74,7 +74,7 @@ export async function createPreflight(input, options = {}) {
     localSourceUnits: screened.localSourceUnits,
     packets: packetize(screened.sourceUnits, options.maxPacketChars), trace: [], result: null, error: null
   };
-  run.solutionProfile = discoverSolutionProfile(screened.localSourceUnits.filter((item) => item.path !== "intended-use-dossier.json"), validated.dossier);
+  run.solutionProfile = discoverSolutionProfile(screened.localSourceUnits.filter((item) => item.path !== "intended-use-dossier.json" && (!item.ocr || item.ocr.qualificationState === "QUALIFIED")), validated.dossier);
   run.acquiredFacts = createAcquiredFactPackage(run.solutionProfile, run.dlpFindings);
   run.acquisitionDiagnostics = createAcquisitionDiagnostics({
     sourceIngestion: run.sourceIngestion,

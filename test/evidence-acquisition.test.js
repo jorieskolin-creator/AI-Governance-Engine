@@ -207,7 +207,7 @@ test("the acquisition manifest records the code lane, raw handling, derivation a
   }] });
 
   const item = run.sourceIngestion.items[0];
-  assert.equal(run.sourceIngestion.acquisitionContractVersion, "evidence-acquisition-1.0.0");
+  assert.equal(run.sourceIngestion.acquisitionContractVersion, "evidence-acquisition-1.1.0");
   assert.equal(run.sourceIngestion.laneCounts.CODE_CONFIGURATION_LOCAL_ANALYSIS, 1);
   assert.deepEqual({ lane: item.acquisitionLane, raw: item.rawContentPolicy, egress: item.egressPolicy }, {
     lane: "CODE_CONFIGURATION_LOCAL_ANALYSIS",
@@ -314,9 +314,9 @@ test("image pixels remain local even when the client labels the image sanitized"
   assert.equal(egress.evidenceKind, "MEDIA_SUMMARY");
   assert.equal(egress.derivation.rawContentIncluded, false);
   assert.equal(summary.schemaVersion, MEDIA_EVIDENCE_SUMMARY_VERSION);
-  assert.equal(summary.visualContentState, "NOT_ASSESSED");
+  assert.equal(summary.visualContentState, "OCR_NOT_COMPLETED_VISUAL_CONTENT_NOT_ASSESSED");
   assert.doesNotMatch(egress.path, /private|customer|screen/i);
-  assert.equal(run.sourceIngestion.items[0].acquisitionLane, "MEDIA_LOCAL_METADATA");
+  assert.equal(run.sourceIngestion.items[0].acquisitionLane, "MEDIA_LOCAL_OCR_ANALYSIS");
   assert.equal(run.sourceIngestion.items[0].rawContentPolicy, "LOCAL_ONLY");
   assert.equal(run.sourceIngestion.items[0].analyzerVersion, MEDIA_EVIDENCE_SUMMARY_VERSION);
 

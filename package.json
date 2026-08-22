@@ -20,12 +20,15 @@
     "kb:verify-runtime": "node scripts/verify-knowledge-manifest.js"
   },
   "dependencies": {
+    "@napi-rs/canvas": "0.1.100",
+    "@tesseract.js-data/eng": "1.0.0",
     "htmlparser2": "10.0.0",
     "mammoth": "1.12.0",
     "pdfjs-dist": "5.4.149",
     "pdfkit": "0.19.1",
     "pg": "8.16.3",
     "read-excel-file": "9.3.5",
+    "tesseract.js": "7.0.0",
     "unzipper": "0.12.5"
   }
 }

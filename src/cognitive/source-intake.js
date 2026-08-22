@@ -7,11 +7,13 @@ import { createDocumentEvidenceUnit, DOCUMENT_EVIDENCE_SUMMARY_VERSION } from ".
 import { createMediaEvidenceUnit, MEDIA_EVIDENCE_SUMMARY_VERSION } from "../intake/media-evidence.js";
 import { createTabularEvidenceUnit, TABULAR_EVIDENCE_SUMMARY_VERSION } from "../intake/tabular-evidence.js";
 import { extractStructuredHtml } from "../intake/html-evidence.js";
+import { createLocalOcrSession, imageDimensionsForOcr, OCR_ENGINE, OCR_ENGINE_VERSION, OCR_LANGUAGE, rasterizePdfPageForOcr } from "../intake/ocr-evidence.js";
 
 const MAX_SOURCE_BYTES = 15 * 1024 * 1024;
 const MAX_EXTRACTED_CHARACTERS = 5_000_000;
 const MAX_ARCHIVE_ENTRIES = 5_000;
 const MAX_ARCHIVE_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
+const MIN_NATIVE_PDF_TEXT_CHARACTERS = 40;
 
 const SECRET_PATTERNS = [
   { type: "PRIVATE_KEY", pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/gi },
@@ -56,21 +58,49 @@ function assertFileSignature(source, bytes) {
   if (!valid) throw new Error(`${source.path} content does not match ${source.mimeType}`);
 }
 
-async function extractPdf(bytes) {
+async function extractPdf(bytes, ocrSession) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const document = await pdfjs.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useWorkerFetch: false }).promise;
-  if (document.numPages > 500) throw new Error("PDF exceeds the 500-page intake limit");
-  const pages = [];
+  const segments = [];
+  const limitationCodes = new Set();
+  const ocr = { engine: OCR_ENGINE, engineVersion: OCR_ENGINE_VERSION, language: OCR_LANGUAGE, attemptedCount: 0, qualifiedCount: 0, reviewRequiredCount: 0, failedCount: 0 };
   let extractedCharacters = 0;
-  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-    const page = await document.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const text = content.items.map((item) => item.str).join(" ");
-    extractedCharacters += text.length;
-    if (extractedCharacters > MAX_EXTRACTED_CHARACTERS) throw new Error("PDF extracted text exceeds the intake limit");
-    pages.push({ locator: `page:${pageNumber}`, text });
+  try {
+    if (document.numPages > 500) throw new Error("PDF exceeds the 500-page intake limit");
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      try {
+        const content = await page.getTextContent();
+        const text = content.items.map((item) => item.str).join(" ");
+        extractedCharacters += text.length;
+        if (extractedCharacters > MAX_EXTRACTED_CHARACTERS) throw new Error("PDF extracted text exceeds the intake limit");
+        if (text.trim()) segments.push({ locator: `page:${pageNumber};text-layer`, text });
+        if (text.replace(/\s/g, "").length < MIN_NATIVE_PDF_TEXT_CHARACTERS) {
+          ocr.attemptedCount += 1;
+          try {
+            const rendered = await rasterizePdfPageForOcr(page);
+            const result = await ocrSession.recognize(rendered.image, { sourceLocator: `page:${pageNumber}`, pageNumber, pixelWidth: rendered.pixelWidth, pixelHeight: rendered.pixelHeight });
+            segments.push({ locator: `page:${pageNumber};ocr`, text: result.text.trim() ? result.text : "[OCR OUTPUT EMPTY — REVIEW REQUIRED]", ocr: result.provenance });
+            if (result.provenance.qualificationState === "QUALIFIED") ocr.qualifiedCount += 1;
+            else {
+              ocr.reviewRequiredCount += 1;
+              limitationCodes.add("LOW_CONFIDENCE_OCR_REVIEW_REQUIRED");
+            }
+          } catch (error) {
+            ocr.failedCount += 1;
+            const code = /BUDGET/.test(String(error?.message)) ? "LOCAL_OCR_BUDGET_EXCEEDED" : /TIMEOUT/.test(String(error?.message)) ? "LOCAL_OCR_TIMEOUT" : "LOCAL_OCR_FAILED";
+            limitationCodes.add(code);
+            segments.push({ locator: `page:${pageNumber};visual`, text: "", ocrFailureCode: code });
+          }
+        }
+      } finally {
+        page.cleanup();
+      }
+    }
+    return { segments, limitationCodes: [...limitationCodes], ocrDiagnostics: ocr.attemptedCount ? ocr : null };
+  } finally {
+    await document.destroy();
   }
-  return pages;
 }
 
 async function inspectOfficeArchive(bytes) {
@@ -123,12 +153,27 @@ async function extractXlsx(bytes) {
   return sheets;
 }
 
-async function extractSegments(source, bytes) {
-  if (["TEXT", "CODE", "CSV"].includes(source.format)) return [{ locator: "text", text: bytes.toString("utf8") }];
-  if (source.format === "PDF") return extractPdf(bytes);
-  if (source.format === "DOCX") return extractDocx(bytes);
-  if (source.format === "XLSX") return extractXlsx(bytes);
-  if (source.format === "IMAGE") return [{ locator: "image:1", text: "", media: { mimeType: source.mimeType, data: bytes.toString("base64") } }];
+async function extractSegments(source, bytes, ocrSession) {
+  if (["TEXT", "CODE", "CSV"].includes(source.format)) return { segments: [{ locator: "text", text: bytes.toString("utf8") }], limitationCodes: [], ocrDiagnostics: null };
+  if (source.format === "PDF") return extractPdf(bytes, ocrSession);
+  if (source.format === "DOCX") return { segments: await extractDocx(bytes), limitationCodes: [], ocrDiagnostics: null };
+  if (source.format === "XLSX") return { segments: await extractXlsx(bytes), limitationCodes: [], ocrDiagnostics: null };
+  if (source.format === "IMAGE") {
+    const segments = [{ locator: "image:1", text: "", media: { mimeType: source.mimeType, data: bytes.toString("base64") } }];
+    const limitationCodes = [];
+    const ocr = { engine: OCR_ENGINE, engineVersion: OCR_ENGINE_VERSION, language: OCR_LANGUAGE, attemptedCount: 1, qualifiedCount: 0, reviewRequiredCount: 0, failedCount: 0 };
+    try {
+      const dimensions = imageDimensionsForOcr(bytes, source.mimeType);
+      const result = await ocrSession.recognize(bytes, { sourceLocator: "image:1", pageNumber: null, pixelWidth: dimensions.pixelWidth, pixelHeight: dimensions.pixelHeight });
+      segments.push({ locator: "image:1;ocr", text: result.text.trim() ? result.text : "[OCR OUTPUT EMPTY — REVIEW REQUIRED]", ocr: result.provenance });
+      if (result.provenance.qualificationState === "QUALIFIED") ocr.qualifiedCount += 1;
+      else { ocr.reviewRequiredCount += 1; limitationCodes.push("LOW_CONFIDENCE_OCR_REVIEW_REQUIRED"); }
+    } catch (error) {
+      ocr.failedCount += 1;
+      limitationCodes.push(/BUDGET/.test(String(error?.message)) ? "LOCAL_OCR_BUDGET_EXCEEDED" : /TIMEOUT/.test(String(error?.message)) ? "LOCAL_OCR_TIMEOUT" : "LOCAL_OCR_FAILED");
+    }
+    return { segments, limitationCodes, ocrDiagnostics: ocr };
+  }
   throw new Error(`Unsupported format for ${source.path}`);
 }
 
@@ -183,7 +228,8 @@ function chunkText(source, sourceId, segment, maxChars = 6000) {
       id: stableId("unit", { sourceId, locator, text: redacted.text }), sourceId, path: sanitizeRestrictedText(source.path),
       format: source.format, mimeType: source.mimeType, evidenceKind: source.metadata?.kind ?? sourceKindForPath(source.path), evidenceClass: source.metadata?.kind === "DECLARATION" ? "DECLARED" : "OBSERVED", assuranceCeiling: assuranceCeiling(source), locator, sha256: sha256(raw),
       content: redacted.text, sensitivity: redacted.findings.map((item) => item.type),
-      transmissionState: "PENDING_APPROVAL", coverage: { characters: raw.length, startLine, endLine }
+      transmissionState: "PENDING_APPROVAL", coverage: { characters: raw.length, startLine, endLine },
+      ...(segment.ocr ? { ocr: structuredClone(segment.ocr) } : {})
     };
     chunks.push({ unit, dlpFindings: redacted.findings });
     buffer = []; chars = 0; startLine = endLine + 1;
@@ -217,6 +263,9 @@ export async function parseAndScreenSources(sources, options = {}) {
   const dlpFindings = [];
   const registeredSources = [];
   const failedSources = [];
+  const ownsOcrSession = !options.ocrSession;
+  const ocrSession = options.ocrSession ?? createLocalOcrSession({ budget: { pages: 0, pixels: 0 }, timeoutMs: options.ocrTimeoutMs });
+  try {
   for (const source of sources) {
     try {
       const bytes = bytesFor(source);
@@ -225,9 +274,11 @@ export async function parseAndScreenSources(sources, options = {}) {
       const sourceHash = sha256(bytes);
       const safePath = sanitizeRestrictedText(source.path);
       const sourceId = stableId("src", { path: source.path, sourceHash });
-      const htmlExtraction = source.format === "HTML" ? extractStructuredHtml(bytes.toString("utf8")) : null;
-      const segments = htmlExtraction?.segments ?? await extractSegments(source, bytes);
-      const extractionLimitationCodes = htmlExtraction?.limitationCodes ?? [];
+      const extraction = source.format === "HTML"
+        ? { ...extractStructuredHtml(bytes.toString("utf8")), ocrDiagnostics: null }
+        : await extractSegments(source, bytes, ocrSession);
+      const segments = extraction.segments;
+      const extractionLimitationCodes = extraction.limitationCodes;
       const artifactClass = classifyArtifact(source.path, source.metadata);
       const sourceKind = source.metadata?.kind ?? sourceKindForPath(source.path);
       const localUnits = [];
@@ -273,14 +324,14 @@ export async function parseAndScreenSources(sources, options = {}) {
       const media = source.format === "IMAGE";
       const approvedIntake = source.path === "intended-use-dossier.json" && source.metadata?.kind === "DECLARATION";
       const egressUnits = media
-        ? [createMediaEvidenceUnit({ sourceId, sourceHash, mimeType: source.mimeType, byteSize: bytes.length })]
+        ? [createMediaEvidenceUnit({ sourceId, sourceHash, mimeType: source.mimeType, byteSize: bytes.length, ocrDiagnostics: extraction.ocrDiagnostics })]
         : tabular
           ? [createTabularEvidenceUnit({ sourceId, sourceHash, format: source.format, segments, findings: sourceFindings })]
           : codeOrConfiguration
             ? [createCodeEvidenceUnit({ sourceId, sourceHash, path: source.path, sourceKind, content: bytes.toString("utf8"), findings: sourceFindings })]
             : approvedIntake ? localUnits
               : [createDocumentEvidenceUnit({ sourceId, sourceHash, format: source.format, sourceKind, segments, findings: sourceFindings })];
-      const acquisitionLane = media ? "MEDIA_LOCAL_METADATA" : tabular ? "TABULAR_LOCAL_ANALYSIS" : codeOrConfiguration ? "CODE_CONFIGURATION_LOCAL_ANALYSIS" : approvedIntake ? "APPROVED_INTAKE" : "DOCUMENT_LOCAL_ANALYSIS";
+      const acquisitionLane = media ? "MEDIA_LOCAL_OCR_ANALYSIS" : extraction.ocrDiagnostics ? "DOCUMENT_LOCAL_OCR_ANALYSIS" : tabular ? "TABULAR_LOCAL_ANALYSIS" : codeOrConfiguration ? "CODE_CONFIGURATION_LOCAL_ANALYSIS" : approvedIntake ? "APPROVED_INTAKE" : "DOCUMENT_LOCAL_ANALYSIS";
       const localOnly = !approvedIntake;
       localSourceUnits.push(...localUnits);
       sourceUnits.push(...egressUnits);
@@ -295,7 +346,8 @@ export async function parseAndScreenSources(sources, options = {}) {
           extractedUnitCount: localUnits.length,
           extractedCharacters: segments.reduce((total, segment) => total + segment.text.length, 0),
           extractedMediaCount: segments.filter((segment) => segment.media).length,
-          limitationCodes: extractionLimitationCodes
+          limitationCodes: extractionLimitationCodes,
+          ocr: extraction.ocrDiagnostics
         }
       });
     } catch (error) {
@@ -305,6 +357,9 @@ export async function parseAndScreenSources(sources, options = {}) {
   }
   if (!sourceUnits.length && !registeredSources.length) throw new Error("No supported source could be parsed. Review the disclosed exclusions and provide at least one supported source.");
   return { registeredSources, sourceUnits, localSourceUnits, dlpFindings, failedSources };
+  } finally {
+    if (ownsOcrSession) await ocrSession.terminate();
+  }
 }
 
 export function sourceKindForUnit(unit) {

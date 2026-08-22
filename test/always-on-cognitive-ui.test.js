@@ -39,6 +39,11 @@ test("acquisition diagnostics distinguish technical loss from source silence", (
   assert.match(app, /Genuine source silence:/);
 });
 
+test("ZIP source containers require explicit local extraction", () => {
+  assert.match(index, /ZIP archives are not opened: extract them locally and select the extracted folder/);
+  assert.match(app, /ZIP archive\(s\) must be extracted locally and selected as a folder/);
+});
+
 test("the Intake workspace is exception-focused and marks accepted AI proposals as user edits", () => {
   assert.match(index, /id="intake-review-summary"/);
   assert.equal((index.match(/class="intake-workspace-section"/g) ?? []).length, 3);

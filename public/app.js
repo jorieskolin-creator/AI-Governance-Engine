@@ -478,9 +478,11 @@ async function selectedSources() {
   const selectionMode = $("source-folder").files.length && $("source-files").files.length ? "FOLDER_AND_FILES"
     : $("source-folder").files.length ? "FOLDER_SELECTION" : "INDIVIDUAL_FILES";
   const sourceIngestion = provisionalIngestionManifest(items, selectionMode);
-  if (!sources.length) throw new Error(`No supported source could be prepared. ${sourceIngestion.excludedCount} file(s) were excluded and ${sourceIngestion.failedCount + sourceIngestion.unsafeCount} require review.`);
+  const sourceContainerCount = sourceIngestion.items.filter((item) => item.reasonCode === "UNSUPPORTED_SOURCE_CONTAINER").length;
+  const sourceContainerNotice = sourceContainerCount ? ` ${sourceContainerCount} ZIP archive(s) must be extracted locally and selected as a folder.` : "";
+  if (!sources.length) throw new Error(`No supported source could be prepared. ${sourceIngestion.excludedCount} file(s) were excluded and ${sourceIngestion.failedCount + sourceIngestion.unsafeCount} require review.${sourceContainerNotice}`);
   preparedSources = { sources, sourceIngestion };
-  $("discovery-status").textContent = `${sourceIngestion.acceptedCount} supported file(s) prepared · ${sourceIngestion.excludedCount} disclosed exclusion(s) · ${sourceIngestion.failedCount + sourceIngestion.unsafeCount} file(s) require review.`;
+  $("discovery-status").textContent = `${sourceIngestion.acceptedCount} supported file(s) prepared · ${sourceIngestion.excludedCount} disclosed exclusion(s) · ${sourceIngestion.failedCount + sourceIngestion.unsafeCount} file(s) require review.${sourceContainerNotice}`;
   return preparedSources;
 }
 

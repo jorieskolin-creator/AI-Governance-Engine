@@ -49,12 +49,12 @@ test("synthetic regression inputs distinguish technical loss from genuine source
     FAILED: 1,
     PRIVACY_BLOCKED: 1
   });
-  assert.deepEqual(diagnostics.technicalLoss, { count: 4, present: true });
-  assert.deepEqual(diagnostics.sourceSilence, { count: 1, present: true });
+  assert.deepEqual(diagnostics.technicalLoss, { count: 3, present: true });
+  assert.deepEqual(diagnostics.sourceSilence, { count: 2, present: true });
   assert.equal(diagnostics.genAi.status, "BLOCKED_BY_PRIVACY");
   assert.match(diagnostics.diagnosticsHash, /^[a-f0-9]{64}$/);
   assert.deepEqual(diagnostics.items.find((item) => item.path.endsWith("reference-repository.zip")).technicalLossReasonCodes, ["UNSUPPORTED_SOURCE_CONTAINER"]);
-  assert.deepEqual(diagnostics.items.find((item) => item.path.endsWith("embedded-data-report.html")).technicalLossReasonCodes, ["EMBEDDED_SCRIPT_CONTENT_NOT_INSPECTED"]);
+  assert.deepEqual(diagnostics.items.find((item) => item.path.endsWith("embedded-data-report.html")).technicalLossReasonCodes, []);
   assert.equal(diagnostics.items.find((item) => item.path.endsWith("narrative-architecture.html")).intakeFactCount, 0);
   assert.ok(diagnostics.items.find((item) => item.path.endsWith("labelled-intake.txt")).states.includes("INTAKE_USEFUL"));
   assert.doesNotMatch(JSON.stringify(publicPreflightView(run).acquisitionDiagnostics), /Fixture-only hidden value/);

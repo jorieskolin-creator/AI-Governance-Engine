@@ -6,6 +6,7 @@ import { CODE_EVIDENCE_SUMMARY_VERSION, createCodeEvidenceUnit } from "../intake
 import { createDocumentEvidenceUnit, DOCUMENT_EVIDENCE_SUMMARY_VERSION } from "../intake/document-evidence.js";
 import { createMediaEvidenceUnit, MEDIA_EVIDENCE_SUMMARY_VERSION } from "../intake/media-evidence.js";
 import { createTabularEvidenceUnit, TABULAR_EVIDENCE_SUMMARY_VERSION } from "../intake/tabular-evidence.js";
+import { extractStructuredHtml } from "../intake/html-evidence.js";
 
 const MAX_SOURCE_BYTES = 15 * 1024 * 1024;
 const MAX_EXTRACTED_CHARACTERS = 5_000_000;
@@ -124,13 +125,6 @@ async function extractXlsx(bytes) {
 
 async function extractSegments(source, bytes) {
   if (["TEXT", "CODE", "CSV"].includes(source.format)) return [{ locator: "text", text: bytes.toString("utf8") }];
-  if (source.format === "HTML") {
-    const inert = bytes.toString("utf8")
-      .replace(/<(?:script|style|form|iframe|object|embed)\b[\s\S]*?<\/(?:script|style|form|iframe|object|embed)>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/&(?:nbsp|amp|lt|gt|quot|#39);/gi, " ");
-    return [{ locator: "document", text: inert }];
-  }
   if (source.format === "PDF") return extractPdf(bytes);
   if (source.format === "DOCX") return extractDocx(bytes);
   if (source.format === "XLSX") return extractXlsx(bytes);
@@ -231,11 +225,9 @@ export async function parseAndScreenSources(sources, options = {}) {
       const sourceHash = sha256(bytes);
       const safePath = sanitizeRestrictedText(source.path);
       const sourceId = stableId("src", { path: source.path, sourceHash });
-      const segments = await extractSegments(source, bytes);
-      const extractionLimitationCodes = [];
-      if (source.format === "HTML" && /<script\b[\s\S]*?<\/script>/i.test(bytes.toString("utf8"))) {
-        extractionLimitationCodes.push("EMBEDDED_SCRIPT_CONTENT_NOT_INSPECTED");
-      }
+      const htmlExtraction = source.format === "HTML" ? extractStructuredHtml(bytes.toString("utf8")) : null;
+      const segments = htmlExtraction?.segments ?? await extractSegments(source, bytes);
+      const extractionLimitationCodes = htmlExtraction?.limitationCodes ?? [];
       const artifactClass = classifyArtifact(source.path, source.metadata);
       const sourceKind = source.metadata?.kind ?? sourceKindForPath(source.path);
       const localUnits = [];

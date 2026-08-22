@@ -20,6 +20,7 @@
     "kb:verify-runtime": "node scripts/verify-knowledge-manifest.js"
   },
   "dependencies": {
+    "htmlparser2": "10.0.0",
     "mammoth": "1.12.0",
     "pdfjs-dist": "5.4.149",
     "pdfkit": "0.19.1",

@@ -76,6 +76,17 @@ The new thread must not modify code until the user confirms that these URLs are 
 
 Do not commit these customer/reference artifacts or extracted raw content. Download them to temporary storage only after authorization. Derive small synthetic or sanitized regression fixtures that preserve the failure mode without retaining sensitive source material.
 
+### Authority classification of the FinOps materials
+
+The FinOps materials are **non-authoritative design inspiration and regression inputs only**. They describe another solution and must not become normative knowledge, AI Governance case evidence, product requirements, or a source of governance conclusions for this Engine.
+
+- Do not copy FinOps domain rules, schemas, thresholds, technology choices, terminology, or pipeline stages merely because they appear in these materials.
+- Adopt a pattern only after independently establishing that it fits this Engine's purpose, existing contracts, privacy boundary, and user-approved architecture.
+- Use the materials to reproduce messy-source acquisition characteristics and the observed failure mode, not to establish expected Intake values or a correct assessment outcome.
+- Committed synthetic fixtures may preserve only the minimum structural characteristic needed for a test; they must not reproduce FinOps customer content or encode FinOps conclusions as expected facts.
+- Sources of authority remain the user's explicit decisions, this repository's approved contracts and invariants, and the separately governed AI Governance Knowledge Base when finalized.
+- When FinOps material conflicts with an Engine contract or user decision, the Engine contract or user decision prevails and the conflict must be surfaced rather than harmonized silently.
+
 ## Refined implementation plan
 
 ### Phase 1 — Evidence Acquisition and Intake completion

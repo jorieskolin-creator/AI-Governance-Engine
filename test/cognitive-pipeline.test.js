@@ -196,6 +196,9 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   const integrationSchema = readinessPackageJsonSchema(result.schemaVersion);
   assert.deepEqual([...integrationSchema.required].sort(), Object.keys(result).sort());
   assert.deepEqual(Object.keys(integrationSchema.properties).sort(), Object.keys(result).sort());
+  const evidenceItemSchema = integrationSchema.properties.evidence.items;
+  assert.ok(result.evidence.every((item) => Object.keys(item).every((field) => Object.hasOwn(evidenceItemSchema.properties, field))));
+  assert.ok(result.evidence.every((item) => evidenceItemSchema.required.every((field) => Object.hasOwn(item, field))));
   assert.equal(result.cognitive.contractVersion, "3.1.0");
   assert.equal(result.recommendation.formalApproval, false);
   assert.equal(result.cognitive.coverage.complete, true);

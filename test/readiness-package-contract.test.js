@@ -26,6 +26,30 @@ test("the published package schema closes the top-level contract and authority i
   assert.equal(cognitiveSchema.properties.cognitive.properties.rolloutMode.const, "ENABLED");
 });
 
+test("the published evidence contracts allow only privacy-safe ledger fields", async () => {
+  const pkg = await assessSolution(structuredClone(SAMPLE_REQUEST));
+  const schema = readinessPackageJsonSchema(pkg.schemaVersion);
+  const evidenceSchema = schema.properties.evidence.items;
+  const ingestionSchema = schema.properties.sourceIngestion;
+  const allowedEvidenceFields = new Set(Object.keys(evidenceSchema.properties));
+  const allowedIngestionFields = new Set(Object.keys(ingestionSchema.properties));
+  const allowedItemFields = new Set(Object.keys(ingestionSchema.properties.items.items.properties));
+
+  assert.equal(evidenceSchema.additionalProperties, false);
+  assert.equal(ingestionSchema.additionalProperties, false);
+  assert.equal(ingestionSchema.properties.items.items.additionalProperties, false);
+  assert.ok(pkg.evidence.every((item) => Object.keys(item).every((field) => allowedEvidenceFields.has(field))));
+  assert.ok(pkg.evidence.every((item) => evidenceSchema.required.every((field) => Object.hasOwn(item, field))));
+  assert.ok(Object.keys(pkg.sourceIngestion).every((field) => allowedIngestionFields.has(field)));
+  assert.ok(ingestionSchema.required.every((field) => Object.hasOwn(pkg.sourceIngestion, field)));
+  assert.ok(pkg.sourceIngestion.items.every((item) => Object.keys(item).every((field) => allowedItemFields.has(field))));
+  assert.ok(pkg.sourceIngestion.items.every((item) => ingestionSchema.properties.items.items.required.every((field) => Object.hasOwn(item, field))));
+  for (const prohibited of ["content", "rawContent", "bytes", "cells", "pixels", "metadata"]) {
+    assert.equal(allowedEvidenceFields.has(prohibited), false);
+    assert.equal(allowedItemFields.has(prohibited), false);
+  }
+});
+
 test("the runtime contract rejects drift, authority escalation and hash tampering", async () => {
   const pkg = await assessSolution(structuredClone(SAMPLE_REQUEST));
 

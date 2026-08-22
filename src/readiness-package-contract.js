@@ -1,5 +1,7 @@
 import { READINESS_OUTCOMES, invariant } from "./contracts.js";
 import { sha256 } from "./core/hash.js";
+import { EVIDENCE_ACQUISITION_VERSION, INGESTION_DISPOSITIONS } from "./core/source-ingestion.js";
+import { SOURCE_INGESTION_VERSION } from "../public/upload-types.js";
 
 export const READINESS_PACKAGE_VERSIONS = Object.freeze(["1.4.0", "2.6.0"]);
 
@@ -20,6 +22,45 @@ const ARRAY_FIELDS = Object.freeze([
 
 const NULLABLE_OBJECT_FIELDS = Object.freeze(["coverageMatrix", "documentationGate", "publicationGate"]);
 
+const STRING_ARRAY_SCHEMA = Object.freeze({ type: "array", items: { type: "string" } });
+
+const EVIDENCE_ITEM_SCHEMA = Object.freeze({
+  type: "object", additionalProperties: false,
+  required: ["id", "sourceId", "path", "kind", "sha256", "excerpt", "signal", "domainIds", "controlIds", "antiPatternIds", "assuranceState", "polarity", "stale", "capturedAt"],
+  properties: {
+    id: { type: "string", minLength: 1 }, sourceId: { type: "string", minLength: 1 }, path: { type: "string" }, kind: { type: "string", minLength: 1 },
+    sha256: { type: "string", pattern: "^[a-f0-9]{64}$" }, excerpt: { type: "string" }, signal: { type: "string", minLength: 1 },
+    domainIds: STRING_ARRAY_SCHEMA, controlIds: STRING_ARRAY_SCHEMA, antiPatternIds: STRING_ARRAY_SCHEMA,
+    assuranceState: { type: "string", minLength: 1 }, polarity: { type: "string", minLength: 1 }, stale: { type: "boolean" },
+    capturedAt: { type: "string", format: "date-time" }, eligibleForAssurance: { type: "boolean" }, evidenceClass: { type: "string", minLength: 1 }
+  }
+});
+
+const SOURCE_INGESTION_ITEM_SCHEMA = Object.freeze({
+  type: "object", additionalProperties: false,
+  required: ["path", "size", "mimeType", "format", "artifactClass", "disposition", "reasonCode", "riskClass"],
+  properties: {
+    path: { type: "string" }, size: { type: ["number", "null"], minimum: 0 }, mimeType: { type: "string" }, format: { type: ["string", "null"] },
+    artifactClass: { type: "string" }, disposition: { type: "string", enum: INGESTION_DISPOSITIONS }, reasonCode: { type: "string" }, riskClass: { type: "string" },
+    acquisitionLane: { type: "string" }, rawContentPolicy: { type: "string" }, egressPolicy: { type: "string" },
+    derivedUnitIds: STRING_ARRAY_SCHEMA, analyzerVersion: { type: ["string", "null"] }
+  }
+});
+
+const SOURCE_INGESTION_SCHEMA = Object.freeze({
+  type: "object", additionalProperties: false,
+  required: ["version", "acquisitionContractVersion", "selectionMode", "selectionCompleteness", "selectedCount", "acceptedCount", "parsedCount", "excludedCount", "failedCount", "unsafeCount", "laneCounts", "coverageStatus", "relevantExclusionCount", "items", "humanCoverageAcceptance", "manifestHash"],
+  properties: {
+    version: { const: SOURCE_INGESTION_VERSION }, acquisitionContractVersion: { const: EVIDENCE_ACQUISITION_VERSION },
+    selectionMode: { type: "string" }, selectionCompleteness: { type: "string" },
+    selectedCount: { type: "integer", minimum: 0 }, acceptedCount: { type: "integer", minimum: 0 }, parsedCount: { type: "integer", minimum: 0 },
+    excludedCount: { type: "integer", minimum: 0 }, failedCount: { type: "integer", minimum: 0 }, unsafeCount: { type: "integer", minimum: 0 },
+    laneCounts: { type: "object", additionalProperties: { type: "integer", minimum: 0 } }, coverageStatus: { type: "string" }, relevantExclusionCount: { type: "integer", minimum: 0 },
+    items: { type: "array", items: SOURCE_INGESTION_ITEM_SCHEMA }, humanCoverageAcceptance: { type: ["object", "null"] },
+    manifestHash: { type: "string", pattern: "^[a-f0-9]{64}$" }
+  }
+});
+
 export function readinessPackageJsonSchema(schemaVersion = "2.6.0") {
   invariant(READINESS_PACKAGE_VERSIONS.includes(schemaVersion), "ReadinessPackage schemaVersion is unsupported");
   const fields = [...COMMON_FIELDS, ...(schemaVersion === "2.6.0" ? ["cognitive"] : [])];
@@ -36,6 +77,8 @@ export function readinessPackageJsonSchema(schemaVersion = "2.6.0") {
     rulesetVersion: { type: "string", minLength: 1 },
     generatedAt: { type: "string", format: "date-time" },
     packageHash: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    evidence: { type: "array", items: EVIDENCE_ITEM_SCHEMA },
+    sourceIngestion: SOURCE_INGESTION_SCHEMA,
     recommendation: {
       type: "object", additionalProperties: false,
       required: ["outcome", "rationale", "formalApproval", "boundary"],

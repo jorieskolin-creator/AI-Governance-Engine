@@ -42,6 +42,7 @@ export function serializeDurableRun(run, now = new Date()) {
     durableRun.dossier = null;
     durableRun.solutionProfile = null;
     durableRun.discoveryRecheck = null;
+    durableRun.acquisitionDiagnostics = null;
     durableRun.registeredSources = [];
     durableRun.dlpFindings = [];
     durableRun.sourceIngestion = {

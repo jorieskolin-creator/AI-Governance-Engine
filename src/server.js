@@ -15,6 +15,7 @@ import { sanitizeRestrictedValue } from "../public/content-policy.js";
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./intake/field-registry.js";
 import { validateApprovedIntakeSnapshot } from "./intake/contracts.js";
 import { createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "./intake/acquired-facts.js";
+import { setAcquisitionGenAiStatus } from "./intake/acquisition-diagnostics.js";
 import { createCognitiveStepLedger, prepareInterruptedRunRestart, recoveredExecutionDataUnavailable, RECOVERY_RESTART_PURPOSE, releaseLocalEvidenceForCognitiveExecution } from "./cognitive/orchestration.js";
 import { cancellationError, classifyCognitiveFailure } from "./cognitive/failure-policy.js";
 
@@ -295,6 +296,7 @@ const server = http.createServer(async (request, response) => {
         sourceManifest: run.registeredSources,
         dlpFindings: run.dlpFindings,
         sourceIngestion: run.sourceIngestion,
+        acquisitionDiagnostics: run.acquisitionDiagnostics,
         discoveryRecheck,
         citationIndex: run.packets.flatMap((packet) => packet.sourceUnits.map((unit) => ({ sourceUnitId: unit.id, path: unit.path, locator: unit.locator, sha256: unit.sha256 })))
       });
@@ -335,6 +337,7 @@ const server = http.createServer(async (request, response) => {
         if (blocking.length) {
           run.stage = "INTAKE_AI_VERIFICATION_BLOCKED";
           run.discoveryRecheck = { status: "BLOCKED_BY_LOCAL_DLP", policy: "AI verification was not started because source transmission is blocked by local screening.", blockingFindingIds: blocking.map((item) => item.id) };
+          setAcquisitionGenAiStatus(run, "BLOCKED_BY_PRIVACY");
           run.trace.push({ stage: "INTAKE_AI_VERIFICATION", status: "BLOCKED", at: new Date().toISOString(), blockingFindingIds: blocking.map((item) => item.id) });
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
           return sendJson(response, 200, run.discoveryRecheck);
@@ -348,6 +351,7 @@ const server = http.createServer(async (request, response) => {
         } catch (error) {
           run.stage = "INTAKE_AI_VERIFICATION_UNAVAILABLE";
           run.discoveryRecheck = { status: "UNAVAILABLE", failureCode: safeFailureCode(error), policy: "The deterministic Intake draft remains available. AI candidates were not used." };
+          setAcquisitionGenAiStatus(run, "UNAVAILABLE", run.discoveryRecheck.failureCode);
           run.trace.push({ stage: "INTAKE_AI_VERIFICATION", status: "UNAVAILABLE", at: new Date().toISOString(), failureCode: run.discoveryRecheck.failureCode });
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
           return sendJson(response, 200, run.discoveryRecheck);

@@ -75,6 +75,7 @@ test("durable run checkpoints exclude raw evidence and fail closed under tamperi
   assert.doesNotMatch(JSON.stringify(envelope), new RegExp(rawMarker));
   assert.deepEqual(envelope.run.localSourceUnits, []);
   assert.equal(envelope.run.dossier, null);
+  assert.equal(envelope.run.acquisitionDiagnostics, null);
   assert.ok(envelope.run.packets.flatMap((packet) => packet.sourceUnits).every((unit) => unit.derivation?.rawContentIncluded === false));
 
   const recovered = deserializeDurableRun(envelope);

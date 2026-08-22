@@ -484,13 +484,23 @@ async function selectedSources() {
   return preparedSources;
 }
 
-function renderDiscovery(profile, dlpFindings = [], recheck = null, citationIndex = []) {
+function renderDiscovery(profile, dlpFindings = [], recheck = null, citationIndex = [], acquisitionDiagnostics = null) {
   latestSolutionProfile = profile;
   const citations = new Map(citationIndex.map((item) => [item.sourceUnitId, item]));
   const root = $("discovery-results"); root.replaceChildren();
   const heading = el("div", "discovery-heading");
   heading.append(el("strong", "", "Detected Assessment Intake draft"), el("span", "", `${profile.sourceCount} parsed source(s) · ${dlpFindings.length} local screening indicator(s)`));
   root.append(heading);
+  if (acquisitionDiagnostics) {
+    const counts = acquisitionDiagnostics.counts;
+    const diagnostics = el("div", "discovery-fact");
+    diagnostics.append(
+      el("strong", "", "Evidence acquisition diagnostics"),
+      el("span", "", `${counts.SELECTED} selected · ${counts.ACCEPTED} accepted · ${counts.PARSED} parsed · ${counts.CONTENT_EXTRACTED} content-extracted · ${counts.INTAKE_USEFUL} Intake-useful · ${counts.EXCLUDED} excluded · ${counts.FAILED} failed · ${counts.PRIVACY_BLOCKED} privacy-blocked`),
+      el("small", "", `Technical loss: ${acquisitionDiagnostics.technicalLoss.count} source(s). Genuine source silence: ${acquisitionDiagnostics.sourceSilence.count} source(s). GenAI: ${label(acquisitionDiagnostics.genAi.status)}.`)
+    );
+    root.append(diagnostics);
+  }
   const fields = ["name", "accountableOwner", "intendedPurpose", "expectedValue", "jurisdictions", "roles", "users"];
   const grid = el("div", "discovery-grid");
   for (const field of fields) {
@@ -593,9 +603,9 @@ async function discoverCaseInformation() {
     const preflight = await postJson("/api/v2/runs/preflight", prepared);
     activeRunId = preflight.runId;
     latestSolutionProfile = preflight.solutionProfile;
-    latestDiscoveryContext = { profile: preflight.solutionProfile, dlpFindings: preflight.dlpFindings, citationIndex: preflight.citationIndex, packets: preflight.packets, acquiredFacts: preflight.acquiredFacts, selectedAcquiredFactIds: [] };
+    latestDiscoveryContext = { profile: preflight.solutionProfile, dlpFindings: preflight.dlpFindings, citationIndex: preflight.citationIndex, packets: preflight.packets, acquiredFacts: preflight.acquiredFacts, acquisitionDiagnostics: preflight.acquisitionDiagnostics, selectedAcquiredFactIds: [] };
     fillDossier(preflight.solutionProfile.suggestedDossier);
-    renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, null, preflight.citationIndex);
+    renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, null, preflight.citationIndex, preflight.acquisitionDiagnostics);
     const blocked = preflight.dlpFindings.some((item) => item.blocking);
     $("request-ai-proposals").classList.toggle("hidden", blocked);
     $("request-ai-proposals").disabled = false;
@@ -630,7 +640,7 @@ async function requestAiProposals() {
   } catch {
     recheck = { status: "UNAVAILABLE", failureCode: "INTAKE_AI_VERIFICATION_REQUEST_FAILED" };
   }
-  renderDiscovery(latestDiscoveryContext.profile, latestDiscoveryContext.dlpFindings, recheck, latestDiscoveryContext.citationIndex);
+  renderDiscovery(latestDiscoveryContext.profile, latestDiscoveryContext.dlpFindings, recheck, latestDiscoveryContext.citationIndex, latestDiscoveryContext.acquisitionDiagnostics);
   const completed = recheck.status === "COMPLETED";
   setIntakeFlow("USER_RESOLUTION", { limitedSteps: completed ? [] : ["AI_VERIFICATION"] });
   $("request-ai-proposals").classList.add("hidden");

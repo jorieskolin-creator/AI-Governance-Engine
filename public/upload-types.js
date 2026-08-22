@@ -65,6 +65,7 @@ export function classifyUploadPath(fileName, browserMimeType = "") {
   if (irrelevantPath.test(path)) return { path, disposition: "KNOWN_IRRELEVANT", reasonCode: "EXCLUDED_DIRECTORY", riskClass: "IRRELEVANT", mimeType: "", format: null };
   const mimeType = resolveUploadMimeType(path, browserMimeType);
   if (mimeType) return { path, disposition: "ACCEPTED", reasonCode: "SUPPORTED_FORMAT", riskClass: "RELEVANT", mimeType, format: acceptedFormatsByMime[mimeType] };
+  if (extension === "zip") return { path, disposition: "UNSUPPORTED_BINARY", reasonCode: "UNSUPPORTED_SOURCE_CONTAINER", riskClass: "IRRELEVANT", mimeType: "", format: null };
   if (knownBinaryExtension.has(extension)) return { path, disposition: "UNSUPPORTED_BINARY", reasonCode: "UNSUPPORTED_BINARY_FORMAT", riskClass: "IRRELEVANT", mimeType: "", format: null };
   return { path, disposition: "UNSUPPORTED_SOURCE_LIKE", reasonCode: "UNSUPPORTED_OR_UNKNOWN_FORMAT", riskClass: "REVIEW_REQUIRED", mimeType: "", format: null };
 }

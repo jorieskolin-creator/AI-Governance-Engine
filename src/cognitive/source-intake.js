@@ -232,6 +232,10 @@ export async function parseAndScreenSources(sources, options = {}) {
       const safePath = sanitizeRestrictedText(source.path);
       const sourceId = stableId("src", { path: source.path, sourceHash });
       const segments = await extractSegments(source, bytes);
+      const extractionLimitationCodes = [];
+      if (source.format === "HTML" && /<script\b[\s\S]*?<\/script>/i.test(bytes.toString("utf8"))) {
+        extractionLimitationCodes.push("EMBEDDED_SCRIPT_CONTENT_NOT_INSPECTED");
+      }
       const artifactClass = classifyArtifact(source.path, source.metadata);
       const sourceKind = source.metadata?.kind ?? sourceKindForPath(source.path);
       const localUnits = [];
@@ -294,7 +298,13 @@ export async function parseAndScreenSources(sources, options = {}) {
         rawContentPolicy: localOnly ? "LOCAL_ONLY" : "REDACTED_CONTENT_REQUIRES_APPROVAL",
         egressPolicy: localOnly ? "DETERMINISTIC_SUMMARY_ONLY" : "REDACTED_SOURCE_UNITS",
         derivedUnitIds: localOnly ? egressUnits.map((unit) => unit.id) : [],
-        analyzerVersion: media ? MEDIA_EVIDENCE_SUMMARY_VERSION : tabular ? TABULAR_EVIDENCE_SUMMARY_VERSION : codeOrConfiguration ? CODE_EVIDENCE_SUMMARY_VERSION : approvedIntake ? null : DOCUMENT_EVIDENCE_SUMMARY_VERSION
+        analyzerVersion: media ? MEDIA_EVIDENCE_SUMMARY_VERSION : tabular ? TABULAR_EVIDENCE_SUMMARY_VERSION : codeOrConfiguration ? CODE_EVIDENCE_SUMMARY_VERSION : approvedIntake ? null : DOCUMENT_EVIDENCE_SUMMARY_VERSION,
+        extractionDiagnostics: {
+          extractedUnitCount: localUnits.length,
+          extractedCharacters: segments.reduce((total, segment) => total + segment.text.length, 0),
+          extractedMediaCount: segments.filter((segment) => segment.media).length,
+          limitationCodes: extractionLimitationCodes
+        }
       });
     } catch (error) {
       if (!options.continueOnError) throw error;

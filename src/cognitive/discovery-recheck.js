@@ -6,6 +6,7 @@ import { activeIntakeQuestionIds } from "../knowledge/intake-questionnaire.js";
 import { stableId } from "../core/hash.js";
 import { intakeField } from "../intake/field-registry.js";
 import { COGNITIVE_PROVIDERS } from "./provider-adapters.js";
+import { setAcquisitionGenAiStatus } from "../intake/acquisition-diagnostics.js";
 
 const MAX_RECHECK_CHARS = 60_000;
 
@@ -63,6 +64,7 @@ function safeTargetValue(run, fact) {
 export async function recheckDiscovery(run, input, options = {}) {
   if (!run?.solutionProfile) throw new Error("Deterministic discovery must complete before AI recheck");
   if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.discoveryRecheck) throw new Error("AI Intake verification is not available from the current run state");
+  setAcquisitionGenAiStatus(run, "REQUESTED");
   run.stage = "INTAKE_AI_VERIFICATION_IN_PROGRESS";
   run.trace.push({ stage: "INTAKE_AI_VERIFICATION", status: "RUNNING", at: new Date().toISOString() });
   const approval = validateExecutionApproval(input, run);
@@ -139,6 +141,7 @@ export async function recheckDiscovery(run, input, options = {}) {
     transmittedAt: new Date().toISOString()
   });
   run.discoveryRecheck = { status: "COMPLETED", provider: profile.provider, configuredModel: profile.model, targetFields: targetFields.map((item) => item.field), candidates, trace: generated.trace };
+  setAcquisitionGenAiStatus(run, "COMPLETED");
   run.stage = "INTAKE_AI_VERIFICATION_COMPLETED";
   run.trace.push({ stage: "DISCOVERY_RECHECK", status: "COMPLETED", at: new Date().toISOString(), candidateCount: candidates.length, outputHash: generated.trace.outputHash });
   return run.discoveryRecheck;

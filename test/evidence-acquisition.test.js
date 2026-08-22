@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { createPreflight, publicPreflightView } from "../src/cognitive/preflight.js";
 import { recheckDiscovery } from "../src/cognitive/discovery-recheck.js";
 import { modelPolicy as createModelPolicy } from "../src/cognitive/model-policy.js";
@@ -14,9 +15,57 @@ import { ACQUIRED_FACT_SELECTION_VERSION, createAcquiredFactSelectionUnit, valid
 import { DOCUMENT_EVIDENCE_SUMMARY_VERSION, validateDocumentEvidenceSummary } from "../src/intake/document-evidence.js";
 import { MEDIA_EVIDENCE_SUMMARY_VERSION, validateMediaEvidenceSummary } from "../src/intake/media-evidence.js";
 import { createTabularEvidenceUnit, TABULAR_EVIDENCE_SUMMARY_VERSION, validateTabularEvidenceSummary } from "../src/intake/tabular-evidence.js";
+import { setAcquisitionGenAiStatus, validateAcquisitionDiagnostics } from "../src/intake/acquisition-diagnostics.js";
+import { classifyUploadPath, provisionalIngestionManifest } from "../public/upload-types.js";
 
 const rawMarker = "internal-project-orchid-customer-table";
 const modelPolicy = (env) => createModelPolicy(env, { qualificationRequired: false });
+
+test("synthetic regression inputs distinguish technical loss from genuine source silence", async () => {
+  const fixture = (name) => readFile(new URL(`./fixtures/evidence-acquisition/${name}`, import.meta.url), "utf8");
+  const narrative = await fixture("narrative-architecture.html");
+  const embedded = await fixture("embedded-data-report.html");
+  const sources = [
+    { path: "synthetic/narrative-architecture.html", mimeType: "text/html", content: narrative },
+    { path: "synthetic/embedded-data-report.html", mimeType: "text/html", content: embedded },
+    { path: "synthetic/labelled-intake.txt", mimeType: "text/plain", content: "Solution name: Synthetic Intake Fixture" },
+    { path: "synthetic/unreviewed-screen.png", mimeType: "image/png", encoding: "base64", content: Buffer.from("89504e470d0a1a0a00000000", "hex").toString("base64") },
+    { path: "synthetic/broken-report.pdf", mimeType: "application/pdf", encoding: "base64", content: Buffer.from("%PDF-not-a-document").toString("base64") }
+  ];
+  const selected = [
+    ...sources.map((source) => ({ ...classifyUploadPath(source.path, source.mimeType), size: source.content.length })),
+    { ...classifyUploadPath("synthetic/reference-repository.zip", "application/zip"), size: 512 }
+  ];
+  const run = await createPreflight({ sources, sourceIngestion: provisionalIngestionManifest(selected, "INDIVIDUAL_FILES") });
+  const diagnostics = run.acquisitionDiagnostics;
+
+  assert.deepEqual(diagnostics.counts, {
+    SELECTED: 6,
+    ACCEPTED: 5,
+    PARSED: 4,
+    CONTENT_EXTRACTED: 3,
+    INTAKE_USEFUL: 1,
+    EXCLUDED: 1,
+    FAILED: 1,
+    PRIVACY_BLOCKED: 1
+  });
+  assert.deepEqual(diagnostics.technicalLoss, { count: 4, present: true });
+  assert.deepEqual(diagnostics.sourceSilence, { count: 1, present: true });
+  assert.equal(diagnostics.genAi.status, "BLOCKED_BY_PRIVACY");
+  assert.match(diagnostics.diagnosticsHash, /^[a-f0-9]{64}$/);
+  assert.deepEqual(diagnostics.items.find((item) => item.path.endsWith("reference-repository.zip")).technicalLossReasonCodes, ["UNSUPPORTED_SOURCE_CONTAINER"]);
+  assert.deepEqual(diagnostics.items.find((item) => item.path.endsWith("embedded-data-report.html")).technicalLossReasonCodes, ["EMBEDDED_SCRIPT_CONTENT_NOT_INSPECTED"]);
+  assert.equal(diagnostics.items.find((item) => item.path.endsWith("narrative-architecture.html")).intakeFactCount, 0);
+  assert.ok(diagnostics.items.find((item) => item.path.endsWith("labelled-intake.txt")).states.includes("INTAKE_USEFUL"));
+  assert.doesNotMatch(JSON.stringify(publicPreflightView(run).acquisitionDiagnostics), /Fixture-only hidden value/);
+
+  const tampered = structuredClone(diagnostics);
+  tampered.sourceSilence.count = 99;
+  assert.throws(() => validateAcquisitionDiagnostics(tampered), /integrity check/i);
+
+  setAcquisitionGenAiStatus(run, "UNAVAILABLE", "MODEL_PROFILES_UNAPPROVED");
+  assert.deepEqual(run.acquisitionDiagnostics.genAi, { status: "UNAVAILABLE", failureCode: "MODEL_PROFILES_UNAPPROVED" });
+});
 
 test("raw code stays local while the provider-eligible unit contains only a validated deterministic summary", async () => {
   const screened = await parseAndScreenSources([{

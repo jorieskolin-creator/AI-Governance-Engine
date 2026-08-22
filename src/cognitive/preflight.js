@@ -7,6 +7,7 @@ import { activeIntakeAnswers, INTAKE_QUESTIONNAIRE } from "../knowledge/intake-q
 import { buildSourceIngestionManifest } from "../core/source-ingestion.js";
 import { createApprovedIntakeSnapshot } from "../intake/contracts.js";
 import { createAcquiredFactPackage } from "../intake/acquired-facts.js";
+import { createAcquisitionDiagnostics } from "../intake/acquisition-diagnostics.js";
 
 const DEFAULT_PACKET_CHARS = 18_000;
 
@@ -46,6 +47,7 @@ export function publicPreflightView(run) {
     solutionProfile: run.solutionProfile,
     acquiredFacts: run.acquiredFacts,
     sourceIngestion: run.sourceIngestion,
+    acquisitionDiagnostics: run.acquisitionDiagnostics ?? null,
     discoveryRecheck: run.discoveryRecheck ?? null,
     approvedIntake: run.approvedIntake ? {
       schemaVersion: run.approvedIntake.schemaVersion,
@@ -74,6 +76,13 @@ export async function createPreflight(input, options = {}) {
   };
   run.solutionProfile = discoverSolutionProfile(screened.localSourceUnits.filter((item) => item.path !== "intended-use-dossier.json"), validated.dossier);
   run.acquiredFacts = createAcquiredFactPackage(run.solutionProfile, run.dlpFindings);
+  run.acquisitionDiagnostics = createAcquisitionDiagnostics({
+    sourceIngestion: run.sourceIngestion,
+    registeredSources: run.registeredSources,
+    localSourceUnits: run.localSourceUnits,
+    dlpFindings: run.dlpFindings,
+    acquiredFacts: run.acquiredFacts
+  });
   run.trace.push({ stage: "PREFLIGHT", status: "COMPLETED", at: now.toISOString(), outputHash: sha256({ manifest: run.registeredSources, dlp: run.dlpFindings, packets: run.packets.map((item) => item.hash) }) });
   return run;
 }
@@ -88,6 +97,7 @@ export function publicDiscoveryView(run) {
     dlpFindings: run.dlpFindings,
     sourceManifest: run.registeredSources,
     sourceIngestion: run.sourceIngestion,
+    acquisitionDiagnostics: run.acquisitionDiagnostics ?? null,
     discoveryRecheck: run.discoveryRecheck ?? null,
     citationIndex: run.packets.flatMap((packet) => packet.sourceUnits.map((unit) => ({ sourceUnitId: unit.id, path: unit.path, locator: unit.locator, sha256: unit.sha256 })))
   };

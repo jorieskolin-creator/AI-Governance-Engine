@@ -31,6 +31,14 @@ test("GenAI Intake proposals are optional and require an explicit safe-summary r
   assert.match(server, /stage: "INTAKE_AI_PROPOSAL_CONSENT", status: "CONFIRMED"/);
 });
 
+test("acquisition diagnostics distinguish technical loss from source silence", () => {
+  assert.match(app, /Evidence acquisition diagnostics/);
+  assert.match(app, /content-extracted/);
+  assert.match(app, /Intake-useful/);
+  assert.match(app, /Technical loss:/);
+  assert.match(app, /Genuine source silence:/);
+});
+
 test("the Intake workspace is exception-focused and marks accepted AI proposals as user edits", () => {
   assert.match(index, /id="intake-review-summary"/);
   assert.equal((index.match(/class="intake-workspace-section"/g) ?? []).length, 3);

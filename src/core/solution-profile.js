@@ -1,4 +1,4 @@
-import { LIFECYCLE_STAGES } from "../contracts.js";
+import { invariant, LIFECYCLE_STAGES } from "../contracts.js";
 import { sha256, stableId } from "./hash.js";
 import { activeIntakeQuestionIds, INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
 import { classifyIntakeSearchEvidence, INTAKE_SEARCH_REGISTRY, intakeSearchField } from "../intake/search-registry.js";
@@ -94,14 +94,14 @@ function sourceText(sources) {
   });
 }
 
-function explicitMatches(sources, value, field) {
+function explicitMatches(sources, value, field, searchOverrides) {
   const needles = (Array.isArray(value) ? value : [value]).map(normalize).filter(Boolean);
   if (!needles.length) return [];
-  return unique(searchEntries(sources, field).filter((entry) => needles.every((needle) => normalize(entry.text).includes(needle))).map((entry) => entry.sourceUnitId));
+  return unique(searchEntries(sources, field, searchOverrides).filter((entry) => needles.every((needle) => normalize(entry.text).includes(needle))).map((entry) => entry.sourceUnitId));
 }
 
-function labelledValue(sources, field) {
-  const entry = labelledEntry(sources, field);
+function labelledValue(sources, field, searchOverrides) {
+  const entry = labelledEntry(sources, field, searchOverrides);
   if (!entry) return null;
   if (entry.conflict) return { value: null, sourceUnitIds: entry.sourceUnitIds, candidates: entry.candidates, conflict: true };
   const candidate = entry.text;
@@ -112,9 +112,33 @@ function labelledValue(sources, field) {
 
 const escaped = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const words = (value) => String(value).replaceAll("_", " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\s+/g, " ").trim();
+const BOUNDED_SEARCH_TERM = /^[\p{L}\p{N}][\p{L}\p{N} _/-]{0,79}$/u;
 
-function searchEntries(sources, fieldId) {
-  const rule = intakeSearchField(fieldId);
+function validatedSearchOverride(fieldId, registeredRule, override) {
+  if (!override) return null;
+  invariant(registeredRule && override && typeof override === "object" && !Array.isArray(override), `Search override is invalid for ${fieldId}`);
+  invariant(Object.keys(override).sort().join(",") === "extractionStrategies,labelAliases,searchConcepts,sourcePriorities", `Search override contains unregistered fields for ${fieldId}`);
+  for (const key of ["searchConcepts", "labelAliases"]) {
+    invariant(Array.isArray(override[key]) && override[key].length <= 8 && new Set(override[key].map(normalize)).size === override[key].length && override[key].every((term) => typeof term === "string" && term === term.trim() && BOUNDED_SEARCH_TERM.test(term)), `Search override ${key} is invalid for ${fieldId}`);
+  }
+  invariant(Array.isArray(override.sourcePriorities) && new Set(override.sourcePriorities).size === override.sourcePriorities.length && override.sourcePriorities.every((type) => registeredRule.evidenceTypes.includes(type)), `Search override source priorities are invalid for ${fieldId}`);
+  invariant(Array.isArray(override.extractionStrategies) && new Set(override.extractionStrategies).size === override.extractionStrategies.length && override.extractionStrategies.every((strategy) => registeredRule.extractionStrategies.includes(strategy)), `Search override extraction strategies are invalid for ${fieldId}`);
+  return override;
+}
+
+function searchEntries(sources, fieldId, searchOverrides) {
+  const registeredRule = intakeSearchField(fieldId);
+  const override = validatedSearchOverride(fieldId, registeredRule, searchOverrides?.[fieldId]);
+  const suggestedAliases = unique([...(override?.searchConcepts ?? []), ...(override?.labelAliases ?? [])]);
+  const rule = registeredRule && override ? {
+    ...registeredRule,
+    labels: unique([...registeredRule.labels, ...suggestedAliases]),
+    headingAliases: unique([...registeredRule.headingAliases, ...suggestedAliases]),
+    tableLabels: unique([...registeredRule.tableLabels, ...suggestedAliases]),
+    evidenceTypes: override.sourcePriorities.length ? [...override.sourcePriorities] : [...registeredRule.evidenceTypes],
+    sourcePriorities: override.sourcePriorities.length ? [...override.sourcePriorities] : [...registeredRule.sourcePriorities],
+    extractionStrategies: override.extractionStrategies.length ? [...override.extractionStrategies] : [...registeredRule.extractionStrategies]
+  } : registeredRule;
   if (!rule) return [];
   const strategies = new Set(rule.extractionStrategies);
   const eligible = sources.filter((source) => rule.evidenceTypes.includes(source.searchEvidenceType))
@@ -195,8 +219,8 @@ function searchEntries(sources, fieldId) {
   return entries.sort((a, b) => a.sourcePriority - b.sourcePriority || a.sourceIndex - b.sourceIndex);
 }
 
-function labelledEntry(sources, field) {
-  const entries = searchEntries(sources, field);
+function labelledEntry(sources, field, searchOverrides) {
+  const entries = searchEntries(sources, field, searchOverrides);
   if (!entries.length) return null;
   const candidates = unique(entries.map((entry) => entry.text));
   const normalizedCandidates = unique(candidates.map(normalize));
@@ -205,8 +229,8 @@ function labelledEntry(sources, field) {
     : { text: entries[0].text, conflict: false, candidates, sourceUnitIds: unique(entries.map((entry) => entry.sourceUnitId)) };
 }
 
-function detectedEnum(sources, field, options) {
-  const entry = labelledEntry(sources, field);
+function detectedEnum(sources, field, options, searchOverrides) {
+  const entry = labelledEntry(sources, field, searchOverrides);
   if (!entry) return null;
   if (entry.conflict) return { value: null, sourceUnitIds: entry.sourceUnitIds, candidates: entry.candidates, conflict: true };
   const normalized = words(entry.text).toLowerCase();
@@ -216,12 +240,12 @@ function detectedEnum(sources, field, options) {
   return matches.length ? { value: matches[0][0], sourceUnitIds: entry.sourceUnitIds } : null;
 }
 
-function detectedBoolean(sources, field) {
-  return detectedEnum(sources, field, [[true, ["yes", "true"]], [false, ["no", "false"]]]);
+function detectedBoolean(sources, field, searchOverrides) {
+  return detectedEnum(sources, field, [[true, ["yes", "true"]], [false, ["no", "false"]]], searchOverrides);
 }
 
-function detectedQuestionAnswer(sources, question) {
-  const entry = labelledEntry(sources, `intakeAnswers.${question.id}`);
+function detectedQuestionAnswer(sources, question, searchOverrides) {
+  const entry = labelledEntry(sources, `intakeAnswers.${question.id}`, searchOverrides);
   if (!entry) return null;
   if (entry.conflict) return { answerState: "HUMAN_REVIEW_REQUIRED", values: [], sourceUnitIds: entry.sourceUnitIds, supportStatus: "CONFLICTING", candidates: entry.candidates };
   const normalized = words(entry.text).toLowerCase();
@@ -247,8 +271,8 @@ function detectedQuestionAnswer(sources, question) {
   };
 }
 
-function detectedName(sources) {
-  const candidates = searchEntries(sources, "name").map((entry) => ({ value: entry.text, sourceUnitId: entry.sourceUnitId }));
+function detectedName(sources, searchOverrides) {
+  const candidates = searchEntries(sources, "name", searchOverrides).map((entry) => ({ value: entry.text, sourceUnitId: entry.sourceUnitId }));
   if (!candidates.length) return null;
   const canonical = new Map();
   for (const candidate of candidates) canonical.set(normalizedFieldValue("name", candidate.value), [...(canonical.get(normalizedFieldValue("name", candidate.value)) ?? []), candidate]);
@@ -256,8 +280,8 @@ function detectedName(sources) {
   return { value: candidates[0].value, sourceUnitIds: unique(candidates.map((item) => item.sourceUnitId)), strength: "EXPLICIT" };
 }
 
-function detectedList(sources, field, values) {
-  const entries = searchEntries(sources, field);
+function detectedList(sources, field, values, searchOverrides) {
+  const entries = searchEntries(sources, field, searchOverrides);
   const candidates = entries.map((entry) => ({
     text: entry.text,
     value: unique(values.filter(([, pattern]) => pattern.test(entry.text)).map(([canonical]) => canonical)),
@@ -387,6 +411,7 @@ function addSemanticContradictions(dossier, facts, contradictions) {
 
 export function discoverSolutionProfile(rawSources, declaredDossier = null, confirmation = {}, options = {}) {
   const sources = sourceText(rawSources);
+  const searchOverrides = options.searchOverrides;
   const discoveryTime = new Date().toISOString();
   const lifecycleOptions = LIFECYCLE_STAGES.map((stage) => [stage, [words(stage)]]);
   const accessOptions = [
@@ -398,48 +423,48 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
     ["EXTERNAL_UNSPECIFIED", ["external unspecified", "external"]],
     ["UNKNOWN", ["unknown"]]
   ];
-  const intakeAnswers = Object.fromEntries(INTAKE_QUESTIONNAIRE.questions.map((question) => [question.id, detectedQuestionAnswer(sources, question)]).filter(([, answer]) => answer));
+  const intakeAnswers = Object.fromEntries(INTAKE_QUESTIONNAIRE.questions.map((question) => [question.id, detectedQuestionAnswer(sources, question, searchOverrides)]).filter(([, answer]) => answer));
   const detected = {
-    name: detectedName(sources),
-    intendedPurpose: labelledValue(sources, "intendedPurpose"),
-    expectedValue: labelledValue(sources, "expectedValue"),
-    accountableOwner: labelledValue(sources, "accountableOwner"),
-    currentStage: detectedEnum(sources, "currentStage", lifecycleOptions),
-    targetStage: detectedEnum(sources, "targetStage", lifecycleOptions),
-    jurisdictions: detectedList(sources, "jurisdictions", [["FI", /\b(?:Finland|Finnish|FI|FIN)\b/i], ["EU", /\b(?:European Union|EU|EEA)\b/i]]),
-    roles: detectedList(sources, "roles", [["PROVIDER", /\bprovider\b/i], ["DEPLOYER", /\bdeployer\b/i], ["IMPORTER", /\bimporter\b/i], ["DISTRIBUTOR", /\bdistributor\b/i]]),
-    users: detectedList(sources, "users", [["EMPLOYEES", /\b(?:employees?|internal users?|staff)\b/i], ["CUSTOMERS", /\b(?:customers?|end users?|consumers?)\b/i]]),
+    name: detectedName(sources, searchOverrides),
+    intendedPurpose: labelledValue(sources, "intendedPurpose", searchOverrides),
+    expectedValue: labelledValue(sources, "expectedValue", searchOverrides),
+    accountableOwner: labelledValue(sources, "accountableOwner", searchOverrides),
+    currentStage: detectedEnum(sources, "currentStage", lifecycleOptions, searchOverrides),
+    targetStage: detectedEnum(sources, "targetStage", lifecycleOptions, searchOverrides),
+    jurisdictions: detectedList(sources, "jurisdictions", [["FI", /\b(?:Finland|Finnish|FI|FIN)\b/i], ["EU", /\b(?:European Union|EU|EEA)\b/i]], searchOverrides),
+    roles: detectedList(sources, "roles", [["PROVIDER", /\bprovider\b/i], ["DEPLOYER", /\bdeployer\b/i], ["IMPORTER", /\bimporter\b/i], ["DISTRIBUTOR", /\bdistributor\b/i]], searchOverrides),
+    users: detectedList(sources, "users", [["EMPLOYEES", /\b(?:employees?|internal users?|staff)\b/i], ["CUSTOMERS", /\b(?:customers?|end users?|consumers?)\b/i]], searchOverrides),
     dataCategories: detectedList(sources, "data.categories", [
       ["SYNTHETIC", /\b(?:synthetic|simulated)\b/i], ["PUBLIC_NON_PERSONAL", /\bpublic[-_ ]non[-_ ]personal(?:[-_ ]data)?\b/i], ["ANONYMIZED", /\banonymi[sz]ed\b/i],
       ["PSEUDONYMIZED", /\bpseudonymi[sz]ed\b/i], ["CLEANED_APPROVED_PRODUCTION", /\bcleaned (?:and )?approved production\b/i], ["RAW_PRODUCTION", /\braw production\b/i],
       ["PERSONAL_DATA", /(?<!non[-_ ])\bpersonal[-_ ]data\b/i], ["SPECIAL_CATEGORY_DATA", /\bspecial[-_ ]category[-_ ]data\b/i], ["CONFIDENTIAL_OR_PROPRIETARY", /\b(?:confidential|proprietary)\b/i]
-    ]),
-    personalData: detectedBoolean(sources, "data.personalData"),
-    specialCategoryData: detectedBoolean(sources, "data.specialCategoryData"),
-    productionData: detectedBoolean(sources, "data.productionData"),
-    currentUserAccess: detectedEnum(sources, "exposure.currentUserAccess", accessOptions),
-    intendedUserAccess: detectedEnum(sources, "exposure.intendedUserAccess", accessOptions),
-    externalUsers: detectedBoolean(sources, "exposure.externalUsers"),
-    productionAccess: detectedBoolean(sources, "exposure.productionAccess"),
-    consequentialDecisions: detectedBoolean(sources, "exposure.consequentialDecisions"),
-    usesAgents: detectedBoolean(sources, "agent.usesAgents"),
-    canTakeActions: detectedBoolean(sources, "agent.canTakeActions"),
-    irreversibleActions: detectedBoolean(sources, "agent.irreversibleActions"),
-    humanOverride: detectedBoolean(sources, "agent.humanOverride"),
-    prohibitedPractice: detectedBoolean(sources, "classification.prohibitedPractice"),
-    highRiskCandidate: detectedBoolean(sources, "classification.highRiskCandidate"),
-    allowedUses: labelledValue(sources, "operatingBoundary.allowedUses"),
-    excludedUses: labelledValue(sources, "operatingBoundary.excludedUses"),
+    ], searchOverrides),
+    personalData: detectedBoolean(sources, "data.personalData", searchOverrides),
+    specialCategoryData: detectedBoolean(sources, "data.specialCategoryData", searchOverrides),
+    productionData: detectedBoolean(sources, "data.productionData", searchOverrides),
+    currentUserAccess: detectedEnum(sources, "exposure.currentUserAccess", accessOptions, searchOverrides),
+    intendedUserAccess: detectedEnum(sources, "exposure.intendedUserAccess", accessOptions, searchOverrides),
+    externalUsers: detectedBoolean(sources, "exposure.externalUsers", searchOverrides),
+    productionAccess: detectedBoolean(sources, "exposure.productionAccess", searchOverrides),
+    consequentialDecisions: detectedBoolean(sources, "exposure.consequentialDecisions", searchOverrides),
+    usesAgents: detectedBoolean(sources, "agent.usesAgents", searchOverrides),
+    canTakeActions: detectedBoolean(sources, "agent.canTakeActions", searchOverrides),
+    irreversibleActions: detectedBoolean(sources, "agent.irreversibleActions", searchOverrides),
+    humanOverride: detectedBoolean(sources, "agent.humanOverride", searchOverrides),
+    prohibitedPractice: detectedBoolean(sources, "classification.prohibitedPractice", searchOverrides),
+    highRiskCandidate: detectedBoolean(sources, "classification.highRiskCandidate", searchOverrides),
+    allowedUses: labelledValue(sources, "operatingBoundary.allowedUses", searchOverrides),
+    excludedUses: labelledValue(sources, "operatingBoundary.excludedUses", searchOverrides),
     environment: detectedEnum(sources, "operatingBoundary.environment", [
       ["ISOLATED_SANDBOX", ["isolated sandbox", "sandbox"]], ["CONTROLLED_PILOT", ["controlled pilot", "pilot"]], ["PRODUCTION", ["production"]], ["UNKNOWN", ["unknown"]]
-    ]),
-    userScope: labelledValue(sources, "operatingBoundary.userScope"),
-    dataScope: labelledValue(sources, "operatingBoundary.dataScope"),
-    integrationScope: labelledValue(sources, "operatingBoundary.integrationScope"),
-    permissionScope: labelledValue(sources, "operatingBoundary.permissionScope"),
-    autonomyScope: labelledValue(sources, "operatingBoundary.autonomyScope"),
-    monitoringOwner: labelledValue(sources, "operatingBoundary.monitoringOwner"),
-    expiresAt: labelledValue(sources, "operatingBoundary.expiresAt"),
+    ], searchOverrides),
+    userScope: labelledValue(sources, "operatingBoundary.userScope", searchOverrides),
+    dataScope: labelledValue(sources, "operatingBoundary.dataScope", searchOverrides),
+    integrationScope: labelledValue(sources, "operatingBoundary.integrationScope", searchOverrides),
+    permissionScope: labelledValue(sources, "operatingBoundary.permissionScope", searchOverrides),
+    autonomyScope: labelledValue(sources, "operatingBoundary.autonomyScope", searchOverrides),
+    monitoringOwner: labelledValue(sources, "operatingBoundary.monitoringOwner", searchOverrides),
+    expiresAt: labelledValue(sources, "operatingBoundary.expiresAt", searchOverrides),
     intakeAnswers
   };
   const detectedByField = {
@@ -476,7 +501,7 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
   const contradictions = [];
   const provisionalDefaults = new Set(["currentStage", "targetStage", "operatingBoundary.environment"]);
   for (const [field, value] of Object.entries(flattened)) {
-    const direct = explicitMatches(sources, value, field);
+    const direct = explicitMatches(sources, value, field, searchOverrides);
     const discovery = detectedByField[field];
     const discoveredIds = discovery && normalizedFieldValue(field, discovery.value) === normalizedFieldValue(field, value) ? discovery.sourceUnitIds : [];
     const sourceUnitIds = unique([...direct, ...discoveredIds]);

@@ -96,6 +96,11 @@ test("HTTP workflow exposes readiness and fails closed before unapproved provide
     });
     assert.equal(unapprovedRetrievalPlan.status, 400);
     assert.match(unapprovedRetrievalPlan.body.error, /explicit confirmation/i);
+    const unavailableLocalReread = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(preflight.body.runId)}/retrieval-plan/execute`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    assert.equal(unavailableLocalReread.status, 409);
     const dossier = validateDossier(preflight.body.solutionProfile.suggestedDossier);
     const confirmed = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(preflight.body.runId)}/confirm`, {
       method: "POST",

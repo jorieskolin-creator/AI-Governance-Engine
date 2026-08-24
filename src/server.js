@@ -18,6 +18,7 @@ import { createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "./
 import { setAcquisitionGenAiStatus } from "./intake/acquisition-diagnostics.js";
 import { planIntakeRetrieval, RETRIEVAL_PLANNING_PURPOSE } from "./cognitive/retrieval-planner.js";
 import { COGNITIVE_PROVIDERS } from "./cognitive/provider-adapters.js";
+import { executeLocalReread, LOCAL_REREAD_PURPOSE } from "./intake/local-reread.js";
 import { createCognitiveStepLedger, prepareInterruptedRunRestart, recoveredExecutionDataUnavailable, RECOVERY_RESTART_PURPOSE, releaseLocalEvidenceForCognitiveExecution } from "./cognitive/orchestration.js";
 import { cancellationError, classifyCognitiveFailure } from "./cognitive/failure-policy.js";
 
@@ -277,7 +278,8 @@ const server = http.createServer(async (request, response) => {
       cognitiveContractVersion,
       buildRevision,
       discoveryRecheckAvailable: true,
-      retrievalPlannerAvailable: true
+      retrievalPlannerAvailable: true,
+      localRereadAvailable: true
     });
     if (request.method === "GET" && url.pathname === "/api/knowledge") return sendJson(response, 200, knowledgeManifestView(knowledge));
     if (request.method === "GET" && url.pathname === "/api/intake-questionnaire") return sendJson(response, 200, { ...knowledge.intakeQuestionnaire, source: knowledge.intakeQuestionnaireSource ?? "BUNDLED" });
@@ -349,6 +351,25 @@ const server = http.createServer(async (request, response) => {
           }
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
           return sendJson(response, 200, run.retrievalPlan);
+        }
+      } finally { await runStore.releaseLease(run.id); }
+    }
+    const localRereadMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/retrieval-plan\/execute$/);
+    if (request.method === "POST" && localRereadMatch) {
+      const run = await runStore.get(localRereadMatch[1]);
+      if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
+      if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.retrievalPlan?.status !== "COMPLETED" || run.localReread) return sendJson(response, 409, { error: "Local re-read is not available from the current run state" });
+      const consent = await readJson(request);
+      if (consent?.confirmed !== true || consent?.purpose !== LOCAL_REREAD_PURPOSE) return sendJson(response, 400, { error: "Explicit confirmation is required before executing the retrieval plan locally" });
+      if (consent.planHash !== run.retrievalPlan.plan.planHash) return sendJson(response, 409, { error: "The reviewed retrieval plan is no longer current" });
+      if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run mutation is already owned by another worker" });
+      try {
+        try {
+          const result = executeLocalReread(run, consent);
+          await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          return sendJson(response, 200, result);
+        } catch {
+          return sendJson(response, 422, { error: "The bounded local re-read did not complete; Intake candidates remain unchanged", failureCode: "LOCAL_REREAD_VALIDATION_FAILED" });
         }
       } finally { await runStore.releaseLease(run.id); }
     }

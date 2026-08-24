@@ -294,7 +294,7 @@ export function classifyArtifact(path, metadata = {}) {
   if (/(^|\/)(?:test|tests|spec|specs|__tests__)(\/|$)/.test(lower) || /(^|\/)(?:test|spec)[._-][^/]+$/.test(lower) || /(?:^|[._-])(?:test|spec)\.[^.]+$/.test(lower)) return "TEST";
   if (/\.(?:md|txt|html?|pdf|docx?|xlsx?|csv)$/.test(lower)) return "DOCUMENTATION";
   if (/\.(?:json|ya?ml|toml|ini|xml|properties|conf|cfg|gradle|kts|tf)$/.test(lower) || /dockerfile|makefile|procfile|\.env/.test(lower)) return "CONFIGURATION";
-  if (/\.(?:js|mjs|cjs|ts|tsx|jsx|py|java|go|rs|rb|php|cs|sql|sh|bash|zsh|fish|ps1|psm1|bat|cmd|c|cc|cpp|cxx|h|hh|hpp|kt|swift|scala|groovy|graphql|gql|prisma|proto|vue|svelte|astro)$/.test(lower)) return "PRODUCTION_CODE";
+  if (/\.(?:js|mjs|cjs|ts|tsx|jsx|css|py|java|go|rs|rb|php|cs|sql|sh|bash|zsh|fish|ps1|psm1|bat|cmd|c|cc|cpp|cxx|h|hh|hpp|kt|swift|scala|groovy|graphql|gql|prisma|proto|vue|svelte|astro)$/.test(lower)) return "PRODUCTION_CODE";
   return "OTHER";
 }
 

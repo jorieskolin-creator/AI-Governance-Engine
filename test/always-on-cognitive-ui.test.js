@@ -24,6 +24,9 @@ test("GenAI Intake proposals are optional and require an explicit safe-summary r
   assert.match(app, /selectedAcquiredFactIds/);
   assert.match(app, /Free text, unknowns, conflicts and unsupported values cannot be selected/);
   assert.match(app, /Review safe package available for optional GenAI proposals/);
+  assert.match(app, /GenAI proposal route unavailable/);
+  assert.match(app, /no qualified Solution Understanding model route is available/);
+  assert.match(app, /proposalProviders\.length === 0/);
   assert.match(app, /Raw documents, code, table values and image pixels remain local/);
   assert.doesNotMatch(app, /Deterministic Intake complete\. Running cited AI verification/);
   assert.match(server, /Explicit confirmation is required before requesting GenAI Intake proposals/);
@@ -39,6 +42,8 @@ test("acquisition diagnostics distinguish technical loss from source silence", (
   assert.match(app, /partially extracted/);
   assert.match(app, /unavailable/);
   assert.match(app, /Genuine source silence:/);
+  assert.match(app, /Review .* source ingestion exception/);
+  assert.match(app, /source-level limitations do not automatically apply to every Intake field/);
 });
 
 test("retrieval suggestions and local candidates have separate explicit UI authority boundaries", () => {
@@ -61,6 +66,8 @@ test("retrieval suggestions and local candidates have separate explicit UI autho
 test("ZIP source containers require explicit local extraction", () => {
   assert.match(index, /ZIP archives are not opened: extract them locally and select the extracted folder/);
   assert.match(app, /ZIP archive\(s\) must be extracted locally and selected as a folder/);
+  assert.match(app, /excluded or review-required before submission/);
+  assert.match(app, /previewSelectedSources\(\)/);
 });
 
 test("the Intake workspace is exception-focused and marks accepted AI proposals as user edits", () => {

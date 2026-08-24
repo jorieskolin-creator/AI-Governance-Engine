@@ -8,7 +8,7 @@ import { INTAKE_FIELD_REGISTRY } from "./field-registry.js";
 import { classifyIntakeSearchEvidence, INTAKE_SEARCH_REGISTRY, intakeSearchField } from "./search-registry.js";
 import { validateTabularEvidenceSummary } from "./tabular-evidence.js";
 
-export const INTAKE_GAP_ANALYSIS_VERSION = "intake-gap-analysis-1.1.0";
+export const INTAKE_GAP_ANALYSIS_VERSION = "intake-gap-analysis-1.2.0";
 
 const FIELD_STATES = new Set(["PRESENT", "CONFLICTING", "MISSING_UNKNOWN"]);
 const RETRIEVAL_DISPOSITIONS = new Set([
@@ -80,7 +80,7 @@ function technicalLossFor(rule, sourceIngestion, diagnostics) {
     const diagnostic = diagnosticByPath.get(item.path);
     if (!diagnostic?.technicalLossReasonCodes.length) return [];
     const evidenceType = classifyIntakeSearchEvidence(item);
-    return evidenceType === null || rule.evidenceTypes.includes(evidenceType) ? [diagnostic] : [];
+    return evidenceType !== null && rule.evidenceTypes.includes(evidenceType) ? [diagnostic] : [];
   });
   return {
     reasonCodes: [...new Set(relevant.flatMap((item) => item.technicalLossReasonCodes))].sort(),
@@ -142,8 +142,9 @@ export function validateIntakeGapAnalysis(analysis) {
     technicalRecoveryFieldCount: analysis.fields.filter((field) => field.retrievalDisposition === "TECHNICAL_RECOVERY_REQUIRED").length
   };
   invariant(JSON.stringify(analysis.summary) === JSON.stringify(expectedSummary), "Intake gap analysis summary is inconsistent");
-  invariant(Object.keys(analysis.coverage).sort().join(",") === ["contentExtractedSourceCount", "parsedSourceCount", "privacyBlockedSourceCount", "selectedSourceCount", "sourceEvidenceTypes", "technicalLossSourceCount"].sort().join(","), "Intake gap analysis coverage is invalid");
-  invariant(["selectedSourceCount", "parsedSourceCount", "contentExtractedSourceCount", "technicalLossSourceCount", "privacyBlockedSourceCount"].every((key) => Number.isInteger(analysis.coverage[key]) && analysis.coverage[key] >= 0), "Intake gap analysis coverage counts are invalid");
+  invariant(Object.keys(analysis.coverage).sort().join(",") === ["contentExtractedSourceCount", "parsedSourceCount", "privacyBlockedSourceCount", "selectedSourceCount", "sourceEvidenceTypes", "technicalLossSourceCount", "unscopedTechnicalLossSourceCount"].sort().join(","), "Intake gap analysis coverage is invalid");
+  invariant(["selectedSourceCount", "parsedSourceCount", "contentExtractedSourceCount", "technicalLossSourceCount", "unscopedTechnicalLossSourceCount", "privacyBlockedSourceCount"].every((key) => Number.isInteger(analysis.coverage[key]) && analysis.coverage[key] >= 0), "Intake gap analysis coverage counts are invalid");
+  invariant(analysis.coverage.unscopedTechnicalLossSourceCount <= analysis.coverage.technicalLossSourceCount, "Unscoped technical-loss coverage is invalid");
   invariant(Array.isArray(analysis.coverage.sourceEvidenceTypes) && analysis.coverage.sourceEvidenceTypes.every((type) => INTAKE_SEARCH_REGISTRY.evidenceTypes.includes(type)), "Intake gap analysis source evidence types are invalid");
   invariant(Object.keys(analysis.summary).sort().join(",") === Object.keys(expectedSummary).sort().join(","), "Intake gap analysis summary contains unregistered fields");
   invariant(Object.keys(analysis).sort().join(",") === ["acquisitionCoverageHash", "acquisitionDiagnosticsVersion", "analysisHash", "candidatePackageHash", "candidatePackageVersion", "coverage", "fieldRegistryHash", "fieldRegistryVersion", "fields", "safeConceptCoverage", "schemaVersion", "searchRegistryHash", "searchRegistryVersion", "summary"].sort().join(","), "Intake gap analysis contains unregistered fields");
@@ -159,6 +160,8 @@ export function createIntakeGapAnalysis({ candidatePackage, acquisitionDiagnosti
   const safeSignalKeys = new Set(safeConceptCoverage.map((signal) => `${signal.signalType}:${signal.signalId}`));
   const searchableUnits = localSourceUnits.filter((unit) => !unit.ocr || unit.ocr.qualificationState === "QUALIFIED").map((unit) => ({ ...unit, searchEvidenceType: classifyIntakeSearchEvidence(unit) }));
   const availableEvidenceTypes = [...new Set(searchableUnits.map((unit) => unit.searchEvidenceType).filter(Boolean))].sort();
+  const diagnosticByPath = new Map(acquisitionDiagnostics.items.map((item) => [item.path, item]));
+  const unscopedTechnicalLossSourceCount = sourceIngestion.items.filter((item) => diagnosticByPath.get(item.path)?.technicalLossScope !== "NONE" && classifyIntakeSearchEvidence(item) === null).length;
   const privacyBlocked = acquisitionDiagnostics.counts.PRIVACY_BLOCKED > 0;
   const candidates = new Map(candidatePackage.candidates.map((candidate) => [candidate.fieldId, candidate]));
   const fields = INTAKE_FIELD_REGISTRY.fields.map((field) => {
@@ -215,6 +218,7 @@ export function createIntakeGapAnalysis({ candidatePackage, acquisitionDiagnosti
       parsedSourceCount: acquisitionDiagnostics.counts.PARSED,
       contentExtractedSourceCount: acquisitionDiagnostics.counts.CONTENT_EXTRACTED,
       technicalLossSourceCount: acquisitionDiagnostics.technicalLoss.count,
+      unscopedTechnicalLossSourceCount,
       privacyBlockedSourceCount: acquisitionDiagnostics.counts.PRIVACY_BLOCKED,
       sourceEvidenceTypes: availableEvidenceTypes
     },

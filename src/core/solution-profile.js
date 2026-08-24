@@ -113,6 +113,8 @@ function labelledValue(sources, field, searchOverrides) {
 const escaped = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const words = (value) => String(value).replaceAll("_", " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\s+/g, " ").trim();
 const BOUNDED_SEARCH_TERM = /^[\p{L}\p{N}][\p{L}\p{N} _/-]{0,79}$/u;
+const GENERIC_MANIFEST_NAME = /^(?:react|vite|next|nuxt|vue|svelte|angular)(?:[-_ ]+(?:app|example|project|starter|template))?$/i;
+const GENERIC_README_TITLE = /^(?:run|deploy|build|install|setup|getting started|how to|welcome)\b|\byour\s+(?:ai\s+studio\s+)?app\b/i;
 
 function validatedSearchOverride(fieldId, registeredRule, override) {
   if (!override) return null;
@@ -188,10 +190,13 @@ function searchEntries(sources, fieldId, searchOverrides) {
     const keys = new Set([...rule.labels, fieldId.split(".").at(-1)].map((label) => normalize(words(label))));
     for (const source of eligible) {
       if (strategies.has("MANIFEST_PROPERTY") && source.searchEvidenceType === "PROJECT_MANIFEST" && fieldId === "name") {
-        try { add(JSON.parse(source.content).name, source); } catch {
+        try {
+          const name = JSON.parse(source.content).name;
+          if (!GENERIC_MANIFEST_NAME.test(String(name ?? "").trim())) add(name, source);
+        } catch {
           const assignment = source.content.match(/^\s*name\s*=\s*["']([^"']+)["']\s*$/m);
           const module = source.content.match(/^\s*module\s+([^\s]+)\s*$/m);
-          if (assignment?.[1]) add(assignment[1], source);
+          if (assignment?.[1] && !GENERIC_MANIFEST_NAME.test(assignment[1].trim())) add(assignment[1], source);
           else if (module?.[1]) add(module[1], source);
         }
       }
@@ -202,7 +207,9 @@ function searchEntries(sources, fieldId, searchOverrides) {
           if (!value || typeof value !== "object") return;
           if (depth > 25 || ++state.nodes > 20_000) throw new Error("Structured search limit exceeded");
           for (const [key, child] of Object.entries(value)) {
-            if (keys.has(normalize(words(key))) && (typeof child === "string" || typeof child === "boolean" || Array.isArray(child) && child.every((item) => ["string", "boolean"].includes(typeof item)))) add(child, source);
+            if (keys.has(normalize(words(key))) && (typeof child === "string" || typeof child === "boolean" || Array.isArray(child) && child.every((item) => ["string", "boolean"].includes(typeof item)))) {
+              if (fieldId !== "name" || !GENERIC_MANIFEST_NAME.test(String(child).trim())) add(child, source);
+            }
             if (child && typeof child === "object") visit(child, depth + 1);
           }
         };
@@ -213,7 +220,7 @@ function searchEntries(sources, fieldId, searchOverrides) {
   if (strategies.has("README_TITLE")) {
     for (const source of eligible.filter((item) => item.searchEvidenceType === "README")) {
       const heading = source.content.match(/^\s*#\s+(.{2,140})$/m);
-      if (heading) add(heading[1].trim(), source);
+      if (heading && !GENERIC_README_TITLE.test(heading[1].trim())) add(heading[1].trim(), source);
     }
   }
   if (strategies.has("HTML_ARCHITECTURE_TITLE")) {
@@ -221,6 +228,12 @@ function searchEntries(sources, fieldId, searchOverrides) {
       const match = source.content.match(/^(.{2,140}?)\s*(?:[-—|:]\s*)(?:current\s+)?(?:architecture|system design|solution design)\s*$/i);
       if (match) add(match[1].trim(), source);
     }
+  }
+  if (strategies.has("PDF_DOCUMENT_TITLE")) {
+    for (const source of eligible.filter((item) => item.format === "PDF" && /^page:1;heading:1(?:;lines:\d+-\d+)?$/.test(item.locator ?? ""))) add(source.content, source);
+  }
+  if (strategies.has("PDF_PURPOSE_LEDE")) {
+    for (const source of eligible.filter((item) => item.format === "PDF" && /(?:purpose|intended[-_ ]?use|overview|solution[-_ ]?brief)/i.test(item.path ?? "") && /^page:1;paragraph:1(?:;lines:\d+-\d+)?$/.test(item.locator ?? ""))) add(source.content, source);
   }
   return entries.sort((a, b) => a.sourcePriority - b.sourcePriority || a.sourceIndex - b.sourceIndex);
 }

@@ -147,6 +147,19 @@ test("raw code stays local while the provider-eligible unit contains only a vali
   assert.match(providerPrompt, new RegExp(CODE_EVIDENCE_SUMMARY_VERSION));
 });
 
+test("CSS follows the code acquisition lane instead of failing document classification", async () => {
+  const run = await createPreflight({ sources: [{
+    path: "src/theme.css",
+    mimeType: "text/css",
+    content: ":root { color-scheme: light; } .review { display: grid; }"
+  }] });
+
+  assert.equal(run.sourceIngestion.items[0].disposition, "PARSED");
+  assert.equal(run.sourceIngestion.items[0].acquisitionLane, "CODE_CONFIGURATION_LOCAL_ANALYSIS");
+  assert.equal(run.packets[0].sourceUnits[0].evidenceKind, "CODE_SUMMARY");
+  assert.doesNotMatch(JSON.stringify(run.packets), /color-scheme|display: grid/);
+});
+
 test("document text prefills Intake locally while only controlled topic signals enter provider packets", async () => {
   const sensitivePurpose = "Assess Project Orchid customer records for internal governance decisions";
   const run = await createPreflight({ sources: [{

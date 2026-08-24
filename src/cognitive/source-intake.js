@@ -58,6 +58,62 @@ function assertFileSignature(source, bytes) {
   if (!valid) throw new Error(`${source.path} content does not match ${source.mimeType}`);
 }
 
+function pdfTextSegments(items, pageNumber) {
+  const lines = [];
+  let current = null;
+  const flush = () => {
+    const text = current?.text.replace(/\s+/g, " ").trim();
+    if (text) lines.push({ ...current, text });
+    current = null;
+  };
+  for (const item of items.filter((entry) => typeof entry.str === "string")) {
+    const y = Number(item.transform?.[5] ?? 0);
+    const x = Number(item.transform?.[4] ?? 0);
+    const height = Math.abs(Number(item.height || item.transform?.[3] || 0));
+    if (!current || Math.abs(current.y - y) > 2) {
+      flush();
+      current = { text: "", y, height, endX: x };
+    }
+    const gap = x - current.endX;
+    if (current.text && !/\s$/.test(current.text) && gap > Math.max(2, height * 0.15)) current.text += " ";
+    current.text += item.str;
+    current.height = Math.max(current.height, height);
+    current.endX = Math.max(current.endX, x + Number(item.width ?? 0));
+  }
+  flush();
+  if (!lines.length) return [];
+  const heights = lines.map((line) => line.height).filter((height) => height > 0).sort((a, b) => a - b);
+  const bodyHeight = heights[Math.floor(heights.length / 2)] || 12;
+  const segments = [];
+  let paragraph = [];
+  let paragraphNumber = 0;
+  let headingNumber = 0;
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    paragraphNumber += 1;
+    segments.push({ locator: `page:${pageNumber};paragraph:${paragraphNumber}`, text: paragraph.map((line) => line.text).join(" ") });
+    paragraph = [];
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const previous = lines[index - 1];
+    const heading = line.text.length <= 180 && line.height >= bodyHeight * 1.35;
+    const listItem = /^[•●▪◦*-]\s*/.test(line.text);
+    const separated = previous && Math.abs(previous.y - line.y) > Math.max(22, bodyHeight * 1.8);
+    if (heading) {
+      flushParagraph();
+      headingNumber += 1;
+      segments.push({ locator: `page:${pageNumber};heading:${headingNumber}`, text: line.text });
+      continue;
+    }
+    if (listItem || separated) flushParagraph();
+    paragraph.push(line);
+    if (listItem) flushParagraph();
+  }
+  flushParagraph();
+  return segments;
+}
+
 async function extractPdf(bytes, ocrSession) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const document = await pdfjs.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useWorkerFetch: false }).promise;
@@ -71,11 +127,12 @@ async function extractPdf(bytes, ocrSession) {
       const page = await document.getPage(pageNumber);
       try {
         const content = await page.getTextContent();
-        const text = content.items.map((item) => item.str).join(" ");
-        extractedCharacters += text.length;
+        const nativeSegments = pdfTextSegments(content.items, pageNumber);
+        const nativeText = nativeSegments.map((segment) => segment.text).join("\n");
+        extractedCharacters += nativeText.length;
         if (extractedCharacters > MAX_EXTRACTED_CHARACTERS) throw new Error("PDF extracted text exceeds the intake limit");
-        if (text.trim()) segments.push({ locator: `page:${pageNumber};text-layer`, text });
-        if (text.replace(/\s/g, "").length < MIN_NATIVE_PDF_TEXT_CHARACTERS) {
+        segments.push(...nativeSegments);
+        if (nativeText.replace(/\s/g, "").length < MIN_NATIVE_PDF_TEXT_CHARACTERS) {
           ocr.attemptedCount += 1;
           try {
             const rendered = await rasterizePdfPageForOcr(page);
@@ -208,7 +265,7 @@ function assuranceCeiling(source) {
 function sourceKindForPath(path) {
   const extension = extname(path).toLowerCase();
   if (/test|spec|eval/.test(path)) return "TEST";
-  if ([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".py", ".java", ".go", ".rs", ".rb", ".cs", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".kt", ".swift", ".scala", ".groovy", ".graphql", ".gql", ".prisma", ".proto", ".vue", ".svelte", ".astro"].includes(extension)) return "CODE";
+  if ([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".css", ".py", ".java", ".go", ".rs", ".rb", ".cs", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".psm1", ".bat", ".cmd", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".kt", ".swift", ".scala", ".groovy", ".graphql", ".gql", ".prisma", ".proto", ".vue", ".svelte", ".astro"].includes(extension)) return "CODE";
   if ([".json", ".yaml", ".yml", ".toml", ".ini", ".xml", ".properties", ".conf", ".cfg", ".gradle", ".kts", ".tf"].includes(extension) || /(?:^|[\\/])(?:\.env(?:\.[^\\/]+)?|dockerfile(?:\.[^\\/]+)?|makefile|procfile)$/i.test(path)) return "CONFIGURATION";
   return "DOCUMENT";
 }

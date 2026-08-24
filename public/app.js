@@ -18,6 +18,8 @@ let latestSolutionProfile = null;
 let latestDiscoveryRecheck = null;
 let latestDiscoveryContext = null;
 let retrievalPlanningProviders = [];
+let proposalProviders = [];
+let modelReadiness = { status: "UNAVAILABLE", issueCodes: ["MODEL_POLICY_UNAVAILABLE"] };
 const editedIntakeFields = new Set();
 const acceptedProposalByField = new Map();
 const editedProposalByField = new Map();
@@ -479,6 +481,15 @@ async function browserFileSource(file) {
   return { path, mimeType, encoding, content };
 }
 
+function previewSelectedSources() {
+  const files = [...$("source-folder").files, ...$("source-files").files];
+  const classified = files.map((file) => classifyUploadPath(file.webkitRelativePath || file.name, file.type));
+  const accepted = classified.filter((item) => item.disposition === "ACCEPTED").length;
+  const exceptions = classified.filter((item) => item.disposition !== "ACCEPTED");
+  const details = exceptions.slice(0, 8).map((item) => `${item.path}: ${label(item.reasonCode)}`).join("; ");
+  $("discovery-status").textContent = `${files.length} selected · ${accepted} supported · ${exceptions.length} excluded or review-required before submission.${details ? ` ${details}${exceptions.length > 8 ? `; and ${exceptions.length - 8} more` : ""}.` : ""}`;
+}
+
 async function selectedSources() {
   const files = [...$("source-folder").files, ...$("source-files").files];
   if (!files.length) return { sources: sampleSources, sourceIngestion: null };
@@ -605,6 +616,17 @@ function updateAcquisitionActions() {
   $("execute-local-reread").disabled = false;
 }
 
+function renderSourceIngestionExceptions(root) {
+  const exceptions = latestDiscoveryContext?.sourceIngestion?.items?.filter((item) => item.disposition !== "PARSED") ?? [];
+  if (!exceptions.length) return;
+  const details = el("details", "discovery-candidate-details");
+  details.append(el("summary", "", `Review ${exceptions.length} source ingestion exception(s)`));
+  details.append(el("p", "field-hint", "These files were not parsed into evidence. Their source-level limitations do not automatically apply to every Intake field."));
+  const list = el("ul", "discovery-candidates");
+  for (const item of exceptions) list.append(el("li", "", `${item.path} · ${label(item.disposition)} · ${label(item.reasonCode)}`));
+  details.append(list); root.append(details);
+}
+
 function renderDiscovery(profile, dlpFindings = [], recheck = null, citationIndex = [], acquisitionDiagnostics = null) {
   latestSolutionProfile = profile;
   const citations = new Map(citationIndex.map((item) => [item.sourceUnitId, item]));
@@ -622,6 +644,7 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
     );
     root.append(diagnostics);
   }
+  renderSourceIngestionExceptions(root);
   const fields = ["name", "accountableOwner", "intendedPurpose", "expectedValue", "jurisdictions", "roles", "users"];
   const grid = el("div", "discovery-grid");
   for (const field of fields) {
@@ -635,8 +658,11 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
   renderAcquisitionStages(root);
   if (latestDiscoveryContext?.packets?.length) {
     const safePackage = el("details", "discovery-candidate-details");
-    safePackage.append(el("summary", "", "Review safe package available for optional GenAI proposals"));
-    const description = el("p", "field-hint", "Only these deterministic summaries can be sent by the optional proposal action. Raw documents, code, table values and image pixels remain local.");
+    const modelRouteAvailable = proposalProviders.length > 0;
+    safePackage.append(el("summary", "", modelRouteAvailable ? "Review safe package available for optional GenAI proposals" : "Review safe package · GenAI proposal route unavailable"));
+    const description = el("p", "field-hint", modelRouteAvailable
+      ? "Only these deterministic summaries can be sent by the optional proposal action. Raw documents, code, table values and image pixels remain local."
+      : `The privacy-safe package is ready, but no qualified Solution Understanding model route is available (${(modelReadiness.issueCodes ?? [modelReadiness.status]).map(label).join(", ")}). No provider call can be made. Raw documents, code, table values and image pixels remain local.`);
     const units = el("ul", "discovery-candidates");
     for (const packet of latestDiscoveryContext.packets) for (const unit of packet.preview ?? []) units.append(el("li", "", `${unit.path} · ${unit.locator}: ${unit.excerpt}`));
     safePackage.append(description, units);
@@ -733,6 +759,7 @@ async function discoverCaseInformation() {
       packets: preflight.packets,
       intakeCandidates: preflight.intakeCandidates,
       acquiredFacts: preflight.acquiredFacts,
+      sourceIngestion: preflight.sourceIngestion,
       acquisitionDiagnostics: preflight.acquisitionDiagnostics,
       intakeGapAnalysis: preflight.intakeGapAnalysis,
       retrievalPlan: preflight.retrievalPlan,
@@ -743,13 +770,15 @@ async function discoverCaseInformation() {
     fillDossier(preflight.solutionProfile.suggestedDossier);
     renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, null, preflight.citationIndex, preflight.acquisitionDiagnostics);
     const blocked = preflight.dlpFindings.some((item) => item.blocking);
-    $("request-ai-proposals").classList.toggle("hidden", blocked);
-    $("request-ai-proposals").disabled = false;
+    $("request-ai-proposals").classList.toggle("hidden", blocked || proposalProviders.length === 0);
+    $("request-ai-proposals").disabled = blocked || proposalProviders.length === 0;
     setIntakeFlow("USER_RESOLUTION", { limitedSteps: ["AI_VERIFICATION"] });
     const unresolved = Object.values(preflight.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED").length;
     $("discovery-status").textContent = blocked
       ? `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). Local screening blocks GenAI transmission; resolve the Intake manually.`
-      : `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). Resolve it manually or explicitly request optional GenAI proposals from safe summaries.`;
+      : proposalProviders.length
+        ? `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). Resolve it manually or explicitly request optional GenAI proposals from safe summaries.`
+        : `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). GenAI proposals are unavailable until the exact model-role profiles are qualified; resolve the Intake manually.`;
     $("assess-button").disabled = false;
     $("assessment-input").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
@@ -1083,7 +1112,9 @@ Promise.all([
   summaryEnabled = config.assuranceSummaryEnabled !== false;
   intakeQuestionnaire = questionnaire;
   intakeFieldRegistry = registry;
+  modelReadiness = models.readiness ?? modelReadiness;
   retrievalPlanningProviders = [...new Set((models.profiles ?? []).filter((profile) => profile.stage === "RETRIEVAL_PLANNING" && profile.credentialAvailable && profile.qualificationStatus === "APPROVED").map((profile) => profile.provider))];
+  proposalProviders = [...new Set((models.profiles ?? []).filter((profile) => profile.stage === "SOLUTION_UNDERSTANDING" && profile.credentialAvailable && profile.qualificationStatus === "APPROVED").map((profile) => profile.provider))];
   INTAKE_CONTROL_FIELDS = Object.freeze(Object.fromEntries(registry.fields.filter((field) => field.uiControlId).map((field) => {
     if (!$(field.uiControlId)) throw new Error(`Registered Intake control is missing: ${field.uiControlId}`);
     return [field.uiControlId, field.id];
@@ -1113,5 +1144,5 @@ $("dossier-form").addEventListener("input", (event) => {
 });
 $("summary-tab").addEventListener("click", () => selectView("summary")); $("workspace-tab").addEventListener("click", () => selectView("workspace"));
 $("print-button").addEventListener("click", printReport); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);
-$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; });
-$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; });
+$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; previewSelectedSources(); });
+$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; previewSelectedSources(); });

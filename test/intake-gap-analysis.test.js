@@ -29,9 +29,9 @@ test("gap analysis separates bounded retrieval opportunity, source silence, and 
   assert.ok(monitoring.attemptedMethods.includes("LABELLED_VALUE"));
   assert.ok(monitoring.attemptedMethods.includes("HEADING_VALUE"));
   assert.equal(purpose.state, "MISSING_UNKNOWN");
-  assert.equal(purpose.retrievalDisposition, "TECHNICAL_RECOVERY_REQUIRED");
-  assert.ok(purpose.technicalLoss.reasonCodes.includes("UNSUPPORTED_SOURCE_CONTAINER"));
-  assert.deepEqual({ partial: purpose.technicalLoss.partialSourceCount, unavailable: purpose.technicalLoss.unavailableSourceCount }, { partial: 0, unavailable: 1 });
+  assert.equal(purpose.retrievalDisposition, "UNKNOWN_SOURCE_SILENCE");
+  assert.deepEqual(purpose.technicalLoss, { reasonCodes: [], partialSourceCount: 0, unavailableSourceCount: 0 });
+  assert.equal(analysis.coverage.unscopedTechnicalLossSourceCount, 1);
   assert.ok(analysis.coverage.sourceEvidenceTypes.includes("ARCHITECTURE_DOCUMENT"));
   assert.ok(analysis.safeConceptCoverage.some((signal) => signal.signalId === "MONITORING_AND_INCIDENTS"));
 });

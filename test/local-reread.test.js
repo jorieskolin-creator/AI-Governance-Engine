@@ -11,7 +11,7 @@ import { createIntakeResolutionDraft } from "../src/intake/contracts.js";
 
 const policy = () => modelPolicy({ MOONSHOT_API_KEY: "test" }, { qualificationRequired: false });
 
-async function plannedRun(sources, aliases = {}) {
+async function plannedRun(sources, aliases = {}, strategies = {}) {
   const run = await createPreflight({ sources });
   const context = createRetrievalPlannerContext(run);
   let providerCalls = 0;
@@ -26,7 +26,7 @@ async function plannedRun(sources, aliases = {}) {
           searchConcepts: [],
           labelAliases: [aliases[field.fieldId] ?? `retrieval marker ${index + 1}`],
           sourcePriorities: [field.coveredEvidenceTypes[0] ?? field.registeredEvidenceTypes[0]],
-          extractionStrategies: [field.registeredExtractionStrategies.find((strategy) => strategy.startsWith("LABELLED_")) ?? field.registeredExtractionStrategies[0]]
+          extractionStrategies: [strategies[field.fieldId] ?? field.registeredExtractionStrategies.find((strategy) => strategy.startsWith("LABELLED_")) ?? field.registeredExtractionStrategies[0]]
         })) },
         responseModel: profile.model,
         usage: { totalTokens: 20 }
@@ -110,6 +110,21 @@ test("local re-read preserves conflicting aliases and leaves genuine unknowns un
   assert.equal(owner.sanitizedCandidate, null);
   assert.ok(result.remainingUnknownFieldIds.length > 0);
   assert.equal(result.recoveredFieldIds.includes("accountableOwner"), false);
+});
+
+test("local re-read excludes irrelevant bulk while retaining matching structural context", async () => {
+  const irrelevantBulk = Array.from({ length: 200 }, () => "z".repeat(5_500)).join("\n");
+  const { run } = await plannedRun([
+    { path: "docs/architecture-bulk.md", mimeType: "text/markdown", content: irrelevantBulk },
+    { path: "docs/architecture-summary.html", mimeType: "text/html", content: "<p>Accountable owner responsibilities.</p><h2>Control steward</h2><p>Synthetic Review Team</p>" }
+  ], { accountableOwner: "control steward" }, { accountableOwner: "HEADING_VALUE" });
+
+  const result = executeLocalReread(run, consent(run));
+  const owner = run.intakeCandidates.candidates.find((candidate) => candidate.fieldId === "accountableOwner");
+  assert.equal(owner.sanitizedCandidate, "Synthetic Review Team");
+  assert.ok(result.recoveredFieldIds.includes("accountableOwner"));
+  assert.equal(result.work.sourceUnitCount, 3);
+  assert.ok(result.work.characterCount < 150);
 });
 
 test("work bounds and consent fail closed without changing candidate or packet hashes", async () => {

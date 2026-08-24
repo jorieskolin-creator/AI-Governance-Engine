@@ -7,6 +7,7 @@ import { createAcquiredFactPackage } from "./acquired-facts.js";
 import { createAcquisitionDiagnostics, setAcquisitionGenAiStatus } from "./acquisition-diagnostics.js";
 import { createIntakeCandidatePackage, validateIntakeCandidatePackage } from "./candidate-contract.js";
 import { createIntakeGapAnalysis, validateIntakeGapAnalysis } from "./gap-analysis.js";
+import { classifyIntakeSearchEvidence, intakeSearchField } from "./search-registry.js";
 
 export const LOCAL_REREAD_VERSION = "local-bounded-reread-1.0.0";
 export const LOCAL_REREAD_PURPOSE = "EXECUTE_VALIDATED_RETRIEVAL_PLAN_LOCALLY";
@@ -45,6 +46,25 @@ function expectedOutcome(beforePackage, afterPackage, targetFieldIds) {
   const conflictingFieldIds = targetFieldIds.filter((fieldId) => candidateState(after.get(fieldId)) === "CONFLICTING");
   const remainingUnknownFieldIds = targetFieldIds.filter((fieldId) => candidateState(after.get(fieldId)) === "UNKNOWN");
   return { recoveredFieldIds, conflictingFieldIds, remainingUnknownFieldIds };
+}
+
+function boundedSourceUnits(run, plan) {
+  const available = run.localSourceUnits.filter((unit) => unit.path !== "intended-use-dossier.json" && !unit.media && (!unit.ocr || unit.ocr.qualificationState === "QUALIFIED"));
+  const indexed = available.map((unit, index) => ({ unit, index, evidenceType: classifyIntakeSearchEvidence(unit) }));
+  const selectedIndexes = new Set();
+  for (const suggestion of plan.suggestions) {
+    const registered = intakeSearchField(suggestion.fieldId);
+    const evidenceTypes = suggestion.sourcePriorities.length ? suggestion.sourcePriorities : registered.evidenceTypes;
+    const terms = [...new Set([...registered.labels, ...suggestion.searchConcepts, ...suggestion.labelAliases].map((term) => term.toLocaleLowerCase()))];
+    const eligibleIndexes = indexed.filter(({ evidenceType }) => evidenceTypes.includes(evidenceType)).map(({ index }) => index);
+    const matchingIndexes = terms.length ? eligibleIndexes.filter((index) => terms.some((term) => available[index].content.toLocaleLowerCase().includes(term))) : eligibleIndexes;
+    for (const index of matchingIndexes) {
+      selectedIndexes.add(index);
+      const next = available[index + 1];
+      if (next && (next.sourceId ? next.sourceId === available[index].sourceId : next.path === available[index].path)) selectedIndexes.add(index + 1);
+    }
+  }
+  return [...selectedIndexes].sort((left, right) => left - right).map((index) => available[index]);
 }
 
 export function validateLocalReread(result, { plan, beforePackage, afterPackage, acquiredFacts, gapAnalysis, packets } = {}) {
@@ -93,7 +113,7 @@ export function executeLocalReread(run, input, options = {}) {
   const beforePackage = validateIntakeCandidatePackage(run.intakeCandidates);
   invariant(plan.gapAnalysisHash === run.intakeGapAnalysis.analysisHash && run.intakeGapAnalysis.candidatePackageHash === beforePackage.packageHash, "Local re-read inputs are stale");
   const limits = boundedLimits(options);
-  const sourceUnits = run.localSourceUnits.filter((unit) => unit.path !== "intended-use-dossier.json" && !unit.media && (!unit.ocr || unit.ocr.qualificationState === "QUALIFIED"));
+  const sourceUnits = boundedSourceUnits(run, plan);
   const characterCount = sourceUnits.reduce((total, unit) => total + unit.content.length, 0);
   invariant(sourceUnits.length <= limits.maxSourceUnits && characterCount <= limits.maxCharacters, "Local re-read work limit exceeded; no source was re-read");
 

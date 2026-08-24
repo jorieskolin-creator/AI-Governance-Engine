@@ -2,7 +2,7 @@ const FAILURE_RULES = Object.freeze([
   { code: "RUN_CANCELLED", retryDisposition: "DO_NOT_RETRY", test: (error) => error?.failureCode === "RUN_CANCELLED" || error?.name === "AbortError" },
   { code: "ORCHESTRATION_LEASE_LOST", retryDisposition: "DO_NOT_RETRY", test: (error) => error?.failureCode === "ORCHESTRATION_LEASE_LOST" },
   { code: "PROVIDER_TIMEOUT", retryDisposition: "RETRY_WITH_NEW_REQUEST", test: (error) => error?.name === "TimeoutError" || /timed out|timeout/i.test(String(error?.message ?? "")) },
-  { code: "MODEL_ROUTE_UNAVAILABLE", retryDisposition: "REQUIRES_CONFIGURATION", test: (error) => /credential|required .*route|governance route/i.test(String(error?.message ?? "")) },
+  { code: "MODEL_ROUTE_UNAVAILABLE", retryDisposition: "REQUIRES_CONFIGURATION", test: (error) => /credential|approved model profile|required .*route|governance route/i.test(String(error?.message ?? "")) },
   { code: "COGNITIVE_BUDGET_EXHAUSTED", retryDisposition: "REQUIRES_NEW_BUDGET", test: (error) => /budget/i.test(String(error?.message ?? "")) },
   { code: "PROVIDER_REFUSAL", retryDisposition: "DO_NOT_RETRY", test: (error) => Boolean(error?.refusal) || /refused/i.test(String(error?.message ?? "")) },
   { code: "PROVIDER_RATE_LIMITED", retryDisposition: "RETRY_AFTER_PROVIDER_DELAY", test: (error) => error?.statusCode === 429 },

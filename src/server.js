@@ -16,6 +16,8 @@ import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./i
 import { validateApprovedIntakeSnapshot } from "./intake/contracts.js";
 import { createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "./intake/acquired-facts.js";
 import { setAcquisitionGenAiStatus } from "./intake/acquisition-diagnostics.js";
+import { planIntakeRetrieval, RETRIEVAL_PLANNING_PURPOSE } from "./cognitive/retrieval-planner.js";
+import { COGNITIVE_PROVIDERS } from "./cognitive/provider-adapters.js";
 import { createCognitiveStepLedger, prepareInterruptedRunRestart, recoveredExecutionDataUnavailable, RECOVERY_RESTART_PURPOSE, releaseLocalEvidenceForCognitiveExecution } from "./cognitive/orchestration.js";
 import { cancellationError, classifyCognitiveFailure } from "./cognitive/failure-policy.js";
 
@@ -274,7 +276,8 @@ const server = http.createServer(async (request, response) => {
       cognitiveMode: "ALWAYS_ON",
       cognitiveContractVersion,
       buildRevision,
-      discoveryRecheckAvailable: true
+      discoveryRecheckAvailable: true,
+      retrievalPlannerAvailable: true
     });
     if (request.method === "GET" && url.pathname === "/api/knowledge") return sendJson(response, 200, knowledgeManifestView(knowledge));
     if (request.method === "GET" && url.pathname === "/api/intake-questionnaire") return sendJson(response, 200, { ...knowledge.intakeQuestionnaire, source: knowledge.intakeQuestionnaireSource ?? "BUNDLED" });
@@ -297,6 +300,7 @@ const server = http.createServer(async (request, response) => {
         dlpFindings: run.dlpFindings,
         sourceIngestion: run.sourceIngestion,
         acquisitionDiagnostics: run.acquisitionDiagnostics,
+        intakeGapAnalysis: run.intakeGapAnalysis,
         discoveryRecheck,
         citationIndex: run.packets.flatMap((packet) => packet.sourceUnits.map((unit) => ({ sourceUnitId: unit.id, path: unit.path, locator: unit.locator, sha256: unit.sha256 })))
       });
@@ -320,6 +324,33 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && discoverMatch) {
       const run = await runStore.get(discoverMatch[1]);
       return run ? sendJson(response, 200, publicDiscoveryView(run)) : sendJson(response, 404, { error: "Run not found or expired" });
+    }
+    const retrievalPlanMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/retrieval-plan$/);
+    if (request.method === "POST" && retrievalPlanMatch) {
+      const run = await runStore.get(retrievalPlanMatch[1]);
+      if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
+      if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.retrievalPlan) return sendJson(response, 409, { error: "Intake retrieval planning is not available from the current run state" });
+      const consent = await readJson(request);
+      if (consent?.confirmed !== true || consent?.purpose !== RETRIEVAL_PLANNING_PURPOSE) return sendJson(response, 400, { error: "Explicit confirmation is required before requesting GenAI retrieval planning" });
+      if (consent.gapAnalysisHash !== run.intakeGapAnalysis?.analysisHash) return sendJson(response, 409, { error: "The reviewed Intake gap analysis is no longer current" });
+      if (!Array.isArray(consent.providers) || !consent.providers.length || new Set(consent.providers).size !== consent.providers.length || consent.providers.some((provider) => !COGNITIVE_PROVIDERS.includes(provider))) return sendJson(response, 400, { error: "At least one unique, supported retrieval-planning provider must be explicitly approved" });
+      if (!run.intakeGapAnalysis?.summary?.boundedRetrievalFieldCount) return sendJson(response, 409, { error: "No bounded Intake retrieval opportunity is available" });
+      if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run mutation is already owned by another worker" });
+      try {
+        try {
+          if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive retrieval-planning rate limit exceeded"), { statusCode: 429 });
+          const result = await planIntakeRetrieval(run, consent, { policy: modelPolicy() });
+          await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          return sendJson(response, 200, result);
+        } catch (error) {
+          if (!run.retrievalPlan) {
+            run.retrievalPlan = { status: "UNAVAILABLE", failureCode: safeFailureCode(error), policy: "Deterministic Intake gaps remain unchanged; no retrieval suggestion was executed." };
+            setAcquisitionGenAiStatus(run, "UNAVAILABLE", run.retrievalPlan.failureCode);
+          }
+          await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          return sendJson(response, 200, run.retrievalPlan);
+        }
+      } finally { await runStore.releaseLease(run.id); }
     }
     const recheckMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/discover-recheck$/);
     if (request.method === "POST" && recheckMatch) {

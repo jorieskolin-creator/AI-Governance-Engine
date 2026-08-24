@@ -5,6 +5,7 @@ export const PROMPT_VERSIONS = Object.freeze({
   solution: "solution-understanding-2.1.0",
   solutionVerification: "solution-fact-verification-3.0.0",
   discoveryRecheck: "discovery-recheck-1.2.0",
+  retrievalPlanning: "intake-retrieval-planning-1.0.0",
   routing: "semantic-routing-2.0.0",
   domain: "domain-assessment-3.0.0",
   verification: "claim-verification-3.0.0",
@@ -81,6 +82,18 @@ ${stableStringify(targetFields)}
 SOURCE_PACKET
 ${renderUnits(packets)}
 END_SOURCE_PACKET`;
+}
+
+export function intakeRetrievalPlanningPrompt(context) {
+  return `${TRUST_PREAMBLE}
+
+Task: suggest bounded local search improvements for every missing Assessment Intake field in SAFE_RETRIEVAL_CONTEXT. This is retrieval planning only. The context contains no raw evidence and you must not propose or infer facts, field values, classifications, findings, conclusions, approval states, or governance decisions.
+
+Return exactly one suggestion for every target field and no others. Suggestions may contain only short search concepts, possible label aliases, priorities selected from that field's registered evidence types, and extraction strategies selected from that field's registered strategies. A suggestion is not evidence and cannot populate Intake. Do not include rationale, source text, quotes, names, values, or instructions to call providers or external systems.
+
+SAFE_RETRIEVAL_CONTEXT
+${stableStringify(context)}
+END_SAFE_RETRIEVAL_CONTEXT`;
 }
 
 export function domainPrompt({ domain, dossier, solutionModel, packets, controls, requirements, antiPatterns, assessmentWorkItems = [] }) {

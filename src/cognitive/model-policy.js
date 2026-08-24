@@ -4,6 +4,7 @@ export const MODEL_POLICY_VIEW_VERSION = "model-policy-view-1.0.0";
 
 const STAGE_DEFINITIONS = Object.freeze([
   { stage: "ROUTING", operationalRole: "WORKHORSE", effort: "low", maxOutputTokens: 4000 },
+  { stage: "RETRIEVAL_PLANNING", operationalRole: "WORKHORSE", effort: "low", maxOutputTokens: 8000 },
   { stage: "EXTRACTION", operationalRole: "WORKHORSE", effort: "high", maxOutputTokens: 16000 },
   { stage: "DOMAIN_ASSESSMENT", operationalRole: "WORKHORSE", effort: "high", maxOutputTokens: 20000 },
   { stage: "SOLUTION_UNDERSTANDING", operationalRole: "REASONER", effort: "high", maxOutputTokens: 16000 },

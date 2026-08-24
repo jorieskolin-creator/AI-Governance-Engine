@@ -74,7 +74,7 @@ test("HTTP workflow exposes readiness and fails closed before unapproved provide
     assert.equal(models.body.roleSlots.length, 6);
     assert.equal(new Set(models.body.roleSlots.map((slot) => slot.approvalRef)).size, 6);
     assert.ok(models.body.roleSlots.every((slot) => Array.isArray(slot.stages) && slot.stages.length > 0));
-    assert.equal(models.body.profiles.length, 16);
+    assert.equal(models.body.profiles.length, 18);
     assert.ok(models.body.profiles.every((profile) => !profile.credentialAvailable && profile.qualificationStatus === "APPROVAL_REQUIRED"));
 
     const packageSchema = await request(baseUrl, "/api/v2/contracts/readiness-package/2.6.0");
@@ -90,6 +90,12 @@ test("HTTP workflow exposes readiness and fails closed before unapproved provide
     });
     assert.equal(preflight.status, 201);
     assert.equal(preflight.body.stage, "DETERMINISTIC_DISCOVERY_COMPLETED");
+    const unapprovedRetrievalPlan = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(preflight.body.runId)}/retrieval-plan`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    assert.equal(unapprovedRetrievalPlan.status, 400);
+    assert.match(unapprovedRetrievalPlan.body.error, /explicit confirmation/i);
     const dossier = validateDossier(preflight.body.solutionProfile.suggestedDossier);
     const confirmed = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(preflight.body.runId)}/confirm`, {
       method: "POST",

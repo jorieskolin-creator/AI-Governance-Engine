@@ -52,6 +52,7 @@ export function publicPreflightView(run) {
     sourceIngestion: run.sourceIngestion,
     acquisitionDiagnostics: run.acquisitionDiagnostics ?? null,
     intakeGapAnalysis: run.intakeGapAnalysis ?? null,
+    retrievalPlan: run.retrievalPlan ?? null,
     discoveryRecheck: run.discoveryRecheck ?? null,
     approvedIntake: run.approvedIntake ? {
       schemaVersion: run.approvedIntake.schemaVersion,
@@ -112,6 +113,7 @@ export function publicDiscoveryView(run) {
     sourceIngestion: run.sourceIngestion,
     acquisitionDiagnostics: run.acquisitionDiagnostics ?? null,
     intakeGapAnalysis: run.intakeGapAnalysis ?? null,
+    retrievalPlan: run.retrievalPlan ?? null,
     discoveryRecheck: run.discoveryRecheck ?? null,
     citationIndex: run.packets.flatMap((packet) => packet.sourceUnits.map((unit) => ({ sourceUnitId: unit.id, path: unit.path, locator: unit.locator, sha256: unit.sha256 })))
   };

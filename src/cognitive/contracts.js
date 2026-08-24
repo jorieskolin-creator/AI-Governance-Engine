@@ -2,6 +2,8 @@ import { DOMAINS, SEVERITIES, invariant, validateDossier } from "../contracts.js
 import { stableId } from "../core/hash.js";
 import { acceptedFormatsByMime } from "../../public/upload-types.js";
 import { COGNITIVE_PROVIDERS } from "./provider-adapters.js";
+import { INTAKE_FIELD_REGISTRY } from "../intake/field-registry.js";
+import { INTAKE_EXTRACTION_STRATEGIES, INTAKE_SEARCH_EVIDENCE_TYPES } from "../intake/search-registry.js";
 
 export const FACT_CLASSES = Object.freeze(["DECLARED", "OBSERVED", "INFERRED"]);
 export const CLAIM_TYPES = Object.freeze(["FACT", "CONTROL_SUPPORT", "GAP", "RISK", "ANTIPATTERN", "ABSENCE_TEST", "CONTRADICTION", "UNKNOWN", "EVIDENCE_REQUEST"]);
@@ -152,6 +154,30 @@ export const DISCOVERY_RECHECK_SCHEMA = {
           sourceUnitIds: { type: "array", items: { type: "string" } },
           evidenceQuotes: { type: "array", items: { type: "object", additionalProperties: false, required: ["sourceUnitId", "quote"], properties: { sourceUnitId: { type: "string" }, quote: { type: "string" } } } },
           rationale: { type: "string" }
+        }
+      }
+    }
+  }
+};
+
+export const INTAKE_RETRIEVAL_PLANNER_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["suggestions"],
+  properties: {
+    suggestions: {
+      type: "array",
+      maxItems: INTAKE_FIELD_REGISTRY.fields.length,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["fieldId", "searchConcepts", "labelAliases", "sourcePriorities", "extractionStrategies"],
+        properties: {
+          fieldId: { type: "string", enum: INTAKE_FIELD_REGISTRY.fields.map((field) => field.id) },
+          searchConcepts: { type: "array", maxItems: 8, items: { type: "string", maxLength: 80 } },
+          labelAliases: { type: "array", maxItems: 8, items: { type: "string", maxLength: 80 } },
+          sourcePriorities: { type: "array", maxItems: INTAKE_SEARCH_EVIDENCE_TYPES.length, items: { type: "string", enum: INTAKE_SEARCH_EVIDENCE_TYPES } },
+          extractionStrategies: { type: "array", maxItems: INTAKE_EXTRACTION_STRATEGIES.length, items: { type: "string", enum: INTAKE_EXTRACTION_STRATEGIES } }
         }
       }
     }

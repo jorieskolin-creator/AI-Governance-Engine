@@ -6,7 +6,7 @@ import { INTAKE_FIELD_REGISTRY } from "../src/intake/field-registry.js";
 import { INTAKE_SEARCH_REGISTRY, intakeSearchField } from "../src/intake/search-registry.js";
 
 test("the versioned deterministic search registry covers every canonical Intake field", () => {
-  assert.equal(INTAKE_SEARCH_REGISTRY.version, "intake-search-registry-1.0.0");
+  assert.equal(INTAKE_SEARCH_REGISTRY.version, "intake-search-registry-1.1.0");
   assert.equal(INTAKE_SEARCH_REGISTRY.fieldRegistryVersion, INTAKE_FIELD_REGISTRY.version);
   assert.equal(INTAKE_SEARCH_REGISTRY.fieldRegistryHash, INTAKE_FIELD_REGISTRY.hash);
   assert.match(INTAKE_SEARCH_REGISTRY.hash, /^[a-f0-9]{64}$/);
@@ -20,6 +20,9 @@ test("the versioned deterministic search registry covers every canonical Intake 
     assert.ok(search.extractionStrategies.length, field.id);
   }
   for (const fieldId of Object.keys(discoverSolutionProfile([]).fields)) assert.ok(intakeSearchField(fieldId), fieldId);
+  assert.ok(intakeSearchField("name").extractionStrategies.includes("HTML_ARCHITECTURE_TITLE"));
+  assert.equal(intakeSearchField("roles").labels.includes("roles"), false);
+  assert.equal(intakeSearchField("intakeAnswers.REGULATORY_ROLES").labels.includes("roles"), false);
   assert.match(INTAKE_SEARCH_REGISTRY.conflictPolicy, /never silently resolves a conflict/i);
 });
 
@@ -55,4 +58,22 @@ test("source priority never silently resolves conflicting deterministic candidat
   assert.equal(profile.fields.accountableOwner.status, "CONFLICTING");
   assert.deepEqual(profile.fields.accountableOwner.candidates.map((candidate) => candidate.value), ["Product Team", "Risk Team"]);
   assert.deepEqual(profile.fields.accountableOwner.sourceUnitIds, ["declared-owner", "raci-owner"]);
+});
+
+test("HTML titles can identify a candidate without confusing operational model roles with regulatory roles", async () => {
+  const run = await createPreflight({ sources: [{
+    path: "docs/current-architecture.html",
+    mimeType: "text/html",
+    encoding: "utf8",
+    content: "<html><head><title>Orchid Governance Engine — Current Architecture</title></head><body><p>Roles: REASONER · WORKHORSE · QUALITY_CHECKER with explicit primary to fallback provider routing.</p></body></html>"
+  }] });
+
+  assert.equal(run.solutionProfile.suggestedDossier.name, "Orchid Governance Engine");
+  assert.deepEqual(run.solutionProfile.suggestedDossier.roles, []);
+  assert.equal(run.solutionProfile.assessmentIntakeFacts.REGULATORY_ROLES.answerState, "UNKNOWN");
+  const name = run.intakeCandidates.candidates.find((candidate) => candidate.fieldId === "name");
+  assert.equal(name.sanitizedCandidate, "Orchid Governance Engine");
+  assert.equal(name.confidence, "MEDIUM");
+  assert.equal(name.sourceRefs[0].extractionMethod, "HTML_ARCHITECTURE_TITLE");
+  assert.equal(run.intakeCandidates.candidates.find((candidate) => candidate.fieldId === "roles").sanitizedCandidate, null);
 });

@@ -87,6 +87,8 @@ The browser calls the normal cognitive path automatically. Provider credentials 
 
 - `POST /api/v2/runs/preflight` parses and screens evidence locally and returns redacted packet previews.
 - `POST /api/v2/runs/{id}/discover` returns the cited intake draft.
+- `POST /api/v2/runs/{id}/retrieval-plan` optionally creates suggestion-only retrieval guidance from validated safe metrics after explicit user confirmation.
+- `POST /api/v2/runs/{id}/retrieval-plan/execute` performs one separately confirmed bounded local re-read without provider access.
 - `POST /api/v2/runs/{id}/discover-recheck` performs a cited semantic recheck without overwriting deterministic facts.
 - `POST /api/v2/runs/{id}/confirm` validates explicit field resolutions and creates the user-approved Intake snapshot without erasing source conflicts.
 - `POST /api/v2/runs/{id}/execute` records the fixed server-side route and starts the run.
@@ -97,7 +99,7 @@ The browser calls the normal cognitive path automatically. Provider credentials 
 - `DELETE /api/v2/runs/{id}` purges the run record and evidence held by the active run store.
 - `GET /api/v2/models` exposes the non-secret fixed policy without credentials.
 
-Supported intake includes common repository text and code, JSON, CSV, inert HTML, PDF, DOCX, XLSX, PNG, JPEG and WebP. Binary content uses base64. Office archives are checked for unsafe paths, macros, excessive expansion and suspicious compression. Source files, formulas, scripts, links and embedded instructions are not executed. Documents enter `DOCUMENT_LOCAL_ANALYSIS`; code/configuration enter `CODE_CONFIGURATION_LOCAL_ANALYSIS`; CSV/XLSX enter `TABULAR_LOCAL_ANALYSIS`; images enter `MEDIA_LOCAL_METADATA`. Raw content, cell values and pixels remain process-local. Provider packets contain only schema-validated deterministic summaries plus the user-approved canonical Intake. Document summaries expose controlled topic and risk signals, not text, names, values or quotes, and therefore cannot establish documentary claims or control effectiveness.
+Supported intake includes common repository text and code, JSON, CSV, inert HTML, PDF, DOCX, XLSX, PNG, JPEG and WebP. Binary content uses base64. Office archives are checked for unsafe paths, macros, excessive expansion and suspicious compression. Source files, formulas, scripts, links and embedded instructions are not executed. Documents enter `DOCUMENT_LOCAL_ANALYSIS` or, for sparse scanned PDF pages, `DOCUMENT_LOCAL_OCR_ANALYSIS`; code/configuration enter `CODE_CONFIGURATION_LOCAL_ANALYSIS`; CSV/XLSX enter `TABULAR_LOCAL_ANALYSIS`; images enter `MEDIA_LOCAL_OCR_ANALYSIS`. OCR is bounded and local, and low-confidence text requires review rather than populating Intake. Raw content, unrestricted OCR text, cells, values and pixels remain process-local. Provider packets contain only schema-validated deterministic summaries plus the user-approved canonical Intake. Document summaries expose controlled topic and risk signals, not text, names, values or quotes, and therefore cannot establish documentary claims or control effectiveness.
 
 ## Knowledge Base status
 

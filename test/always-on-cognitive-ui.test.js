@@ -36,6 +36,8 @@ test("acquisition diagnostics distinguish technical loss from source silence", (
   assert.match(app, /content-extracted/);
   assert.match(app, /Intake-useful/);
   assert.match(app, /Technical loss:/);
+  assert.match(app, /partially extracted/);
+  assert.match(app, /unavailable/);
   assert.match(app, /Genuine source silence:/);
 });
 

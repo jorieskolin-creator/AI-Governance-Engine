@@ -618,7 +618,7 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
     diagnostics.append(
       el("strong", "", "Evidence acquisition diagnostics"),
       el("span", "", `${counts.SELECTED} selected · ${counts.ACCEPTED} accepted · ${counts.PARSED} parsed · ${counts.CONTENT_EXTRACTED} content-extracted · ${counts.INTAKE_USEFUL} Intake-useful · ${counts.EXCLUDED} excluded · ${counts.FAILED} failed · ${counts.PRIVACY_BLOCKED} privacy-blocked`),
-      el("small", "", `Technical loss: ${acquisitionDiagnostics.technicalLoss.count} source(s). Genuine source silence: ${acquisitionDiagnostics.sourceSilence.count} source(s). GenAI: ${label(acquisitionDiagnostics.genAi.status)}.`)
+      el("small", "", `Technical loss: ${acquisitionDiagnostics.technicalLoss.count} source(s) (${acquisitionDiagnostics.technicalLoss.partialSourceCount} partially extracted, ${acquisitionDiagnostics.technicalLoss.unavailableSourceCount} unavailable). Genuine source silence: ${acquisitionDiagnostics.sourceSilence.count} source(s). GenAI: ${label(acquisitionDiagnostics.genAi.status)}.`)
     );
     root.append(diagnostics);
   }

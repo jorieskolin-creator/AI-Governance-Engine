@@ -8,7 +8,7 @@ import { INTAKE_FIELD_REGISTRY } from "./field-registry.js";
 import { classifyIntakeSearchEvidence, INTAKE_SEARCH_REGISTRY, intakeSearchField } from "./search-registry.js";
 import { validateTabularEvidenceSummary } from "./tabular-evidence.js";
 
-export const INTAKE_GAP_ANALYSIS_VERSION = "intake-gap-analysis-1.0.0";
+export const INTAKE_GAP_ANALYSIS_VERSION = "intake-gap-analysis-1.1.0";
 
 const FIELD_STATES = new Set(["PRESENT", "CONFLICTING", "MISSING_UNKNOWN"]);
 const RETRIEVAL_DISPOSITIONS = new Set([
@@ -76,21 +76,26 @@ function attemptedMethods(rule, eligibleUnits) {
 
 function technicalLossFor(rule, sourceIngestion, diagnostics) {
   const diagnosticByPath = new Map(diagnostics.items.map((item) => [item.path, item]));
-  return [...new Set(sourceIngestion.items.flatMap((item) => {
-    const reasons = diagnosticByPath.get(item.path)?.technicalLossReasonCodes ?? [];
-    if (!reasons.length) return [];
+  const relevant = sourceIngestion.items.flatMap((item) => {
+    const diagnostic = diagnosticByPath.get(item.path);
+    if (!diagnostic?.technicalLossReasonCodes.length) return [];
     const evidenceType = classifyIntakeSearchEvidence(item);
-    return evidenceType === null || rule.evidenceTypes.includes(evidenceType) ? reasons : [];
-  }))].sort();
+    return evidenceType === null || rule.evidenceTypes.includes(evidenceType) ? [diagnostic] : [];
+  });
+  return {
+    reasonCodes: [...new Set(relevant.flatMap((item) => item.technicalLossReasonCodes))].sort(),
+    partialSourceCount: relevant.filter((item) => item.technicalLossScope === "PARTIAL_SOURCE_EXTRACTION").length,
+    unavailableSourceCount: relevant.filter((item) => item.technicalLossScope === "SOURCE_UNAVAILABLE").length
+  };
 }
 
-function retrievalDisposition({ state, privacyBlocked, technicalLossReasonCodes, coveredEvidenceTypes, relevantSafeConceptSignals }) {
+function retrievalDisposition({ state, privacyBlocked, technicalLoss, coveredEvidenceTypes, relevantSafeConceptSignals }) {
   if (state === "PRESENT") return "NOT_NEEDED_PRESENT";
   if (state === "CONFLICTING") return "USER_RESOLUTION_REQUIRED";
   if (privacyBlocked) return "BLOCKED_BY_PRIVACY";
-  if (technicalLossReasonCodes.length && coveredEvidenceTypes.length === 0) return "TECHNICAL_RECOVERY_REQUIRED";
+  if (technicalLoss.reasonCodes.length && coveredEvidenceTypes.length === 0) return "TECHNICAL_RECOVERY_REQUIRED";
   if (coveredEvidenceTypes.length && relevantSafeConceptSignals.length) return "BOUNDED_LOCAL_REREAD_POSSIBLE";
-  if (technicalLossReasonCodes.length) return "TECHNICAL_RECOVERY_REQUIRED";
+  if (technicalLoss.reasonCodes.length) return "TECHNICAL_RECOVERY_REQUIRED";
   if (coveredEvidenceTypes.length) return "UNKNOWN_SOURCE_SILENCE";
   return "UNKNOWN_NO_APPLICABLE_SOURCE";
 }
@@ -110,7 +115,10 @@ export function validateIntakeGapAnalysis(analysis) {
     invariant(FIELD_STATES.has(field.state) && RETRIEVAL_DISPOSITIONS.has(field.retrievalDisposition), `${field.fieldId} gap state is invalid`);
     invariant(Array.isArray(field.attemptedMethods) && new Set(field.attemptedMethods).size === field.attemptedMethods.length && field.attemptedMethods.every((method) => rule.extractionStrategies.includes(method)), `${field.fieldId} attempted methods are invalid`);
     invariant(Array.isArray(field.coveredEvidenceTypes) && new Set(field.coveredEvidenceTypes).size === field.coveredEvidenceTypes.length && field.coveredEvidenceTypes.every((type) => rule.evidenceTypes.includes(type)), `${field.fieldId} evidence coverage is invalid`);
-    invariant(Array.isArray(field.technicalLossReasonCodes) && new Set(field.technicalLossReasonCodes).size === field.technicalLossReasonCodes.length && field.technicalLossReasonCodes.every((code) => typeof code === "string" && code), `${field.fieldId} technical loss is invalid`);
+    invariant(field.technicalLoss && Array.isArray(field.technicalLoss.reasonCodes) && new Set(field.technicalLoss.reasonCodes).size === field.technicalLoss.reasonCodes.length && field.technicalLoss.reasonCodes.every((code) => typeof code === "string" && code), `${field.fieldId} technical loss is invalid`);
+    invariant(Number.isInteger(field.technicalLoss.partialSourceCount) && field.technicalLoss.partialSourceCount >= 0 && Number.isInteger(field.technicalLoss.unavailableSourceCount) && field.technicalLoss.unavailableSourceCount >= 0, `${field.fieldId} technical-loss counts are invalid`);
+    invariant((field.technicalLoss.reasonCodes.length === 0) === (field.technicalLoss.partialSourceCount + field.technicalLoss.unavailableSourceCount === 0), `${field.fieldId} technical-loss scope is inconsistent`);
+    invariant(Object.keys(field.technicalLoss).sort().join(",") === "partialSourceCount,reasonCodes,unavailableSourceCount", `${field.fieldId} technical loss contains unregistered fields`);
     invariant(Array.isArray(field.relevantSafeConceptSignals) && new Set(field.relevantSafeConceptSignals).size === field.relevantSafeConceptSignals.length && field.relevantSafeConceptSignals.every((key) => typeof key === "string" && analysis.safeConceptCoverage.some((signal) => `${signal.signalType}:${signal.signalId}` === key)), `${field.fieldId} safe concept signals are invalid`);
     invariant(Array.isArray(field.limitations) && field.limitations.every((item) => typeof item === "string"), `${field.fieldId} gap limitations are invalid`);
     invariant(field.state !== "PRESENT" || field.retrievalDisposition === "NOT_NEEDED_PRESENT", `${field.fieldId} present field retrieval is invalid`);
@@ -118,12 +126,12 @@ export function validateIntakeGapAnalysis(analysis) {
     if (field.state === "MISSING_UNKNOWN") {
       invariant(!["NOT_NEEDED_PRESENT", "USER_RESOLUTION_REQUIRED"].includes(field.retrievalDisposition), `${field.fieldId} missing field retrieval is invalid`);
       if (field.retrievalDisposition === "BLOCKED_BY_PRIVACY") invariant(analysis.coverage.privacyBlockedSourceCount > 0, `${field.fieldId} privacy block is not supported`);
-      if (field.retrievalDisposition === "TECHNICAL_RECOVERY_REQUIRED") invariant(field.technicalLossReasonCodes.length > 0, `${field.fieldId} technical recovery is not supported`);
+      if (field.retrievalDisposition === "TECHNICAL_RECOVERY_REQUIRED") invariant(field.technicalLoss.reasonCodes.length > 0, `${field.fieldId} technical recovery is not supported`);
       if (field.retrievalDisposition === "BOUNDED_LOCAL_REREAD_POSSIBLE") invariant(field.coveredEvidenceTypes.length > 0 && field.relevantSafeConceptSignals.length > 0, `${field.fieldId} bounded retrieval is not supported`);
-      if (field.retrievalDisposition === "UNKNOWN_SOURCE_SILENCE") invariant(field.coveredEvidenceTypes.length > 0 && field.relevantSafeConceptSignals.length === 0 && field.technicalLossReasonCodes.length === 0, `${field.fieldId} source silence is not supported`);
-      if (field.retrievalDisposition === "UNKNOWN_NO_APPLICABLE_SOURCE") invariant(field.coveredEvidenceTypes.length === 0 && field.technicalLossReasonCodes.length === 0, `${field.fieldId} missing source coverage is inconsistent`);
+      if (field.retrievalDisposition === "UNKNOWN_SOURCE_SILENCE") invariant(field.coveredEvidenceTypes.length > 0 && field.relevantSafeConceptSignals.length === 0 && field.technicalLoss.reasonCodes.length === 0, `${field.fieldId} source silence is not supported`);
+      if (field.retrievalDisposition === "UNKNOWN_NO_APPLICABLE_SOURCE") invariant(field.coveredEvidenceTypes.length === 0 && field.technicalLoss.reasonCodes.length === 0, `${field.fieldId} missing source coverage is inconsistent`);
     }
-    invariant(Object.keys(field).sort().join(",") === ["attemptedMethods", "coveredEvidenceTypes", "fieldId", "limitations", "relevantSafeConceptSignals", "retrievalDisposition", "state", "technicalLossReasonCodes"].sort().join(","), `${field.fieldId} gap contains unregistered fields`);
+    invariant(Object.keys(field).sort().join(",") === ["attemptedMethods", "coveredEvidenceTypes", "fieldId", "limitations", "relevantSafeConceptSignals", "retrievalDisposition", "state", "technicalLoss"].sort().join(","), `${field.fieldId} gap contains unregistered fields`);
   }
   const expectedSummary = {
     totalFieldCount: analysis.fields.length,
@@ -159,19 +167,21 @@ export function createIntakeGapAnalysis({ candidatePackage, acquisitionDiagnosti
     const state = candidate.conflicts.length || candidate.acquisitionState === "CONFLICTING" ? "CONFLICTING" : candidate.sanitizedCandidate !== null ? "PRESENT" : "MISSING_UNKNOWN";
     const eligibleUnits = searchableUnits.filter((unit) => rule.evidenceTypes.includes(unit.searchEvidenceType));
     const coveredEvidenceTypes = rule.evidenceTypes.filter((type) => availableEvidenceTypes.includes(type));
-    const technicalLossReasonCodes = technicalLossFor(rule, sourceIngestion, acquisitionDiagnostics);
+    const technicalLoss = technicalLossFor(rule, sourceIngestion, acquisitionDiagnostics);
     const relevantSafeConceptSignals = relevantConceptKeys(field).filter((key) => safeSignalKeys.has(key));
-    const disposition = retrievalDisposition({ state, privacyBlocked, technicalLossReasonCodes, coveredEvidenceTypes, relevantSafeConceptSignals });
+    const disposition = retrievalDisposition({ state, privacyBlocked, technicalLoss, coveredEvidenceTypes, relevantSafeConceptSignals });
     return {
       fieldId: field.id,
       state,
       attemptedMethods: attemptedMethods(rule, eligibleUnits),
       coveredEvidenceTypes,
-      technicalLossReasonCodes,
+      technicalLoss,
       relevantSafeConceptSignals,
       retrievalDisposition: disposition,
       limitations: [
         "Gap analysis records search coverage and retrieval opportunity only; it does not establish a field value or factual absence.",
+        ...(technicalLoss.partialSourceCount ? [`${technicalLoss.partialSourceCount} applicable source(s) were only partially extracted; available content was still searched.`] : []),
+        ...(technicalLoss.unavailableSourceCount ? [`${technicalLoss.unavailableSourceCount} applicable source(s) were unavailable to deterministic extraction.`] : []),
         ...(disposition === "UNKNOWN_SOURCE_SILENCE" ? ["Applicable extracted sources produced no candidate or relevant controlled concept signal; the field remains UNKNOWN."] : []),
         ...(disposition === "BOUNDED_LOCAL_REREAD_POSSIBLE" ? ["Controlled concept signals justify only a bounded local re-read; they are not evidence of the missing field value."] : [])
       ]

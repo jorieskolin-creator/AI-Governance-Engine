@@ -216,6 +216,12 @@ function searchEntries(sources, fieldId, searchOverrides) {
       if (heading) add(heading[1].trim(), source);
     }
   }
+  if (strategies.has("HTML_ARCHITECTURE_TITLE")) {
+    for (const source of eligible.filter((item) => item.format === "HTML" && item.searchEvidenceType === "ARCHITECTURE_DOCUMENT" && /^html:title(?:;lines:\d+-\d+)?$/.test(item.locator ?? ""))) {
+      const match = source.content.match(/^(.{2,140}?)\s*(?:[-—|:]\s*)(?:current\s+)?(?:architecture|system design|solution design)\s*$/i);
+      if (match) add(match[1].trim(), source);
+    }
+  }
   return entries.sort((a, b) => a.sourcePriority - b.sourcePriority || a.sourceIndex - b.sourceIndex);
 }
 

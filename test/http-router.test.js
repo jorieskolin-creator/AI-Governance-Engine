@@ -86,10 +86,21 @@ test("HTTP workflow exposes readiness and fails closed before unapproved provide
 
     const preflight = await request(baseUrl, "/api/v2/runs/preflight", {
       method: "POST",
-      body: JSON.stringify({ sources: [{ path: "case.md", mimeType: "text/markdown", content: "Solution name: Router integration case" }] })
+      body: JSON.stringify({ sources: [{
+        path: "docs/current-architecture.html",
+        mimeType: "text/html",
+        content: "<html><head><title>Router Integration Case — Current Architecture</title></head><body><p>Roles: REASONER · WORKHORSE · QUALITY_CHECKER with fallback provider routing.</p></body></html>"
+      }] })
     });
     assert.equal(preflight.status, 201);
     assert.equal(preflight.body.stage, "DETERMINISTIC_DISCOVERY_COMPLETED");
+    assert.equal(preflight.body.solutionProfile.suggestedDossier.name, "Router Integration Case");
+    assert.deepEqual(preflight.body.solutionProfile.suggestedDossier.roles, []);
+    assert.equal(preflight.body.solutionProfile.assessmentIntakeFacts.REGULATORY_ROLES.answerState, "UNKNOWN");
+    const acquiredName = preflight.body.intakeCandidates.candidates.find((candidate) => candidate.fieldId === "name");
+    assert.equal(acquiredName.sanitizedCandidate, "Router Integration Case");
+    assert.equal(acquiredName.confidence, "MEDIUM");
+    assert.equal(acquiredName.sourceRefs[0].extractionMethod, "HTML_ARCHITECTURE_TITLE");
     const unapprovedRetrievalPlan = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(preflight.body.runId)}/retrieval-plan`, {
       method: "POST",
       body: JSON.stringify({})

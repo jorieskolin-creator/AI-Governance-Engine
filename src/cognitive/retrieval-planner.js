@@ -60,7 +60,7 @@ export function createRetrievalPlannerContext(run) {
         registeredExtractionStrategies: [...search.extractionStrategies],
         attemptedMethods: [...fieldGap.attemptedMethods],
         coveredEvidenceTypes: [...fieldGap.coveredEvidenceTypes],
-        technicalLossReasonCodes: [...fieldGap.technicalLossReasonCodes],
+        technicalLoss: structuredClone(fieldGap.technicalLoss),
         relevantControlledConceptSignals: [...fieldGap.relevantSafeConceptSignals]
       };
     }),

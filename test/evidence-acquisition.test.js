@@ -49,11 +49,12 @@ test("synthetic regression inputs distinguish technical loss from genuine source
     FAILED: 1,
     PRIVACY_BLOCKED: 1
   });
-  assert.deepEqual(diagnostics.technicalLoss, { count: 3, present: true });
+  assert.deepEqual(diagnostics.technicalLoss, { count: 3, partialSourceCount: 0, unavailableSourceCount: 3, present: true });
   assert.deepEqual(diagnostics.sourceSilence, { count: 2, present: true });
   assert.equal(diagnostics.genAi.status, "BLOCKED_BY_PRIVACY");
   assert.match(diagnostics.diagnosticsHash, /^[a-f0-9]{64}$/);
   assert.deepEqual(diagnostics.items.find((item) => item.path.endsWith("reference-repository.zip")).technicalLossReasonCodes, ["UNSUPPORTED_SOURCE_CONTAINER"]);
+  assert.equal(diagnostics.items.find((item) => item.path.endsWith("reference-repository.zip")).technicalLossScope, "SOURCE_UNAVAILABLE");
   assert.deepEqual(diagnostics.items.find((item) => item.path.endsWith("embedded-data-report.html")).technicalLossReasonCodes, []);
   assert.equal(diagnostics.items.find((item) => item.path.endsWith("narrative-architecture.html")).intakeFactCount, 0);
   assert.ok(diagnostics.items.find((item) => item.path.endsWith("labelled-intake.txt")).states.includes("INTAKE_USEFUL"));
@@ -61,10 +62,60 @@ test("synthetic regression inputs distinguish technical loss from genuine source
 
   const tampered = structuredClone(diagnostics);
   tampered.sourceSilence.count = 99;
-  assert.throws(() => validateAcquisitionDiagnostics(tampered), /integrity check/i);
+  assert.throws(() => validateAcquisitionDiagnostics(tampered), /source-silence summary is inconsistent/i);
 
   setAcquisitionGenAiStatus(run, "UNAVAILABLE", "MODEL_PROFILES_UNAPPROVED");
   assert.deepEqual(run.acquisitionDiagnostics.genAi, { status: "UNAVAILABLE", failureCode: "MODEL_PROFILES_UNAPPROVED" });
+});
+
+test("technical loss distinguishes partial extraction from an unavailable source", async () => {
+  const run = await createPreflight({ sources: [{
+    path: "docs/partial-report.html",
+    mimeType: "text/html",
+    content: "<h1>Visible content</h1><script>window.__private_report_state__ = { hidden: true };</script>"
+  }] });
+  const item = run.acquisitionDiagnostics.items[0];
+
+  assert.equal(item.technicalLossScope, "PARTIAL_SOURCE_EXTRACTION");
+  assert.deepEqual(item.technicalLossReasonCodes, ["UNSUPPORTED_EMBEDDED_SCRIPT_CONTENT_SKIPPED"]);
+  assert.deepEqual(run.acquisitionDiagnostics.technicalLoss, { count: 1, partialSourceCount: 1, unavailableSourceCount: 0, present: true });
+  assert.equal(run.acquisitionDiagnostics.sourceSilence.count, 0);
+  assert.doesNotMatch(JSON.stringify(publicPreflightView(run)), /__private_report_state__|hidden/);
+});
+
+test("messy deterministic acquisition meets labelled precision and recall acceptance", async () => {
+  const run = await createPreflight({ sources: [
+    { path: "docs/current-architecture.html", mimeType: "text/html", content: "<title>Atlas Review Assistant — Current Architecture</title><p>Roles: REASONER · WORKHORSE · QUALITY_CHECKER with provider routing.</p>" },
+    { path: "governance/raci.html", mimeType: "text/html", content: "<table><tr><th>Accountable</th><th>Risk Team</th></tr></table>" },
+    { path: "docs/intake.md", mimeType: "text/markdown", content: "Intended purpose: Support bounded internal governance reviews\nCurrent user access: Internal only" },
+    { path: "docs/users-a.md", mimeType: "text/markdown", content: "Users: Employees" },
+    { path: "docs/users-b.md", mimeType: "text/markdown", content: "Users: Customers" }
+  ] });
+  const expectedStates = new Map([
+    ["name", "PRESENT"],
+    ["accountableOwner", "PRESENT"],
+    ["intendedPurpose", "PRESENT"],
+    ["users", "CONFLICTING"],
+    ["exposure.currentUserAccess", "PRESENT"]
+  ]);
+  const actualPositive = run.intakeGapAnalysis.fields.filter((field) => field.state !== "MISSING_UNKNOWN");
+  const truePositiveCount = actualPositive.filter((field) => expectedStates.get(field.fieldId) === field.state).length;
+  const falsePositiveCount = actualPositive.filter((field) => !expectedStates.has(field.fieldId)).length;
+  const falseNegativeCount = [...expectedStates].filter(([fieldId, state]) => !actualPositive.some((field) => field.fieldId === fieldId && field.state === state)).length;
+  const metrics = {
+    labelledFieldCount: expectedStates.size,
+    truePositiveCount,
+    falsePositiveCount,
+    falseNegativeCount,
+    precision: truePositiveCount / Math.max(1, truePositiveCount + falsePositiveCount),
+    recall: truePositiveCount / Math.max(1, truePositiveCount + falseNegativeCount)
+  };
+
+  assert.deepEqual(metrics, { labelledFieldCount: 5, truePositiveCount: 5, falsePositiveCount: 0, falseNegativeCount: 0, precision: 1, recall: 1 });
+  assert.equal(run.intakeGapAnalysis.fields.find((field) => field.fieldId === "roles").state, "MISSING_UNKNOWN");
+  assert.equal(run.intakeGapAnalysis.fields.find((field) => field.fieldId === "intakeAnswers.REGULATORY_ROLES").state, "MISSING_UNKNOWN");
+  assert.deepEqual(run.intakeCandidates.candidates.find((candidate) => candidate.fieldId === "users").conflicts, [["EMPLOYEES"], ["CUSTOMERS"]]);
+  assert.doesNotMatch(JSON.stringify(run.packets), /Atlas Review Assistant|Risk Team|bounded internal governance reviews/i);
 });
 
 test("raw code stays local while the provider-eligible unit contains only a validated deterministic summary", async () => {

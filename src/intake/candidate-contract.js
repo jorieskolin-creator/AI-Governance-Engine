@@ -67,6 +67,7 @@ function extractionMethod(field, unit) {
   const path = unit.path?.toLowerCase() ?? "";
   const rule = intakeSearchField(field.id);
   if (unit.ocr) return "LOCAL_OCR";
+  if (field.id === "name" && /^html:title(?:;lines:\d+-\d+)?$/.test(locator) && /^.{2,140}?\s*(?:[-—|:]\s*)(?:current\s+)?(?:architecture|system design|solution design)\s*$/i.test(unit.content)) return "HTML_ARCHITECTURE_TITLE";
   if (field.id === "name" && /(?:^|\/)(?:package\.json|pyproject\.toml|cargo\.toml|go\.mod|composer\.json)$/.test(path)) return "MANIFEST_PROPERTY";
   if (rule?.labels.some((label) => new RegExp(`^\\s*(?:[-*]\\s*)?${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\??\\s*[:=\\-]`, "i").test(unit.content))) return fallbackExtractionMethod(field);
   if (field.id === "name" && /(?:^|\/)readme(?:\.[^/]*)?$/.test(path)) return "README_TITLE";
@@ -90,7 +91,7 @@ function confidenceFor(sourceRefs, fact, localUnits) {
   if (!sourceRefs.length) return "NOT_ASSESSED";
   const units = new Map(localUnits.map((unit) => [unit.id, unit]));
   if (sourceRefs.some((ref) => ref.extractionMethod === "LOCAL_OCR" && (units.get(ref.sourceUnitId)?.ocr?.confidence ?? 0) < 90)) return "MEDIUM";
-  if (sourceRefs.some((ref) => ["HEADING_VALUE", "TABLE_KEY_VALUE", "README_TITLE"].includes(ref.extractionMethod))) return "MEDIUM";
+  if (sourceRefs.some((ref) => ["HEADING_VALUE", "TABLE_KEY_VALUE", "README_TITLE", "HTML_ARCHITECTURE_TITLE"].includes(ref.extractionMethod))) return "MEDIUM";
   return "HIGH";
 }
 

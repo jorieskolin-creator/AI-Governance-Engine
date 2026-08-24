@@ -1,7 +1,7 @@
 import { invariant, normalizePath } from "../contracts.js";
 import { sha256 } from "../core/hash.js";
 
-export const ACQUISITION_DIAGNOSTICS_VERSION = "acquisition-diagnostics-1.0.0";
+export const ACQUISITION_DIAGNOSTICS_VERSION = "acquisition-diagnostics-1.1.0";
 
 const STATES = Object.freeze([
   "SELECTED",
@@ -14,6 +14,7 @@ const STATES = Object.freeze([
   "PRIVACY_BLOCKED"
 ]);
 const GENAI_STATES = new Set(["NOT_REQUESTED", "REQUESTED", "COMPLETED", "BLOCKED_BY_PRIVACY", "UNAVAILABLE"]);
+const TECHNICAL_LOSS_SCOPES = new Set(["NONE", "PARTIAL_SOURCE_EXTRACTION", "SOURCE_UNAVAILABLE"]);
 const EXCLUDED_DISPOSITIONS = new Set(["KNOWN_IRRELEVANT", "UNSUPPORTED_BINARY"]);
 const FAILED_DISPOSITIONS = new Set(["UNSUPPORTED_SOURCE_LIKE", "PARSE_FAILED", "REJECTED_UNSAFE"]);
 
@@ -25,9 +26,25 @@ export function validateAcquisitionDiagnostics(diagnostics) {
     invariant(item.states.every((state) => STATES.includes(state)), `Acquisition diagnostic state is invalid for ${item.path}`);
     invariant(item.states[0] === "SELECTED", `Selected acquisition state is missing for ${item.path}`);
     invariant(Array.isArray(item.technicalLossReasonCodes), `Technical-loss diagnostics are invalid for ${item.path}`);
+    invariant(TECHNICAL_LOSS_SCOPES.has(item.technicalLossScope), `Technical-loss scope is invalid for ${item.path}`);
+    invariant((item.technicalLossScope === "NONE") === (item.technicalLossReasonCodes.length === 0), `Technical-loss scope is inconsistent for ${item.path}`);
+    if (item.technicalLossScope === "PARTIAL_SOURCE_EXTRACTION") invariant(item.states.includes("CONTENT_EXTRACTED"), `Partial technical loss requires extracted content for ${item.path}`);
+    if (item.technicalLossScope === "SOURCE_UNAVAILABLE") invariant(!item.states.includes("CONTENT_EXTRACTED"), `Unavailable technical loss cannot contain extracted content for ${item.path}`);
+    invariant(Object.keys(item).sort().join(",") === ["extractedCharacterCount", "extractedUnitCount", "genAiEligibleFactCount", "intakeFactCount", "path", "privacyBlockingFindingCount", "states", "technicalLossReasonCodes", "technicalLossScope"].sort().join(","), `Acquisition diagnostics contain unregistered fields for ${item.path}`);
   }
   const expected = Object.fromEntries(STATES.map((state) => [state, diagnostics.items.filter((item) => item.states.includes(state)).length]));
   invariant(JSON.stringify(diagnostics.counts) === JSON.stringify(expected), "Acquisition diagnostic counts are inconsistent");
+  const expectedTechnicalLoss = {
+    count: diagnostics.items.filter((item) => item.technicalLossScope !== "NONE").length,
+    partialSourceCount: diagnostics.items.filter((item) => item.technicalLossScope === "PARTIAL_SOURCE_EXTRACTION").length,
+    unavailableSourceCount: diagnostics.items.filter((item) => item.technicalLossScope === "SOURCE_UNAVAILABLE").length,
+    present: diagnostics.items.some((item) => item.technicalLossScope !== "NONE")
+  };
+  invariant(JSON.stringify(diagnostics.technicalLoss) === JSON.stringify(expectedTechnicalLoss), "Acquisition technical-loss summary is inconsistent");
+  const expectedSourceSilenceCount = diagnostics.items.filter((item) => item.states.includes("CONTENT_EXTRACTED") && !item.states.includes("INTAKE_USEFUL") && !item.states.includes("PRIVACY_BLOCKED") && item.technicalLossScope === "NONE").length;
+  invariant(JSON.stringify(diagnostics.sourceSilence) === JSON.stringify({ count: expectedSourceSilenceCount, present: expectedSourceSilenceCount > 0 }), "Acquisition source-silence summary is inconsistent");
+  invariant(Object.keys(diagnostics.genAi).sort().join(",") === "failureCode,status", "Acquisition GenAI diagnostics contain unregistered fields");
+  invariant(Object.keys(diagnostics).sort().join(",") === ["counts", "diagnosticsHash", "genAi", "items", "schemaVersion", "sourceSilence", "technicalLoss"].sort().join(","), "Acquisition diagnostics contain unregistered fields");
   const { diagnosticsHash, ...payload } = diagnostics;
   invariant(typeof diagnosticsHash === "string" && sha256(payload) === diagnosticsHash, "Acquisition diagnostics failed their integrity check");
   return diagnostics;
@@ -68,10 +85,12 @@ export function createAcquisitionDiagnostics({ sourceIngestion, registeredSource
       ...extraction.limitationCodes,
       ...(states.includes("PARSED") && !states.includes("CONTENT_EXTRACTED") ? ["NO_CONTENT_EXTRACTED"] : [])
     ])];
+    const technicalLossScope = technicalLossReasonCodes.length === 0 ? "NONE" : states.includes("CONTENT_EXTRACTED") ? "PARTIAL_SOURCE_EXTRACTION" : "SOURCE_UNAVAILABLE";
     return {
       path: manifestItem.path,
       states,
       technicalLossReasonCodes,
+      technicalLossScope,
       extractedUnitCount: extraction.extractedUnitCount ?? 0,
       extractedCharacterCount: extraction.extractedCharacters,
       intakeFactCount,
@@ -81,11 +100,13 @@ export function createAcquisitionDiagnostics({ sourceIngestion, registeredSource
   });
   const counts = Object.fromEntries(STATES.map((state) => [state, items.filter((item) => item.states.includes(state)).length]));
   const technicalLossCount = items.filter((item) => item.technicalLossReasonCodes.length > 0).length;
+  const partialTechnicalLossCount = items.filter((item) => item.technicalLossScope === "PARTIAL_SOURCE_EXTRACTION").length;
+  const unavailableTechnicalLossCount = items.filter((item) => item.technicalLossScope === "SOURCE_UNAVAILABLE").length;
   const sourceSilenceCount = items.filter((item) => item.states.includes("CONTENT_EXTRACTED") && !item.states.includes("INTAKE_USEFUL") && !item.states.includes("PRIVACY_BLOCKED") && item.technicalLossReasonCodes.length === 0).length;
   const payload = {
     schemaVersion: ACQUISITION_DIAGNOSTICS_VERSION,
     counts,
-    technicalLoss: { count: technicalLossCount, present: technicalLossCount > 0 },
+    technicalLoss: { count: technicalLossCount, partialSourceCount: partialTechnicalLossCount, unavailableSourceCount: unavailableTechnicalLossCount, present: technicalLossCount > 0 },
     sourceSilence: { count: sourceSilenceCount, present: sourceSilenceCount > 0 },
     genAi: { status: counts.PRIVACY_BLOCKED ? "BLOCKED_BY_PRIVACY" : "NOT_REQUESTED", failureCode: null },
     items

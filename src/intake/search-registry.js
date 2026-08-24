@@ -3,7 +3,7 @@ import { sha256 } from "../core/hash.js";
 import { INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
 import { INTAKE_FIELD_REGISTRY } from "./field-registry.js";
 
-export const INTAKE_SEARCH_REGISTRY_VERSION = "intake-search-registry-1.0.0";
+export const INTAKE_SEARCH_REGISTRY_VERSION = "intake-search-registry-1.1.0";
 
 export const INTAKE_SEARCH_EVIDENCE_TYPES = Object.freeze([
   "CANONICAL_DECLARATION",
@@ -16,6 +16,7 @@ export const INTAKE_SEARCH_EVIDENCE_TYPES = Object.freeze([
 ]);
 
 export const INTAKE_EXTRACTION_STRATEGIES = Object.freeze([
+  "HTML_ARCHITECTURE_TITLE",
   "LABELLED_VALUE",
   "HEADING_VALUE",
   "TABLE_KEY_VALUE",
@@ -39,14 +40,14 @@ const DOCUMENT_EVIDENCE = Object.freeze([
 const STRUCTURED_DOCUMENT_EVIDENCE = Object.freeze(["CANONICAL_DECLARATION", "ARCHITECTURE_DOCUMENT", "STRUCTURED_REPORT", "README", "DOCUMENTATION"]);
 
 const definitions = [
-  ["name", ["solution name", "system name", "product name"], ["name"], ["MANIFEST_PROPERTY", "README_TITLE", "LABELLED_VALUE", "HEADING_VALUE", "STRUCTURED_PROPERTY"], ["CANONICAL_DECLARATION", "PROJECT_MANIFEST", "README", "ARCHITECTURE_DOCUMENT", "STRUCTURED_REPORT", "DOCUMENTATION"]],
+  ["name", ["solution name", "system name", "product name"], ["name"], ["MANIFEST_PROPERTY", "README_TITLE", "HTML_ARCHITECTURE_TITLE", "LABELLED_VALUE", "HEADING_VALUE", "STRUCTURED_PROPERTY"], ["CANONICAL_DECLARATION", "PROJECT_MANIFEST", "README", "ARCHITECTURE_DOCUMENT", "STRUCTURED_REPORT", "DOCUMENTATION"]],
   ["accountableOwner", ["accountable owner", "system owner", "solution owner", "product owner"], ["accountable", "owner"], ["LABELLED_VALUE", "HEADING_VALUE", "TABLE_KEY_VALUE", "STRUCTURED_PROPERTY"], ["CANONICAL_DECLARATION", "OWNERSHIP_RACI", "ARCHITECTURE_DOCUMENT", "STRUCTURED_REPORT", "README", "DOCUMENTATION"]],
   ["intendedPurpose", ["intended purpose", "purpose", "mission"], [], ["LABELLED_VALUE", "HEADING_VALUE", "STRUCTURED_PROPERTY"], STRUCTURED_DOCUMENT_EVIDENCE],
   ["expectedValue", ["expected value", "business value", "expected outcome", "outcome", "value hypothesis"], [], ["LABELLED_VALUE", "HEADING_VALUE", "STRUCTURED_PROPERTY"], STRUCTURED_DOCUMENT_EVIDENCE],
   ["currentStage", ["current lifecycle stage", "current stage", "lifecycle stage"], [], ["LABELLED_ENUM", "HEADING_VALUE", "STRUCTURED_PROPERTY"], DOCUMENT_EVIDENCE],
   ["targetStage", ["target lifecycle stage", "target stage", "requested stage"], [], ["LABELLED_ENUM", "HEADING_VALUE", "STRUCTURED_PROPERTY"], DOCUMENT_EVIDENCE],
   ["jurisdictions", ["jurisdiction", "jurisdictions", "deployment countries", "operating countries"], [], ["LABELLED_LIST", "HEADING_VALUE", "STRUCTURED_PROPERTY"], DOCUMENT_EVIDENCE],
-  ["roles", ["regulatory role", "regulatory roles", "ai act role", "ai act roles", "roles"], [], ["LABELLED_LIST", "HEADING_VALUE", "STRUCTURED_PROPERTY"], DOCUMENT_EVIDENCE],
+  ["roles", ["regulatory role", "regulatory roles", "ai act role", "ai act roles"], [], ["LABELLED_LIST", "HEADING_VALUE", "STRUCTURED_PROPERTY"], DOCUMENT_EVIDENCE],
   ["users", ["users", "affected groups", "user groups"], [], ["LABELLED_LIST", "HEADING_VALUE", "STRUCTURED_PROPERTY"], DOCUMENT_EVIDENCE],
   ["operatingBoundary.allowedUses", ["allowed uses", "approved uses"], [], ["LABELLED_VALUE", "HEADING_VALUE", "STRUCTURED_PROPERTY"], DOCUMENT_EVIDENCE],
   ["operatingBoundary.excludedUses", ["excluded uses", "prohibited uses"], [], ["LABELLED_VALUE", "HEADING_VALUE", "STRUCTURED_PROPERTY"], DOCUMENT_EVIDENCE],
@@ -85,7 +86,11 @@ const definitions = [
 
 const questionnaireDefinitions = INTAKE_QUESTIONNAIRE.questions.map((question) => ({
   fieldId: `intakeAnswers.${question.id}`,
-  labels: [question.id.replaceAll("_", " "), question.fieldId.split(".").at(-1).replace(/([a-z])([A-Z])/g, "$1 $2"), question.prompt.replace(/\?$/, "")],
+  labels: [...new Set([
+    question.id.replaceAll("_", " "),
+    ...(question.id === "REGULATORY_ROLES" ? [] : [question.fieldId.split(".").at(-1).replace(/([a-z])([A-Z])/g, "$1 $2")]),
+    question.prompt.replace(/\?$/, "")
+  ])],
   headingAliases: [],
   tableLabels: [],
   evidenceTypes: [...DOCUMENT_EVIDENCE],

@@ -39,6 +39,23 @@ test("acquisition diagnostics distinguish technical loss from source silence", (
   assert.match(app, /Genuine source silence:/);
 });
 
+test("retrieval suggestions and local candidates have separate explicit UI authority boundaries", () => {
+  assert.match(index, /id="request-retrieval-plan"[^>]*>Request Retrieval Suggestions/);
+  assert.match(index, /id="execute-local-reread"[^>]*>Run One Local Re-read/);
+  assert.match(app, /window\.confirm\(`Request suggestion-only retrieval planning/);
+  assert.match(app, /purpose: "INTAKE_RETRIEVAL_PLANNING_FROM_SAFE_METRICS"/);
+  assert.match(app, /window\.confirm\("Run exactly one bounded local re-read/);
+  assert.match(app, /purpose: "EXECUTE_VALIDATED_RETRIEVAL_PLAN_LOCALLY"/);
+  assert.match(app, /Retrieval suggestions are not evidence, field values, classifications, findings, or approvals/);
+  assert.match(app, /Results are validated candidates—not approved Intake/);
+  assert.match(app, /Use candidate/);
+  assert.match(app, /Decline candidate/);
+  assert.match(app, /No option is preselected/);
+  assert.match(app, /USER_ACCEPTED_ACQUIRED_CANDIDATE/);
+  assert.match(app, /acquiredCandidateRef/);
+  assert.doesNotMatch(app, /latestSolutionProfile\.fields\[[^\]]+\]\.value\s*=/);
+});
+
 test("ZIP source containers require explicit local extraction", () => {
   assert.match(index, /ZIP archives are not opened: extract them locally and select the extracted folder/);
   assert.match(app, /ZIP archive\(s\) must be extracted locally and selected as a folder/);

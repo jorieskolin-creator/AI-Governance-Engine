@@ -1,11 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { validateDossier } from "../src/contracts.js";
 import { discoverSolutionProfile } from "../src/core/solution-profile.js";
-import { createPreflight, publicPreflightView } from "../src/cognitive/preflight.js";
+import { confirmPreflightDossier, createPreflight, publicPreflightView } from "../src/cognitive/preflight.js";
 import { modelPolicy } from "../src/cognitive/model-policy.js";
 import { ModelBudget, StructuredModelClient } from "../src/cognitive/provider-client.js";
 import { createRetrievalPlannerContext, planIntakeRetrieval, RETRIEVAL_PLANNING_PURPOSE } from "../src/cognitive/retrieval-planner.js";
 import { executeLocalReread, LOCAL_REREAD_PURPOSE, validateLocalReread } from "../src/intake/local-reread.js";
+import { createIntakeResolutionDraft } from "../src/intake/contracts.js";
 
 const policy = () => modelPolicy({ MOONSHOT_API_KEY: "test" }, { qualificationRequired: false });
 
@@ -84,6 +86,15 @@ test("one bounded local pass recovers sanitized candidates without provider tran
   const tampered = structuredClone(result);
   tampered.recoveredFieldIds.pop();
   assert.throws(() => validateLocalReread(tampered, { plan: run.retrievalPlan.plan, beforePackage: before.candidatePackage, afterPackage: run.intakeCandidates }), /outcome|integrity check/i);
+
+  const dossier = validateDossier({ ...run.solutionProfile.suggestedDossier, accountableOwner: owner.sanitizedCandidate });
+  const resolutions = createIntakeResolutionDraft(dossier, run.solutionProfile);
+  resolutions.accountableOwner = { resolutionState: "USER_ACCEPTED_ACQUIRED_CANDIDATE", acquiredCandidateRef: owner.id, acquiredCandidatePackageHash: run.intakeCandidates.packageHash };
+  await confirmPreflightDossier(run, { dossier, resolutions, approval: { confirmed: true, actorRef: "TEST_USER" } });
+  const approvedOwner = run.approvedIntake.fields.find((field) => field.fieldId === "accountableOwner");
+  assert.equal(approvedOwner.origin, "DETERMINISTIC_ACQUISITION");
+  assert.equal(approvedOwner.resolutionState, "USER_ACCEPTED_ACQUIRED_CANDIDATE");
+  assert.deepEqual(approvedOwner.evidenceRefs, owner.sourceRefs.map((ref) => ref.sourceUnitId));
 });
 
 test("local re-read preserves conflicting aliases and leaves genuine unknowns unresolved", async () => {

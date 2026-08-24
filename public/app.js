@@ -17,10 +17,14 @@ let intakeFieldRegistry = { version: "unavailable", fields: [] };
 let latestSolutionProfile = null;
 let latestDiscoveryRecheck = null;
 let latestDiscoveryContext = null;
+let retrievalPlanningProviders = [];
 const editedIntakeFields = new Set();
 const acceptedProposalByField = new Map();
 const editedProposalByField = new Map();
 const declinedProposalByField = new Map();
+const acceptedAcquiredCandidateByField = new Map();
+const editedAcquiredCandidateByField = new Map();
+const declinedAcquiredCandidateByField = new Map();
 const intakeControlBaseline = new Map();
 let INTAKE_CONTROL_FIELDS = Object.freeze({});
 
@@ -131,11 +135,16 @@ function renderQuestionnaire() {
         : "Self-Declared · unsupported until documentary evidence is verified";
       const fieldId = `intakeAnswers.${card.dataset.questionId}`;
       const acceptedProposal = acceptedProposalByField.get(fieldId);
+      const acceptedAcquired = acceptedAcquiredCandidateByField.get(fieldId);
       const field = intakeFieldRegistry.fields.find((item) => item.id === fieldId);
       const value = field?.dataType === "ENUM_ARRAY" ? answer.values : answer.answerState;
       if (acceptedProposal && !proposalMatchesValue(acceptedProposal.value, value)) {
         acceptedProposalByField.delete(fieldId);
         editedProposalByField.set(fieldId, acceptedProposal);
+      }
+      if (acceptedAcquired && !sameIntakeValue(acceptedAcquired.sanitizedCandidate, value)) {
+        acceptedAcquiredCandidateByField.delete(fieldId);
+        editedAcquiredCandidateByField.set(fieldId, acceptedAcquired);
       }
       renderQuestionProposalDecision(fieldId);
     }
@@ -230,6 +239,9 @@ function fillDossier(dossier) {
   acceptedProposalByField.clear();
   editedProposalByField.clear();
   declinedProposalByField.clear();
+  acceptedAcquiredCandidateByField.clear();
+  editedAcquiredCandidateByField.clear();
+  declinedAcquiredCandidateByField.clear();
   latestDiscoveryRecheck = null;
   const boundary = dossier.operatingBoundary ?? {};
   $("name").value = dossier.name ?? ""; $("owner").value = dossier.accountableOwner ?? "";
@@ -268,7 +280,10 @@ function renderIntakeWorkspace(profile, recheck = null) {
     const fact = profile.fields[field];
     const ai = aiByField.get(field);
     const edited = editedIntakeFields.has(field);
-    const state = acceptedProposalByField.has(field) ? { tone: "review", text: "GenAI proposal selected · editable · becomes a user decision only on final approval" }
+    const state = acceptedAcquiredCandidateByField.has(field) ? { tone: "observed", text: "Recovered deterministic candidate selected · editable · enters Intake only on final approval" }
+      : editedAcquiredCandidateByField.has(field) ? { tone: "self-declared", text: "Recovered candidate edited by user · treated as Self-Declared" }
+        : declinedAcquiredCandidateByField.has(field) ? { tone: "missing", text: "Recovered candidate declined · provide a value or resolve as Unknown / Not Applicable" }
+          : acceptedProposalByField.has(field) ? { tone: "review", text: "GenAI proposal selected · editable · becomes a user decision only on final approval" }
       : editedProposalByField.has(field) ? { tone: "self-declared", text: "GenAI proposal edited by user · treated as Self-Declared, not GenAI-authoritative" }
       : declinedProposalByField.has(field) ? { tone: "missing", text: "GenAI proposal declined · provide a value or resolve as Unknown / Not Applicable" }
       : edited ? { tone: "self-declared", text: "Self-Declared · changed by user · V&V lifecycle cap applies" }
@@ -359,7 +374,10 @@ function renderQuestionProposalDecision(fieldId) {
   const questionId = fieldId.startsWith("intakeAnswers.") ? fieldId.slice("intakeAnswers.".length) : null;
   const state = questionId ? document.querySelector(`.question-card[data-question-id="${questionId}"] .question-evidence-state`) : null;
   if (!state) return;
-  if (acceptedProposalByField.has(fieldId)) state.textContent = "GenAI proposal selected · editable · becomes a user decision only on final approval";
+  if (acceptedAcquiredCandidateByField.has(fieldId)) state.textContent = "Recovered deterministic candidate selected · editable · enters Intake only on final approval";
+  else if (editedAcquiredCandidateByField.has(fieldId)) state.textContent = "Recovered candidate edited by user · treated as Self-Declared";
+  else if (declinedAcquiredCandidateByField.has(fieldId)) state.textContent = "Recovered candidate declined · provide a value or resolve as Unknown / Not Applicable";
+  else if (acceptedProposalByField.has(fieldId)) state.textContent = "GenAI proposal selected · editable · becomes a user decision only on final approval";
   else if (editedProposalByField.has(fieldId)) state.textContent = "GenAI proposal edited by user · treated as Self-Declared, not GenAI-authoritative";
   else if (declinedProposalByField.has(fieldId)) state.textContent = "GenAI proposal declined · provide a value or resolve as Unknown / Not Applicable";
 }
@@ -422,10 +440,12 @@ function intakeResolutions(dossier) {
     const answer = field.questionId ? dossier.intakeAnswers?.[field.questionId] : null;
     const value = field.questionId ? questionnaireFieldValue(dossier, field) : dossierPathValue(dossier, field.id);
     const proposal = acceptedProposalByField.get(field.id);
+    const acquiredCandidate = acceptedAcquiredCandidateByField.get(field.id);
     let resolutionState;
     if (answer?.answerState === "NOT_APPLICABLE") resolutionState = "USER_SELECTED_NOT_APPLICABLE";
     else if (answer?.answerState === "HUMAN_REVIEW_REQUIRED" || (fact?.status === "CONFLICTING" || fact?.supportStatus === "CONFLICTING") && sameIntakeValue(priorFieldValue(field), value)) resolutionState = "CONFLICT_REQUIRES_RESOLUTION";
     else if (value === null) resolutionState = "USER_SELECTED_UNKNOWN";
+    else if (acquiredCandidate && sameIntakeValue(acquiredCandidate.sanitizedCandidate, value)) resolutionState = "USER_ACCEPTED_ACQUIRED_CANDIDATE";
     else if (proposal && proposalMatchesValue(proposal.value, value)) resolutionState = "USER_ACCEPTED_PROPOSAL";
     else if (sameIntakeValue(priorFieldValue(field), value)) resolutionState = "USER_CONFIRMED";
     else resolutionState = "USER_EDITED";
@@ -434,7 +454,11 @@ function intakeResolutions(dossier) {
       explanation: answer?.explanation ?? "",
       proposalRef: resolutionState === "USER_ACCEPTED_PROPOSAL" ? proposal.id : null,
       editedProposalRef: editedProposalByField.get(field.id)?.id ?? null,
-      declinedProposalRef: declinedProposalByField.get(field.id)?.id ?? null
+      declinedProposalRef: declinedProposalByField.get(field.id)?.id ?? null,
+      acquiredCandidateRef: resolutionState === "USER_ACCEPTED_ACQUIRED_CANDIDATE" ? acquiredCandidate.id : null,
+      editedAcquiredCandidateRef: editedAcquiredCandidateByField.get(field.id)?.id ?? null,
+      declinedAcquiredCandidateRef: declinedAcquiredCandidateByField.get(field.id)?.id ?? null,
+      acquiredCandidatePackageHash: acquiredCandidate || editedAcquiredCandidateByField.has(field.id) || declinedAcquiredCandidateByField.has(field.id) ? latestDiscoveryContext.intakeCandidates.packageHash : null
     };
   }
   return decisions;
@@ -486,6 +510,101 @@ async function selectedSources() {
   return preparedSources;
 }
 
+function displayIntakeValue(value) {
+  if (value === null || value === undefined || value === "" || Array.isArray(value) && !value.length) return "Unknown";
+  if (Array.isArray(value)) return value.map(label).join(", ");
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+function applyAcquiredCandidate(candidate) {
+  const field = intakeFieldRegistry.fields.find((entry) => entry.id === candidate.fieldId);
+  if (!field) return;
+  acceptedProposalByField.delete(field.id);
+  editedProposalByField.delete(field.id);
+  declinedProposalByField.delete(field.id);
+  editedAcquiredCandidateByField.delete(field.id);
+  declinedAcquiredCandidateByField.delete(field.id);
+  acceptedAcquiredCandidateByField.set(field.id, candidate);
+  if (!applyProposalToIntake(field, structuredClone(candidate.sanitizedCandidate))) acceptedAcquiredCandidateByField.delete(field.id);
+}
+
+function renderAcquisitionStages(root) {
+  const context = latestDiscoveryContext;
+  if (!context?.intakeGapAnalysis || !context.intakeCandidates) return;
+  const gap = context.intakeGapAnalysis;
+  const gapDetails = el("details", "discovery-candidate-details");
+  gapDetails.append(el("summary", "", `Deterministic acquisition status · ${gap.summary.presentFieldCount} present · ${gap.summary.conflictingFieldCount} conflicting · ${gap.summary.missingFieldCount} unknown`));
+  gapDetails.append(el("p", "field-hint", "These are deterministic search-coverage states, not governance conclusions. Unknown does not mean absent, and a retrieval opportunity does not establish a value."));
+  const gapList = el("ul", "discovery-candidates");
+  for (const field of gap.fields.filter((item) => item.state !== "PRESENT")) gapList.append(el("li", "", `${label(field.fieldId)} · ${label(field.state)} · ${label(field.retrievalDisposition)}`));
+  gapDetails.append(gapList); root.append(gapDetails);
+
+  const retrieval = context.retrievalPlan;
+  if (retrieval) {
+    const details = el("details", "discovery-candidate-details");
+    details.open = retrieval.status === "COMPLETED" && !context.localReread;
+    details.append(el("summary", "", `GenAI retrieval suggestions · ${label(retrieval.status)}`));
+    details.append(el("p", "field-hint", "Retrieval suggestions are not evidence, field values, classifications, findings, or approvals. They can only guide one separately confirmed local re-read."));
+    const list = el("ul", "discovery-candidates");
+    for (const suggestion of retrieval.plan?.suggestions ?? []) list.append(el("li", "", `${label(suggestion.fieldId)} · concepts: ${suggestion.searchConcepts.join(", ") || "none"} · aliases: ${suggestion.labelAliases.join(", ") || "none"} · local strategies: ${suggestion.extractionStrategies.map(label).join(", ") || "none"}`));
+    if (retrieval.failureCode) list.append(el("li", "", `Unavailable: ${label(retrieval.failureCode)}. No suggestion was executed and deterministic gaps remain unchanged.`));
+    details.append(list); root.append(details);
+  }
+
+  const reread = context.localReread;
+  if (!reread) return;
+  const candidateByField = new Map(context.intakeCandidates.candidates.map((candidate) => [candidate.fieldId, candidate]));
+  const details = el("details", "discovery-candidate-details"); details.open = true;
+  details.append(el("summary", "", `Local re-read candidates · ${reread.recoveredFieldIds.length} recovered · ${reread.conflictingFieldIds.length} conflicting · ${reread.remainingUnknownFieldIds.length} still unknown`));
+  details.append(el("p", "field-hint", "This bounded pass stayed local. Results are validated candidates—not approved Intake—and require an explicit selection below plus final user approval."));
+  const list = el("ul", "discovery-candidates acquisition-results");
+  for (const fieldId of reread.recoveredFieldIds) {
+    const candidate = candidateByField.get(fieldId);
+    if (!candidate) continue;
+    const item = el("li", "", `${label(fieldId)} · Recovered deterministic candidate · ${displayIntakeValue(candidate.sanitizedCandidate)} · ${label(candidate.confidence)} confidence · ${candidate.sourceRefs.length} local source reference(s).`);
+    const apply = el("button", "candidate-apply-button", acceptedAcquiredCandidateByField.has(fieldId) ? "Candidate selected" : "Use candidate"); apply.type = "button";
+    apply.disabled = acceptedAcquiredCandidateByField.has(fieldId);
+    apply.addEventListener("click", () => { applyAcquiredCandidate(candidate); renderDiscovery(context.profile, context.dlpFindings, context.recheck, context.citationIndex, context.acquisitionDiagnostics); });
+    const decline = el("button", "candidate-decline-button", declinedAcquiredCandidateByField.has(fieldId) ? "Candidate declined" : "Decline candidate"); decline.type = "button";
+    decline.disabled = declinedAcquiredCandidateByField.has(fieldId);
+    decline.addEventListener("click", () => {
+      acceptedAcquiredCandidateByField.delete(fieldId);
+      editedAcquiredCandidateByField.delete(fieldId);
+      declinedAcquiredCandidateByField.set(fieldId, candidate);
+      renderDiscovery(context.profile, context.dlpFindings, context.recheck, context.citationIndex, context.acquisitionDiagnostics);
+    });
+    item.append(apply, decline); list.append(item);
+  }
+  for (const fieldId of reread.conflictingFieldIds) {
+    const candidate = candidateByField.get(fieldId);
+    const field = intakeFieldRegistry.fields.find((entry) => entry.id === fieldId);
+    const item = el("li", "", `${label(fieldId)} · Conflict · ${candidate?.conflicts.length ?? 0} source-derived options require user resolution. No option is preselected.`);
+    for (const value of candidate?.conflicts ?? []) {
+      const use = el("button", "candidate-decline-button", `Use ${displayIntakeValue(value)}`); use.type = "button";
+      use.addEventListener("click", () => {
+        acceptedAcquiredCandidateByField.delete(fieldId);
+        if (field) applyProposalToIntake(field, structuredClone(value));
+      });
+      item.append(use);
+    }
+    list.append(item);
+  }
+  if (reread.remainingUnknownFieldIds.length) list.append(el("li", "", `${reread.remainingUnknownFieldIds.map(label).join(", ")} · remain Unknown; the bounded pass did not establish values.`));
+  details.append(list); root.append(details);
+}
+
+function updateAcquisitionActions() {
+  const context = latestDiscoveryContext;
+  const privacyBlocked = context?.dlpFindings?.some((item) => item.blocking) ?? true;
+  const planAvailable = !privacyBlocked && !context?.retrievalPlan && (context?.intakeGapAnalysis?.summary?.boundedRetrievalFieldCount ?? 0) > 0 && retrievalPlanningProviders.length > 0;
+  $("request-retrieval-plan").classList.toggle("hidden", !planAvailable);
+  $("request-retrieval-plan").disabled = false;
+  const rereadAvailable = context?.retrievalPlan?.status === "COMPLETED" && !context?.localReread;
+  $("execute-local-reread").classList.toggle("hidden", !rereadAvailable);
+  $("execute-local-reread").disabled = false;
+}
+
 function renderDiscovery(profile, dlpFindings = [], recheck = null, citationIndex = [], acquisitionDiagnostics = null) {
   latestSolutionProfile = profile;
   const citations = new Map(citationIndex.map((item) => [item.sourceUnitId, item]));
@@ -513,6 +632,7 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
     grid.append(card);
   }
   root.append(grid);
+  renderAcquisitionStages(root);
   if (latestDiscoveryContext?.packets?.length) {
     const safePackage = el("details", "discovery-candidate-details");
     safePackage.append(el("summary", "", "Review safe package available for optional GenAI proposals"));
@@ -591,12 +711,13 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
     }
   }
   renderIntakeWorkspace(profile, recheck);
+  updateAcquisitionActions();
   root.classList.remove("hidden");
 }
 
 async function discoverCaseInformation() {
   $("error").classList.add("hidden"); $("discover-button").disabled = true; $("assess-button").disabled = true;
-  $("request-ai-proposals").classList.add("hidden");
+  for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
   setIntakeFlow("DETERMINISTIC");
   $("discovery-status").textContent = "Stage 2 of 5 · Parsing sources locally and building deterministic cited facts…";
   try {
@@ -605,7 +726,20 @@ async function discoverCaseInformation() {
     const preflight = await postJson("/api/v2/runs/preflight", prepared);
     activeRunId = preflight.runId;
     latestSolutionProfile = preflight.solutionProfile;
-    latestDiscoveryContext = { profile: preflight.solutionProfile, dlpFindings: preflight.dlpFindings, citationIndex: preflight.citationIndex, packets: preflight.packets, acquiredFacts: preflight.acquiredFacts, acquisitionDiagnostics: preflight.acquisitionDiagnostics, selectedAcquiredFactIds: [] };
+    latestDiscoveryContext = {
+      profile: preflight.solutionProfile,
+      dlpFindings: preflight.dlpFindings,
+      citationIndex: preflight.citationIndex,
+      packets: preflight.packets,
+      intakeCandidates: preflight.intakeCandidates,
+      acquiredFacts: preflight.acquiredFacts,
+      acquisitionDiagnostics: preflight.acquisitionDiagnostics,
+      intakeGapAnalysis: preflight.intakeGapAnalysis,
+      retrievalPlan: preflight.retrievalPlan,
+      localReread: preflight.localReread,
+      recheck: preflight.discoveryRecheck,
+      selectedAcquiredFactIds: []
+    };
     fillDossier(preflight.solutionProfile.suggestedDossier);
     renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, null, preflight.citationIndex, preflight.acquisitionDiagnostics);
     const blocked = preflight.dlpFindings.some((item) => item.blocking);
@@ -621,6 +755,67 @@ async function discoverCaseInformation() {
   } catch (error) {
     $("discovery-status").textContent = "Discovery could not be completed."; $("error").textContent = error.message; $("error").classList.remove("hidden");
   } finally { $("discover-button").disabled = false; }
+}
+
+async function refreshDiscoveryContext() {
+  const view = await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/discover`);
+  latestDiscoveryContext = {
+    ...latestDiscoveryContext,
+    profile: view.solutionProfile,
+    dlpFindings: view.dlpFindings,
+    citationIndex: view.citationIndex,
+    intakeCandidates: view.intakeCandidates,
+    acquiredFacts: view.acquiredFacts,
+    acquisitionDiagnostics: view.acquisitionDiagnostics,
+    intakeGapAnalysis: view.intakeGapAnalysis,
+    retrievalPlan: view.retrievalPlan,
+    localReread: view.localReread,
+    recheck: view.discoveryRecheck
+  };
+  return latestDiscoveryContext;
+}
+
+async function requestRetrievalPlan() {
+  if (!activeRunId || !latestDiscoveryContext || !retrievalPlanningProviders.length) return;
+  const providers = [...retrievalPlanningProviders];
+  if (!window.confirm(`Request suggestion-only retrieval planning from the approved ${providers.map(label).join(", ")} route(s)? Only safe metrics, field definitions, artifact classes and controlled topic signals will be sent. No source content or candidate value will be sent.`)) return;
+  $("error").classList.add("hidden"); $("request-retrieval-plan").disabled = true;
+  $("discovery-status").textContent = "Requesting bounded retrieval suggestions from safe metrics only…";
+  try {
+    await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/retrieval-plan`, {
+      confirmed: true,
+      purpose: "INTAKE_RETRIEVAL_PLANNING_FROM_SAFE_METRICS",
+      gapAnalysisHash: latestDiscoveryContext.intakeGapAnalysis.analysisHash,
+      providers
+    });
+    const context = await refreshDiscoveryContext();
+    renderDiscovery(context.profile, context.dlpFindings, context.recheck, context.citationIndex, context.acquisitionDiagnostics);
+    $("discovery-status").textContent = context.retrievalPlan?.status === "COMPLETED"
+      ? "Retrieval suggestions are ready for review. They are not evidence and have not been executed."
+      : `Retrieval planning is ${label(context.retrievalPlan?.status ?? "UNAVAILABLE").toLowerCase()}; deterministic gaps remain unchanged.`;
+  } catch (error) {
+    $("error").textContent = error.message; $("error").classList.remove("hidden");
+  } finally { $("request-retrieval-plan").disabled = false; }
+}
+
+async function executeLocalReread() {
+  const plan = latestDiscoveryContext?.retrievalPlan?.plan;
+  if (!activeRunId || !plan) return;
+  if (!window.confirm("Run exactly one bounded local re-read using the reviewed suggestions? Raw sources stay local, no provider call is permitted, and every result re-enters screening, validation, and hashing.")) return;
+  $("error").classList.add("hidden"); $("execute-local-reread").disabled = true;
+  $("discovery-status").textContent = "Running one bounded local re-read and rebuilding validated candidate diagnostics…";
+  try {
+    await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/retrieval-plan/execute`, {
+      confirmed: true,
+      purpose: "EXECUTE_VALIDATED_RETRIEVAL_PLAN_LOCALLY",
+      planHash: plan.planHash
+    });
+    const context = await refreshDiscoveryContext();
+    renderDiscovery(context.profile, context.dlpFindings, context.recheck, context.citationIndex, context.acquisitionDiagnostics);
+    $("discovery-status").textContent = `Local re-read complete: ${context.localReread.recoveredFieldIds.length} recovered candidate(s), ${context.localReread.conflictingFieldIds.length} conflict(s), ${context.localReread.remainingUnknownFieldIds.length} remaining unknown(s). No value was selected or approved automatically.`;
+  } catch (error) {
+    $("error").textContent = error.message; $("error").classList.remove("hidden");
+  } finally { $("execute-local-reread").disabled = false; }
 }
 
 async function requestAiProposals() {
@@ -642,6 +837,7 @@ async function requestAiProposals() {
   } catch {
     recheck = { status: "UNAVAILABLE", failureCode: "INTAKE_AI_VERIFICATION_REQUEST_FAILED" };
   }
+  latestDiscoveryContext.recheck = recheck;
   renderDiscovery(latestDiscoveryContext.profile, latestDiscoveryContext.dlpFindings, recheck, latestDiscoveryContext.citationIndex, latestDiscoveryContext.acquisitionDiagnostics);
   const completed = recheck.status === "COMPLETED";
   setIntakeFlow("USER_RESOLUTION", { limitedSteps: completed ? [] : ["AI_VERIFICATION"] });
@@ -757,7 +953,8 @@ async function loadSample() {
     encoding: "utf8"
   }));
   preparedSources = null; activeRunId = null;
-  latestDiscoveryContext = null; $("request-ai-proposals").classList.add("hidden");
+  latestDiscoveryContext = null;
+  for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
   $("assess-button").disabled = true; setIntakeFlow("UPLOAD");
   $("folder-summary").textContent = `${sample.sources.length} controlled sample evidence files loaded`;
   $("file-summary").textContent = "No individual files selected";
@@ -879,35 +1076,42 @@ Promise.all([
   fetch("/api/intake-field-registry").then((response) => {
     if (!response.ok) throw new Error("Intake field registry is unavailable");
     return response.json();
-  })
-]).then(([kb, config, diagnostics, questionnaire, registry]) => {
+  }),
+  fetch("/api/v2/models").then((response) => response.ok ? response.json() : { profiles: [] }).catch(() => ({ profiles: [] }))
+]).then(([kb, config, diagnostics, questionnaire, registry, models]) => {
   renderKnowledgeDiagnostics(kb, diagnostics);
   summaryEnabled = config.assuranceSummaryEnabled !== false;
   intakeQuestionnaire = questionnaire;
   intakeFieldRegistry = registry;
+  retrievalPlanningProviders = [...new Set((models.profiles ?? []).filter((profile) => profile.stage === "RETRIEVAL_PLANNING" && profile.credentialAvailable && profile.qualificationStatus === "APPROVED").map((profile) => profile.provider))];
   INTAKE_CONTROL_FIELDS = Object.freeze(Object.fromEntries(registry.fields.filter((field) => field.uiControlId).map((field) => {
     if (!$(field.uiControlId)) throw new Error(`Registered Intake control is missing: ${field.uiControlId}`);
     return [field.uiControlId, field.id];
   })));
   renderQuestionnaire();
 }).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; $("knowledge-diagnostics-content").textContent = "Knowledge connection diagnostics are unavailable."; });
-$("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("request-ai-proposals").addEventListener("click", requestAiProposals); $("dossier-form").addEventListener("submit", runAssessment);
+$("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("request-retrieval-plan").addEventListener("click", requestRetrievalPlan); $("execute-local-reread").addEventListener("click", executeLocalReread); $("request-ai-proposals").addEventListener("click", requestAiProposals); $("dossier-form").addEventListener("submit", runAssessment);
 $("dossier-form").addEventListener("input", (event) => {
   const controlId = event.target.id || event.target.closest("#data-categories")?.id;
   const field = INTAKE_CONTROL_FIELDS[controlId];
   if (field && latestSolutionProfile) {
     const acceptedProposal = acceptedProposalByField.get(field);
+    const acceptedAcquired = acceptedAcquiredCandidateByField.get(field);
     const currentValue = dossierPathValue(dossierFromForm(), field);
     if (acceptedProposal && !proposalMatchesValue(acceptedProposal.value, currentValue)) {
       acceptedProposalByField.delete(field);
       editedProposalByField.set(field, acceptedProposal);
     }
-    if (intakeControlValue(controlId) === intakeControlBaseline.get(controlId)) editedIntakeFields.delete(field);
+    if (acceptedAcquired && !sameIntakeValue(acceptedAcquired.sanitizedCandidate, currentValue)) {
+      acceptedAcquiredCandidateByField.delete(field);
+      editedAcquiredCandidateByField.set(field, acceptedAcquired);
+    }
+    if (acceptedAcquiredCandidateByField.has(field) || intakeControlValue(controlId) === intakeControlBaseline.get(controlId)) editedIntakeFields.delete(field);
     else editedIntakeFields.add(field);
     renderIntakeWorkspace(latestSolutionProfile, latestDiscoveryRecheck);
   }
 });
 $("summary-tab").addEventListener("click", () => selectView("summary")); $("workspace-tab").addEventListener("click", () => selectView("workspace"));
 $("print-button").addEventListener("click", printReport); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);
-$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; $("request-ai-proposals").classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; });
-$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; $("request-ai-proposals").classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; });
+$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; });
+$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; });

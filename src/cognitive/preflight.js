@@ -8,7 +8,7 @@ import { buildSourceIngestionManifest } from "../core/source-ingestion.js";
 import { createApprovedIntakeSnapshot } from "../intake/contracts.js";
 import { createAcquiredFactPackage } from "../intake/acquired-facts.js";
 import { createAcquisitionDiagnostics } from "../intake/acquisition-diagnostics.js";
-import { createIntakeCandidatePackage } from "../intake/candidate-contract.js";
+import { createIntakeCandidatePackage, validateIntakeCandidatePackage } from "../intake/candidate-contract.js";
 import { createIntakeGapAnalysis } from "../intake/gap-analysis.js";
 
 const DEFAULT_PACKET_CHARS = 18_000;
@@ -126,6 +126,12 @@ export async function confirmPreflightDossier(run, input, options = {}) {
   if (run.stage === "INTAKE_AI_VERIFICATION_IN_PROGRESS") throw new Error("Intake cannot be confirmed while AI verification is in progress");
   const submittedDossier = validateDossier(input?.dossier);
   const sourceProfile = run.solutionProfile;
+  const candidatePackage = validateIntakeCandidatePackage(run.intakeCandidates);
+  const acceptedAcquiredCandidate = (fieldId) => {
+    const resolution = input?.resolutions?.[fieldId];
+    if (resolution?.resolutionState !== "USER_ACCEPTED_ACQUIRED_CANDIDATE") return null;
+    return candidatePackage.candidates.find((candidate) => candidate.id === resolution.acquiredCandidateRef && candidate.fieldId === fieldId) ?? null;
+  };
   const allTransmissionUnits = run.packets.flatMap((packet) => packet.sourceUnits);
   const allLocalUnits = run.localSourceUnits ?? allTransmissionUnits;
   const oldDossierUnitIds = new Set([...allTransmissionUnits, ...allLocalUnits].filter((item) => item.path === "intended-use-dossier.json").map((item) => item.id));
@@ -135,11 +141,20 @@ export async function confirmPreflightDossier(run, input, options = {}) {
   const comparable = (value) => value === undefined || value === null || value === "" || value === "UNKNOWN" || Array.isArray(value) && value.length === 0 ? null : Array.isArray(value) ? [...value].sort() : value;
   const confirmationTime = new Date().toISOString();
   const confirmations = Object.fromEntries(Object.entries(submittedFields).map(([field, value]) => {
-    const priorFact = run.solutionProfile?.fields?.[field];
-    const previous = ["currentStage", "targetStage"].includes(field) && priorFact?.status === "UNKNOWN" ? "UNKNOWN" : priorFact?.value;
+    const acquiredCandidate = acceptedAcquiredCandidate(field);
+    const priorFact = acquiredCandidate ? {
+      field,
+      value: structuredClone(acquiredCandidate.sanitizedCandidate),
+      factClass: "OBSERVED",
+      status: "CANDIDATE",
+      supportStrength: "EXPLICIT",
+      sourceUnitIds: acquiredCandidate.sourceRefs.map((ref) => ref.sourceUnitId),
+      limitations: [...acquiredCandidate.limitations]
+    } : run.solutionProfile?.fields?.[field];
+    const previous = acquiredCandidate?.sanitizedCandidate ?? (["currentStage", "targetStage"].includes(field) && priorFact?.status === "UNKNOWN" ? "UNKNOWN" : priorFact?.value);
     const userEdited = JSON.stringify(comparable(previous)) !== JSON.stringify(comparable(value));
     const resolutionState = input?.resolutions?.[field]?.resolutionState;
-    const confirmed = ["USER_CONFIRMED", "USER_EDITED", "USER_ACCEPTED_PROPOSAL"].includes(resolutionState) && comparable(value) !== null;
+    const confirmed = ["USER_CONFIRMED", "USER_EDITED", "USER_ACCEPTED_ACQUIRED_CANDIDATE", "USER_ACCEPTED_PROPOSAL"].includes(resolutionState) && comparable(value) !== null;
     return [field, { confirmed, userEdited, priorFact, confirmedBy: confirmed ? "USER" : null, confirmedAt: confirmed ? confirmationTime : null }];
   }));
   const intakeAnswers = Object.fromEntries(INTAKE_QUESTIONNAIRE.questions.map((question) => {
@@ -154,6 +169,16 @@ export async function confirmPreflightDossier(run, input, options = {}) {
       explanation: submitted.explanation ?? null,
       confirmedBy: previous.answerState === "UNKNOWN" ? null : "USER", confirmedAt: previous.answerState === "UNKNOWN" ? null : confirmationTime
     }];
+    if (resolution?.resolutionState === "USER_ACCEPTED_ACQUIRED_CANDIDATE") {
+      const candidate = acceptedAcquiredCandidate(`intakeAnswers.${question.id}`);
+      return [question.id, {
+        answerState: submitted.answerState, values: submitted.values ?? [], origin: "OBSERVED", supportStatus: "PARTIAL",
+        sourceUnitIds: candidate?.sourceRefs.map((ref) => ref.sourceUnitId) ?? [], evidenceLinks: [],
+        limitations: [...(candidate?.limitations ?? []), "The user explicitly selected a validated deterministic acquisition candidate."],
+        explanation: submitted.explanation ?? null,
+        confirmedBy: "USER", confirmedAt: confirmationTime
+      }];
+    }
     if (resolution?.resolutionState === "USER_ACCEPTED_PROPOSAL") {
       const proposal = (run.discoveryRecheck?.candidates ?? []).find((candidate) => candidate.id === resolution.proposalRef);
       return [question.id, {

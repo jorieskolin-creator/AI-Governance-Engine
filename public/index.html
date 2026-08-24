@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Evidence-gated AI solution readiness assessment" />
     <title>AI Governance Engine</title>
-    <link rel="stylesheet" href="/styles.css?v=evidence-intake-1.3.0" />
+    <link rel="stylesheet" href="/styles.css?v=evidence-intake-1.4.0" />
   </head>
   <body>
     <header class="app-header">
@@ -42,7 +42,13 @@
           <label class="upload-box">Codebase or evidence folder<input id="source-folder" type="file" multiple webkitdirectory /><span id="folder-summary">No folder selected</span></label>
             <label class="upload-box">Individual documents and files<input id="source-files" type="file" multiple /><span id="file-summary">No individual files selected</span></label>
         </div>
-        <div class="discovery-actions"><button id="discover-button" class="primary-button" type="button">Discover case information</button><button id="request-ai-proposals" class="secondary-button hidden" type="button">Request GenAI Proposals from Safe Summaries</button><p id="discovery-status" aria-live="polite">Upload sources to generate the first cited intake draft.</p></div>
+        <div class="discovery-actions">
+          <button id="discover-button" class="primary-button" type="button">Discover case information</button>
+          <button id="request-retrieval-plan" class="secondary-button hidden" type="button">Request Retrieval Suggestions</button>
+          <button id="execute-local-reread" class="secondary-button hidden" type="button">Run One Local Re-read</button>
+          <button id="request-ai-proposals" class="secondary-button hidden" type="button">Request GenAI Proposals from Safe Summaries</button>
+          <p id="discovery-status" aria-live="polite">Upload sources to generate the first cited intake draft.</p>
+        </div>
         <div id="discovery-results" class="discovery-results hidden" aria-live="polite"></div>
       </section>
 
@@ -117,6 +123,6 @@
       <section id="error" class="error-panel hidden" aria-live="assertive"></section>
     </main>
     <footer>AI Governance Engine - Readiness recommendation, not formal approval</footer>
-    <script type="module" src="/app.js?v=evidence-intake-1.3.0"></script>
+    <script type="module" src="/app.js?v=evidence-intake-1.4.0"></script>
   </body>
 </html>

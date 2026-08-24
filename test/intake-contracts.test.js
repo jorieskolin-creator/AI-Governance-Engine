@@ -95,6 +95,44 @@ test("the immutable approved snapshot separates observed provenance from user re
   assert.throws(() => validateApprovedIntakeSnapshot(tampered), /integrity check/i);
 });
 
+test("validated acquired candidates require an explicit hash-bound user decision", async () => {
+  const acceptedRun = await createPreflight({ sources: source("Solution name: Evidence Assistant") });
+  const acquired = acceptedRun.intakeCandidates.candidates.find((candidate) => candidate.fieldId === "name");
+  const acceptedDossier = validateDossier(acceptedRun.solutionProfile.suggestedDossier);
+  const acceptedInput = approvalInput(acceptedRun, acceptedDossier);
+  acceptedInput.resolutions.name = { resolutionState: "USER_ACCEPTED_ACQUIRED_CANDIDATE", acquiredCandidateRef: acquired.id, acquiredCandidatePackageHash: acceptedRun.intakeCandidates.packageHash };
+  await confirmPreflightDossier(acceptedRun, acceptedInput);
+
+  const accepted = acceptedRun.approvedIntake.fields.find((field) => field.fieldId === "name");
+  assert.deepEqual({ valueState: accepted.valueState, resolutionState: accepted.resolutionState, origin: accepted.origin, candidateRef: accepted.acquiredCandidateRef }, {
+    valueState: "OBSERVED",
+    resolutionState: "USER_ACCEPTED_ACQUIRED_CANDIDATE",
+    origin: "DETERMINISTIC_ACQUISITION",
+    candidateRef: acquired.id
+  });
+  assert.equal(acceptedRun.approvedIntake.acquiredCandidatePackageHash, acceptedRun.approvedIntake.acquiredCandidates[0].packageHash);
+  assert.deepEqual(acceptedRun.approvedIntake.acquiredCandidateDecisions, [{ candidateRef: acquired.id, fieldId: "name", decision: "ACCEPTED" }]);
+  assert.equal(validateApprovedIntakeSnapshot(acceptedRun.approvedIntake), acceptedRun.approvedIntake);
+
+  const forgedRun = await createPreflight({ sources: source("Solution name: Evidence Assistant") });
+  const forgedDossier = validateDossier(forgedRun.solutionProfile.suggestedDossier);
+  const forgedInput = approvalInput(forgedRun, forgedDossier);
+  forgedInput.resolutions.name = { resolutionState: "USER_ACCEPTED_ACQUIRED_CANDIDATE", acquiredCandidateRef: "intake-candidate-forged", acquiredCandidatePackageHash: forgedRun.intakeCandidates.packageHash };
+  await assert.rejects(() => confirmPreflightDossier(forgedRun, forgedInput), /acquired candidate reference is invalid/i);
+
+  const staleRun = await createPreflight({ sources: source("Solution name: Evidence Assistant") });
+  const staleDossier = validateDossier(staleRun.solutionProfile.suggestedDossier);
+  const staleInput = approvalInput(staleRun, staleDossier);
+  staleInput.resolutions.name = { resolutionState: "USER_ACCEPTED_ACQUIRED_CANDIDATE", acquiredCandidateRef: staleRun.intakeCandidates.candidates.find((candidate) => candidate.fieldId === "name").id, acquiredCandidatePackageHash: "0".repeat(64) };
+  await assert.rejects(() => confirmPreflightDossier(staleRun, staleInput), /package is no longer current/i);
+
+  const tampered = structuredClone(acceptedRun.approvedIntake);
+  tampered.acquiredCandidates[0].packageHash = "0".repeat(64);
+  const { snapshotHash: ignored, ...payload } = tampered;
+  tampered.snapshotHash = sha256(payload);
+  assert.throws(() => validateApprovedIntakeSnapshot(tampered), /acquired candidate reference is invalid/i);
+});
+
 test("accepted, edited and declined GenAI proposals remain distinct user decisions", async () => {
   const candidateRecord = {
     field: "intendedPurpose",

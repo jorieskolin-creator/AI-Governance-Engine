@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { COGNITIVE_PROVIDERS, modelPolicy, modelPolicyReadiness, publicModelRoleSlots, requiredGovernanceProviders, validateGovernanceRouteTopology } from "../src/cognitive/model-policy.js";
+import { acquisitionAssistancePolicy, COGNITIVE_PROVIDERS, modelPolicy, modelPolicyReadiness, publicModelRoleSlots, requiredGovernanceProviders, validateGovernanceRouteTopology } from "../src/cognitive/model-policy.js";
 import {
   normalizeProviderResponse, providerAdapter, serializeProviderRequest
 } from "../src/cognitive/provider-adapters.js";
@@ -58,6 +58,17 @@ test("role routing is deterministic and model identities are server-configurable
   assert.deepEqual(slots.find((slot) => slot.operationalRole === "WORKHORSE" && slot.routePriority === "PRIMARY").stages, ["DOMAIN_ASSESSMENT", "EXTRACTION", "RETRIEVAL_PLANNING", "ROUTING"]);
   assert.deepEqual(slots.find((slot) => slot.operationalRole === "REASONER" && slot.routePriority === "PRIMARY").stages, ["ADJUDICATION", "SOLUTION_UNDERSTANDING", "SYNTHESIS"]);
   assert.deepEqual(slots.find((slot) => slot.operationalRole === "QUALITY_CHECKER" && slot.routePriority === "PRIMARY").stages, ["FACT_CHECK", "VERIFICATION"]);
+});
+
+test("advisory acquisition assistance uses configured role candidates while governance execution remains qualification-gated", () => {
+  const assistance = acquisitionAssistancePolicy(credentials);
+  assert.equal(assistance.choose("RETRIEVAL_PLANNING").operationalRole, "WORKHORSE");
+  assert.equal(assistance.choose("SOLUTION_UNDERSTANDING").operationalRole, "REASONER");
+  assert.equal(assistance.choose("SOLUTION_UNDERSTANDING").qualificationStatus, "QUALIFICATION_CANDIDATE");
+
+  const governance = modelPolicy(credentials);
+  assert.throws(() => governance.choose("SOLUTION_UNDERSTANDING"), /approved model profile/i);
+  assert.throws(() => requiredGovernanceProviders(governance), /approved model profiles/i);
 });
 
 test("runtime routing always requires approval of the exact profile and model identity", () => {

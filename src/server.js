@@ -7,7 +7,7 @@ import { SAMPLE_REQUEST } from "./sample.js";
 import { validateExecutionApproval } from "./cognitive/contracts.js";
 import { confirmPreflightDossier, createPreflight, publicDiscoveryView, publicPreflightView } from "./cognitive/preflight.js";
 import { executeCognitiveRun } from "./cognitive/pipeline.js";
-import { MODEL_POLICY_VIEW_VERSION, modelPolicy, modelPolicyReadiness, publicModelPolicy, publicModelRoleSlots, requiredGovernanceProviders } from "./cognitive/model-policy.js";
+import { acquisitionAssistancePolicy, MODEL_POLICY_VIEW_VERSION, modelPolicy, modelPolicyReadiness, publicModelPolicy, publicModelRoleSlots, requiredGovernanceProviders } from "./cognitive/model-policy.js";
 import { createRunStore } from "./cognitive/run-persistence.js";
 import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
 import { readinessPackageJsonSchema } from "./readiness-package-contract.js";
@@ -341,7 +341,7 @@ const server = http.createServer(async (request, response) => {
       try {
         try {
           if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive retrieval-planning rate limit exceeded"), { statusCode: 429 });
-          const result = await planIntakeRetrieval(run, consent, { policy: modelPolicy() });
+          const result = await planIntakeRetrieval(run, consent, { policy: acquisitionAssistancePolicy() });
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
           return sendJson(response, 200, result);
         } catch (error) {
@@ -397,7 +397,7 @@ const server = http.createServer(async (request, response) => {
         try {
           if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive discovery rate limit exceeded"), { statusCode: 429 });
           run.trace.push({ stage: "INTAKE_AI_PROPOSAL_CONSENT", status: "CONFIRMED", purpose: consent.purpose, acquiredFactPackageHash: run.acquiredFacts.packageHash, selectedAcquiredFactIds: consent.selectedAcquiredFactIds ?? [], at: new Date().toISOString(), packetIds: run.packets.map((packet) => packet.id) });
-          const discoveryRecheck = await recheckDiscovery(run, automaticApproval(run), { policy: modelPolicy(), acquiredFactUnit });
+          const discoveryRecheck = await recheckDiscovery(run, automaticApproval(run), { policy: acquisitionAssistancePolicy(), acquiredFactUnit });
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
           return sendJson(response, 200, discoveryRecheck);
         } catch (error) {

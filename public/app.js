@@ -662,7 +662,7 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
     safePackage.append(el("summary", "", modelRouteAvailable ? "Review safe package available for optional GenAI proposals" : "Review safe package · GenAI proposal route unavailable"));
     const description = el("p", "field-hint", modelRouteAvailable
       ? "Only these deterministic summaries can be sent by the optional proposal action. Raw documents, code, table values and image pixels remain local."
-      : `The privacy-safe package is ready, but no qualified Solution Understanding model route is available (${(modelReadiness.issueCodes ?? [modelReadiness.status]).map(label).join(", ")}). No provider call can be made. Raw documents, code, table values and image pixels remain local.`);
+      : `The privacy-safe package is ready, but no configured Solution Understanding model route has an available credential (${(modelReadiness.issueCodes ?? [modelReadiness.status]).map(label).join(", ")}). No provider call can be made. Raw documents, code, table values and image pixels remain local.`);
     const units = el("ul", "discovery-candidates");
     for (const packet of latestDiscoveryContext.packets) for (const unit of packet.preview ?? []) units.append(el("li", "", `${unit.path} · ${unit.locator}: ${unit.excerpt}`));
     safePackage.append(description, units);
@@ -778,7 +778,7 @@ async function discoverCaseInformation() {
       ? `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). Local screening blocks GenAI transmission; resolve the Intake manually.`
       : proposalProviders.length
         ? `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). Resolve it manually or explicitly request optional GenAI proposals from safe summaries.`
-        : `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). GenAI proposals are unavailable until the exact model-role profiles are qualified; resolve the Intake manually.`;
+        : `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). GenAI proposals are unavailable because no configured Reasoner route has an available credential; resolve the Intake manually.`;
     $("assess-button").disabled = false;
     $("assessment-input").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
@@ -807,7 +807,7 @@ async function refreshDiscoveryContext() {
 async function requestRetrievalPlan() {
   if (!activeRunId || !latestDiscoveryContext || !retrievalPlanningProviders.length) return;
   const providers = [...retrievalPlanningProviders];
-  if (!window.confirm(`Request suggestion-only retrieval planning from the approved ${providers.map(label).join(", ")} route(s)? Only safe metrics, field definitions, artifact classes and controlled topic signals will be sent. No source content or candidate value will be sent.`)) return;
+  if (!window.confirm(`Request suggestion-only retrieval planning from the configured ${providers.map(label).join(", ")} Workhorse route(s)? Only safe metrics, field definitions, artifact classes and controlled topic signals will be sent. No source content or candidate value will be sent.`)) return;
   $("error").classList.add("hidden"); $("request-retrieval-plan").disabled = true;
   $("discovery-status").textContent = "Requesting bounded retrieval suggestions from safe metrics only…";
   try {
@@ -1113,8 +1113,8 @@ Promise.all([
   intakeQuestionnaire = questionnaire;
   intakeFieldRegistry = registry;
   modelReadiness = models.readiness ?? modelReadiness;
-  retrievalPlanningProviders = [...new Set((models.profiles ?? []).filter((profile) => profile.stage === "RETRIEVAL_PLANNING" && profile.credentialAvailable && profile.qualificationStatus === "APPROVED").map((profile) => profile.provider))];
-  proposalProviders = [...new Set((models.profiles ?? []).filter((profile) => profile.stage === "SOLUTION_UNDERSTANDING" && profile.credentialAvailable && profile.qualificationStatus === "APPROVED").map((profile) => profile.provider))];
+  retrievalPlanningProviders = [...new Set((models.profiles ?? []).filter((profile) => profile.stage === "RETRIEVAL_PLANNING" && profile.credentialAvailable).map((profile) => profile.provider))];
+  proposalProviders = [...new Set((models.profiles ?? []).filter((profile) => profile.stage === "SOLUTION_UNDERSTANDING" && profile.credentialAvailable).map((profile) => profile.provider))];
   INTAKE_CONTROL_FIELDS = Object.freeze(Object.fromEntries(registry.fields.filter((field) => field.uiControlId).map((field) => {
     if (!$(field.uiControlId)) throw new Error(`Registered Intake control is missing: ${field.uiControlId}`);
     return [field.uiControlId, field.id];

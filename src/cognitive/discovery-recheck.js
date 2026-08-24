@@ -1,6 +1,6 @@
 import { DISCOVERY_RECHECK_SCHEMA, validateExecutionApproval } from "./contracts.js";
 import { ModelBudget, StructuredModelClient } from "./provider-client.js";
-import { modelPolicy } from "./model-policy.js";
+import { acquisitionAssistancePolicy } from "./model-policy.js";
 import { discoveryRecheckPrompt, packetHash, PROMPT_VERSIONS } from "./prompts.js";
 import { activeIntakeQuestionIds } from "../knowledge/intake-questionnaire.js";
 import { stableId } from "../core/hash.js";
@@ -70,7 +70,7 @@ export async function recheckDiscovery(run, input, options = {}) {
   const approval = validateExecutionApproval(input, run);
   const providers = commonApprovedProviders(approval);
   if (!providers.length) throw new Error("One provider must be explicitly approved for every discovery packet");
-  const policy = options.policy ?? modelPolicy(options.env);
+  const policy = options.policy ?? acquisitionAssistancePolicy(options.env);
   const profile = policy.choose("SOLUTION_UNDERSTANDING", { allowedProviders: providers });
   const packets = relevantPackets(run, profile.provider, approval);
   if (options.acquiredFactUnit && packets.length) packets[0] = { ...packets[0], sourceUnits: [...packets[0].sourceUnits, options.acquiredFactUnit] };

@@ -25,8 +25,11 @@ test("GenAI Intake proposals are optional and require an explicit safe-summary r
   assert.match(app, /Free text, unknowns, conflicts and unsupported values cannot be selected/);
   assert.match(app, /Review safe package available for optional GenAI proposals/);
   assert.match(app, /GenAI proposal route unavailable/);
-  assert.match(app, /no qualified Solution Understanding model route is available/);
+  assert.match(app, /no configured Solution Understanding model route has an available credential/);
   assert.match(app, /proposalProviders\.length === 0/);
+  assert.match(app, /profile\.stage === "SOLUTION_UNDERSTANDING" && profile\.credentialAvailable/);
+  assert.match(app, /profile\.stage === "RETRIEVAL_PLANNING" && profile\.credentialAvailable/);
+  assert.match(server, /acquisitionAssistancePolicy\(\)/);
   assert.match(app, /Raw documents, code, table values and image pixels remain local/);
   assert.doesNotMatch(app, /Deterministic Intake complete\. Running cited AI verification/);
   assert.match(server, /Explicit confirmation is required before requesting GenAI Intake proposals/);

@@ -58,7 +58,7 @@ test("the WORKHORSE planner receives only safe metrics and returns suggestion-on
     }
   });
 
-  const result = await planIntakeRetrieval(run, consent(run), { policy: policy(), client });
+  const result = await planIntakeRetrieval(run, consent(run), { env: { MOONSHOT_API_KEY: "test" }, client });
   const plan = validateIntakeRetrievalPlan(result.plan, run.intakeGapAnalysis);
 
   assert.equal(plan.plannerRole, "WORKHORSE");
@@ -138,7 +138,7 @@ test("retrieval planning requires explicit consent and never replays a timeout t
   assert.doesNotMatch(JSON.stringify(run.retrievalPlan), /Simulated provider timeout/);
 });
 
-test("an unavailable qualified WORKHORSE route fails closed before transmission", async () => {
+test("an explicitly qualification-gated WORKHORSE policy still fails closed before transmission", async () => {
   const run = await createPreflight({ sources: [{ path: "docs/architecture.md", mimeType: "text/markdown", content: "Monitoring and incident response narrative." }] });
   let calls = 0;
   const unqualifiedPolicy = modelPolicy({ MOONSHOT_API_KEY: "test" });

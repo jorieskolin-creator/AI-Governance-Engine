@@ -13,11 +13,11 @@ The governing privacy rule remains unchanged: raw documents, source code, config
 - Baseline before this handoff document: `1a5077f`
 - Provider set: OpenAI, xAI/Grok, and Moonshot/Kimi only; no Gemini work
 - Roles:
-  - `WORKHORSE`: routing, extraction, routine domain assessment, and future retrieval planning
-  - `REASONER`: solution understanding, adjudication, and synthesis
+  - `WORKHORSE`: retrieval planning, routing, extraction, and routine domain assessment
+  - `REASONER`: editable Intake proposals, solution understanding, adjudication, and synthesis
   - `QUALITY_CHECKER`: verification and fact-checking
-- The live Railway configuration has all three provider credentials and six configured role slots, but zero qualified slots. Cognitive readiness correctly reports `MODEL_PROFILES_UNAPPROVED`. Do not add `MODEL_PROFILE_APPROVALS` without completed qualification and human review.
-- At the last completed validation, 158 tests passed and the production dependency audit was clean.
+- The live Railway configuration has all three provider credentials and six configured role slots. Advisory acquisition test runs may exercise the configured `WORKHORSE` and `REASONER` candidates; decision-ready cognitive analysis still requires qualified exact slots in `MODEL_PROFILE_APPROVALS`.
+- At the last completed validation, 193 tests passed and the production dependency audit was clean.
 
 Confirm the actual `origin/main`, working tree, tests, and live non-secret readiness before relying on these observations.
 
@@ -55,7 +55,7 @@ Root causes verified in the implementation:
 3. Inert HTML extraction removes all script blocks. Some standalone reports store substantial structured content in embedded scripts, which is therefore not inspected.
 4. Document provider summaries intentionally expose topic categories but no names, values, source text, or quotes. They are privacy-safe but too coarse to support factual GenAI Intake proposals.
 5. The current `discovery-recheck` asks GenAI for field proposals even though its safe packet often contains insufficient field-level evidence.
-6. Live GenAI execution is independently blocked because the configured models remain unqualified.
+6. Full cognitive analysis remains blocked while configured models are unqualified; advisory acquisition assistance is separately available for controlled test runs.
 
 This behavior is consistent with current safeguards but is not sufficient for the intended enterprise evidence workflow. It is not caused by the unfinished Knowledge Base; Intake acquisition occurs before Knowledge Base analysis.
 

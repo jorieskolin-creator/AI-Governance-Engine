@@ -6,7 +6,7 @@ import { INTAKE_GAP_ANALYSIS_VERSION, validateIntakeGapAnalysis } from "../intak
 import { intakeSearchField } from "../intake/search-registry.js";
 import { INTAKE_RETRIEVAL_PLANNER_SCHEMA } from "./contracts.js";
 import { classifyCognitiveFailure } from "./failure-policy.js";
-import { modelPolicy } from "./model-policy.js";
+import { acquisitionAssistancePolicy } from "./model-policy.js";
 import { COGNITIVE_PROVIDERS } from "./provider-adapters.js";
 import { ModelBudget, StructuredModelClient } from "./provider-client.js";
 import { intakeRetrievalPlanningPrompt, PROMPT_VERSIONS } from "./prompts.js";
@@ -109,7 +109,7 @@ export async function planIntakeRetrieval(run, input, options = {}) {
   validateConsent(input, run);
   const context = createRetrievalPlannerContext(run);
   const contextHash = sha256(context);
-  const policy = options.policy ?? modelPolicy(options.env);
+  const policy = options.policy ?? acquisitionAssistancePolicy(options.env);
   setAcquisitionGenAiStatus(run, "REQUESTED");
   run.trace.push({ stage: "INTAKE_RETRIEVAL_PLANNING", status: "RUNNING", at: new Date().toISOString(), contextHash });
   try {

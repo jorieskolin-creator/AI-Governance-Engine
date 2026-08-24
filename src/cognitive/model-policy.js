@@ -92,6 +92,10 @@ export function modelPolicy(env = process.env, options = {}) {
   };
 }
 
+export function acquisitionAssistancePolicy(env = process.env) {
+  return modelPolicy(env, { qualificationRequired: false });
+}
+
 export function publicModelPolicy(policy) {
   return policy.profiles.map(({ credentialAvailable, ...profile }) => ({ ...profile, credentialAvailable }));
 }

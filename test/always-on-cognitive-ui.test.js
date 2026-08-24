@@ -30,6 +30,7 @@ test("GenAI Intake proposals are optional and require an explicit safe-summary r
   assert.match(app, /profile\.stage === "SOLUTION_UNDERSTANDING" && profile\.credentialAvailable/);
   assert.match(app, /profile\.stage === "RETRIEVAL_PLANNING" && profile\.credentialAvailable/);
   assert.match(server, /acquisitionAssistancePolicy\(\)/);
+  assert.match(server, /automaticApproval\(run, assistancePolicy, "SOLUTION_UNDERSTANDING"\)/);
   assert.match(app, /Raw documents, code, table values and image pixels remain local/);
   assert.doesNotMatch(app, /Deterministic Intake complete\. Running cited AI verification/);
   assert.match(server, /Explicit confirmation is required before requesting GenAI Intake proposals/);
@@ -57,6 +58,7 @@ test("retrieval suggestions and local candidates have separate explicit UI autho
   assert.match(app, /window\.confirm\("Run exactly one bounded local re-read/);
   assert.match(app, /purpose: "EXECUTE_VALIDATED_RETRIEVAL_PLAN_LOCALLY"/);
   assert.match(app, /Retrieval suggestions are not evidence, field values, classifications, findings, or approvals/);
+  assert.match(server, /lost its process-local evidence during a service restart or worker transition/);
   assert.match(app, /Results are validated candidates—not approved Intake/);
   assert.match(app, /Use candidate/);
   assert.match(app, /Decline candidate/);

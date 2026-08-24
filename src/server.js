@@ -102,8 +102,11 @@ function startLeaseHeartbeat(run, controller) {
   return timer;
 }
 
-function automaticApproval(run, policy = modelPolicy()) {
-  const providers = requiredGovernanceProviders(policy);
+function automaticApproval(run, policy = modelPolicy(), stage = null) {
+  const providers = stage
+    ? [...new Set(policy.profiles.filter((profile) => profile.stage === stage && profile.credentialAvailable && profile.qualificationStatus !== "APPROVAL_REQUIRED").map((profile) => profile.provider))]
+    : requiredGovernanceProviders(policy);
+  if (!providers.length && stage) policy.choose(stage);
   return validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
 }
 
@@ -331,12 +334,14 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && retrievalPlanMatch) {
       const run = await runStore.get(retrievalPlanMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
-      if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.retrievalPlan) return sendJson(response, 409, { error: "Intake retrieval planning is not available from the current run state" });
+      if (run.status === "RECOVERY_REQUIRES_REUPLOAD" || run.stage === "RAW_EVIDENCE_UNAVAILABLE_AFTER_RECOVERY") return sendJson(response, 409, { error: "This Intake run lost its process-local evidence during a service restart or worker transition. Re-upload the source material and run discovery again." });
+      if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED") return sendJson(response, 409, { error: `Intake retrieval planning is not available while the run is ${run.status} at ${run.stage}` });
       const consent = await readJson(request);
       if (consent?.confirmed !== true || consent?.purpose !== RETRIEVAL_PLANNING_PURPOSE) return sendJson(response, 400, { error: "Explicit confirmation is required before requesting GenAI retrieval planning" });
       if (consent.gapAnalysisHash !== run.intakeGapAnalysis?.analysisHash) return sendJson(response, 409, { error: "The reviewed Intake gap analysis is no longer current" });
       if (!Array.isArray(consent.providers) || !consent.providers.length || new Set(consent.providers).size !== consent.providers.length || consent.providers.some((provider) => !COGNITIVE_PROVIDERS.includes(provider))) return sendJson(response, 400, { error: "At least one unique, supported retrieval-planning provider must be explicitly approved" });
       if (!run.intakeGapAnalysis?.summary?.boundedRetrievalFieldCount) return sendJson(response, 409, { error: "No bounded Intake retrieval opportunity is available" });
+      if (run.retrievalPlan) return sendJson(response, 200, run.retrievalPlan);
       if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run mutation is already owned by another worker" });
       try {
         try {
@@ -397,7 +402,8 @@ const server = http.createServer(async (request, response) => {
         try {
           if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive discovery rate limit exceeded"), { statusCode: 429 });
           run.trace.push({ stage: "INTAKE_AI_PROPOSAL_CONSENT", status: "CONFIRMED", purpose: consent.purpose, acquiredFactPackageHash: run.acquiredFacts.packageHash, selectedAcquiredFactIds: consent.selectedAcquiredFactIds ?? [], at: new Date().toISOString(), packetIds: run.packets.map((packet) => packet.id) });
-          const discoveryRecheck = await recheckDiscovery(run, automaticApproval(run), { policy: acquisitionAssistancePolicy(), acquiredFactUnit });
+          const assistancePolicy = acquisitionAssistancePolicy();
+          const discoveryRecheck = await recheckDiscovery(run, automaticApproval(run, assistancePolicy, "SOLUTION_UNDERSTANDING"), { policy: assistancePolicy, acquiredFactUnit });
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
           return sendJson(response, 200, discoveryRecheck);
         } catch (error) {

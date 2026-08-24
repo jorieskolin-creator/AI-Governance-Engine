@@ -8,6 +8,7 @@ import { buildSourceIngestionManifest } from "../core/source-ingestion.js";
 import { createApprovedIntakeSnapshot } from "../intake/contracts.js";
 import { createAcquiredFactPackage } from "../intake/acquired-facts.js";
 import { createAcquisitionDiagnostics } from "../intake/acquisition-diagnostics.js";
+import { createIntakeCandidatePackage } from "../intake/candidate-contract.js";
 
 const DEFAULT_PACKET_CHARS = 18_000;
 
@@ -45,6 +46,7 @@ export function publicPreflightView(run) {
     })),
     transmissionPolicy: "Only these reviewed packets may be sent to approved providers. Raw documents, code, configuration, tabular values and image pixels remain local; provider packets contain only versioned deterministic summaries and the user-approved Intake.",
     solutionProfile: run.solutionProfile,
+    intakeCandidates: run.intakeCandidates,
     acquiredFacts: run.acquiredFacts,
     sourceIngestion: run.sourceIngestion,
     acquisitionDiagnostics: run.acquisitionDiagnostics ?? null,
@@ -75,7 +77,8 @@ export async function createPreflight(input, options = {}) {
     packets: packetize(screened.sourceUnits, options.maxPacketChars), trace: [], result: null, error: null
   };
   run.solutionProfile = discoverSolutionProfile(screened.localSourceUnits.filter((item) => item.path !== "intended-use-dossier.json" && (!item.ocr || item.ocr.qualificationState === "QUALIFIED")), validated.dossier);
-  run.acquiredFacts = createAcquiredFactPackage(run.solutionProfile, run.dlpFindings);
+  run.intakeCandidates = createIntakeCandidatePackage(run.solutionProfile, run.localSourceUnits, run.dlpFindings);
+  run.acquiredFacts = createAcquiredFactPackage(run.intakeCandidates);
   run.acquisitionDiagnostics = createAcquisitionDiagnostics({
     sourceIngestion: run.sourceIngestion,
     registeredSources: run.registeredSources,
@@ -93,6 +96,7 @@ export function publicDiscoveryView(run) {
     status: run.status,
     stage: run.stage,
     solutionProfile: run.solutionProfile,
+    intakeCandidates: run.intakeCandidates,
     acquiredFacts: run.acquiredFacts,
     dlpFindings: run.dlpFindings,
     sourceManifest: run.registeredSources,
@@ -172,6 +176,7 @@ export async function confirmPreflightDossier(run, input, options = {}) {
     content: JSON.stringify(effectiveDossier), metadata: { kind: "DECLARATION" }
   }]);
   run.solutionProfile = solutionProfile;
+  run.intakeCandidates = null;
   run.dossier = structuredClone(effectiveDossier);
   run.approvedIntake = approvedIntake;
   run.registeredSources = [...run.registeredSources.filter((item) => item.path !== "intended-use-dossier.json"), ...dossierSource.registeredSources];

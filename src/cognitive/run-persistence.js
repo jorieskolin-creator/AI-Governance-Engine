@@ -26,6 +26,7 @@ export function serializeDurableRun(run, now = new Date()) {
   if (run.stepLedger) validateCognitiveStepLedger(run.stepLedger);
   const durableRun = structuredClone(run);
   durableRun.localSourceUnits = [];
+  durableRun.intakeCandidates = null;
   delete durableRun.persistence;
   for (const packet of durableRun.packets ?? []) {
     for (const unit of packet.sourceUnits ?? []) {
@@ -91,6 +92,7 @@ export function deserializeDurableRun(envelope) {
 
 function purgeRunMaterial(run, status) {
   run.cancelled = true;
+  run.intakeCandidates = null;
   for (const packet of run.packets ?? []) {
     for (const unit of packet.sourceUnits ?? []) {
       unit.content = "";

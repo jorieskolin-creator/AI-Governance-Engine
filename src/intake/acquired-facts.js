@@ -1,34 +1,13 @@
 import { invariant } from "../contracts.js";
 import { sha256, stableId, stableStringify } from "../core/hash.js";
 import { INTAKE_FIELD_REGISTRY } from "./field-registry.js";
+import { INTAKE_CANDIDATE_PACKAGE_VERSION, PROVIDER_ELIGIBILITY_STATES, validateIntakeCandidatePackage } from "./candidate-contract.js";
 
-export const ACQUIRED_FACT_PACKAGE_VERSION = "acquired-fact-package-1.0.0";
+export const ACQUIRED_FACT_PACKAGE_VERSION = "acquired-fact-package-1.1.0";
 export const ACQUIRED_FACT_SELECTION_VERSION = "acquired-fact-selection-1.0.0";
 
-const ELIGIBILITY_STATES = new Set([
-  "ELIGIBLE_CONTROLLED_VALUE",
-  "INELIGIBLE_FREE_TEXT",
-  "INELIGIBLE_UNKNOWN",
-  "INELIGIBLE_CONFLICTING",
-  "INELIGIBLE_NOT_OBSERVED",
-  "INELIGIBLE_FIELD_POLICY",
-  "INELIGIBLE_BLOCKING_SCREENING"
-]);
+const ELIGIBILITY_STATES = new Set(PROVIDER_ELIGIBILITY_STATES);
 const CONTROLLED_TYPES = new Set(["ENUM", "ENUM_ARRAY", "BOOLEAN"]);
-
-function factFor(profile, field) {
-  return field.questionId ? profile.assessmentIntakeFacts?.[field.questionId] : profile.fields?.[field.id];
-}
-
-function acquiredValue(fact, field) {
-  if (!fact) return null;
-  if (field.questionId) {
-    if (["UNKNOWN", "NOT_APPLICABLE", "HUMAN_REVIEW_REQUIRED"].includes(fact.answerState)) return null;
-    return field.dataType === "ENUM_ARRAY" ? fact.value : fact.answerState;
-  }
-  const value = fact.value;
-  return value === null || value === undefined || value === "" || value === "UNKNOWN" || Array.isArray(value) && !value.length ? null : value;
-}
 
 function controlledValueIsValid(field, value) {
   if (field.dataType === "BOOLEAN") return typeof value === "boolean";
@@ -37,23 +16,13 @@ function controlledValueIsValid(field, value) {
   return false;
 }
 
-function eligibility(field, fact, value, transmissionBlocked) {
-  if (transmissionBlocked) return "INELIGIBLE_BLOCKING_SCREENING";
-  if (!field.genAiProposalAllowed) return "INELIGIBLE_FIELD_POLICY";
-  if (!CONTROLLED_TYPES.has(field.dataType)) return "INELIGIBLE_FREE_TEXT";
-  if (!fact || value === null || !controlledValueIsValid(field, value)) return "INELIGIBLE_UNKNOWN";
-  if (fact.status === "CONFLICTING" || fact.supportStatus === "CONFLICTING") return "INELIGIBLE_CONFLICTING";
-  const observed = field.questionId ? fact.origin === "OBSERVED" : fact.factClass === "OBSERVED";
-  if (!observed) return "INELIGIBLE_NOT_OBSERVED";
-  return "ELIGIBLE_CONTROLLED_VALUE";
-}
-
 export function validateAcquiredFactPackage(pkg) {
   invariant(pkg && typeof pkg === "object" && !Array.isArray(pkg), "Acquired fact package is required");
   invariant(pkg.schemaVersion === ACQUIRED_FACT_PACKAGE_VERSION, "Acquired fact package version is unsupported");
   invariant(pkg.fieldRegistryVersion === INTAKE_FIELD_REGISTRY.version && pkg.fieldRegistryHash === INTAKE_FIELD_REGISTRY.hash, "Acquired fact package field registry is unsupported");
+  invariant(pkg.candidatePackageVersion === INTAKE_CANDIDATE_PACKAGE_VERSION && /^[a-f0-9]{64}$/.test(pkg.candidatePackageHash), "Acquired fact package candidate source is unsupported");
   invariant(Array.isArray(pkg.facts), "Acquired fact package facts are required");
-  invariant(Object.keys(pkg).sort().join(",") === ["facts", "fieldRegistryHash", "fieldRegistryVersion", "packageHash", "schemaVersion"].sort().join(","), "Acquired fact package contains unregistered fields");
+  invariant(Object.keys(pkg).sort().join(",") === ["candidatePackageHash", "candidatePackageVersion", "facts", "fieldRegistryHash", "fieldRegistryVersion", "packageHash", "schemaVersion"].sort().join(","), "Acquired fact package contains unregistered fields");
   const ids = new Set();
   const fieldIds = new Set();
   for (const fact of pkg.facts) {
@@ -75,21 +44,19 @@ export function validateAcquiredFactPackage(pkg) {
   return pkg;
 }
 
-export function createAcquiredFactPackage(profile, dlpFindings = []) {
-  const blockedUnitIds = new Set(dlpFindings.filter((finding) => finding.blocking).map((finding) => finding.sourceUnitId));
-  const transmissionBlocked = blockedUnitIds.size > 0;
+export function createAcquiredFactPackage(candidatePackage) {
+  validateIntakeCandidatePackage(candidatePackage);
+  const candidates = new Map(candidatePackage.candidates.map((candidate) => [candidate.fieldId, candidate]));
   const facts = INTAKE_FIELD_REGISTRY.fields.map((field) => {
-    const fact = factFor(profile, field);
-    const value = acquiredValue(fact, field);
-    const genAiEligibility = eligibility(field, fact, value, transmissionBlocked);
+    const candidate = candidates.get(field.id);
     const record = {
       fieldId: field.id,
       dataType: field.dataType,
-      value: genAiEligibility === "ELIGIBLE_CONTROLLED_VALUE" ? structuredClone(value) : null,
-      acquisitionState: fact?.status ?? fact?.supportStatus ?? "UNKNOWN",
-      genAiEligibility,
-      evidenceRefs: [...new Set(fact?.sourceUnitIds ?? [])],
-      limitations: [...new Set(fact?.limitations ?? [])]
+      value: candidate.providerCandidate === null ? null : structuredClone(candidate.providerCandidate),
+      acquisitionState: candidate.acquisitionState,
+      genAiEligibility: candidate.providerEligibility,
+      evidenceRefs: candidate.sourceRefs.map((ref) => ref.sourceUnitId),
+      limitations: [...candidate.limitations]
     };
     return { id: stableId("acquired-fact", record), ...record };
   });
@@ -97,6 +64,8 @@ export function createAcquiredFactPackage(profile, dlpFindings = []) {
     schemaVersion: ACQUIRED_FACT_PACKAGE_VERSION,
     fieldRegistryVersion: INTAKE_FIELD_REGISTRY.version,
     fieldRegistryHash: INTAKE_FIELD_REGISTRY.hash,
+    candidatePackageVersion: candidatePackage.schemaVersion,
+    candidatePackageHash: candidatePackage.packageHash,
     facts
   };
   return validateAcquiredFactPackage({ ...payload, packageHash: sha256(payload) });

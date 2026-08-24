@@ -265,7 +265,7 @@ function detectedList(sources, field, values) {
   })).filter((entry) => entry.value.length);
   if (!candidates.length) return { value: [], sourceUnitIds: [] };
   const distinct = unique(candidates.map((entry) => [...entry.value].sort().join("|")));
-  if (distinct.length > 1) return { value: null, sourceUnitIds: unique(candidates.map((entry) => entry.sourceUnitId)), candidates: unique(candidates.map((entry) => entry.text)), conflict: true };
+  if (distinct.length > 1) return { value: null, sourceUnitIds: unique(candidates.map((entry) => entry.sourceUnitId)), candidates: candidates.map((entry) => entry.value), conflict: true };
   return { value: candidates[0].value, sourceUnitIds: unique(candidates.map((entry) => entry.sourceUnitId)) };
 }
 
@@ -540,10 +540,11 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
       humanDecisionAuthority: question.humanDecisionAuthority
     };
     if (sourceConflict) item.candidates = [{ answerState, values, origin: "SELF_DECLARED" }, { answerState: sourceAnswer.answerState, values: sourceAnswer.values, origin: "OBSERVED", sourceUnitIds: sourceAnswer.sourceUnitIds }];
+    else if (discoveredAnswer?.candidates?.length) item.candidates = discoveredAnswer.candidates.map((candidate) => ({ value: structuredClone(candidate), origin: "OBSERVED", sourceUnitIds: discoveredAnswer.sourceUnitIds }));
     return [question.id, { ...item, hash: sha256(item) }];
   }));
   const profile = {
-    version: "solution-profile-1.2.0",
+    version: "solution-profile-1.3.0",
     searchRegistryVersion: INTAKE_SEARCH_REGISTRY.version,
     searchRegistryHash: INTAKE_SEARCH_REGISTRY.hash,
     fields: facts,

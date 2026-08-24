@@ -31,7 +31,7 @@ test("manifests, README content, architecture sections, RACI tables and structur
     { path: "governance/raci.html", mimeType: "text/html", encoding: "utf8", content: "<table><tr><th>Responsibility</th><th>Assignment</th></tr><tr><td>Accountable</td><td>Governance Team</td></tr></table>" }
   ] });
 
-  assert.equal(run.solutionProfile.version, "solution-profile-1.2.0");
+  assert.equal(run.solutionProfile.version, "solution-profile-1.3.0");
   assert.equal(run.solutionProfile.searchRegistryVersion, INTAKE_SEARCH_REGISTRY.version);
   assert.equal(run.solutionProfile.searchRegistryHash, INTAKE_SEARCH_REGISTRY.hash);
   assert.equal(run.solutionProfile.suggestedDossier.name, "synthetic-search-fixture");

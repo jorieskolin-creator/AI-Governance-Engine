@@ -173,11 +173,11 @@ export const INTAKE_RETRIEVAL_PLANNER_SCHEMA = {
         additionalProperties: false,
         required: ["fieldId", "searchConcepts", "labelAliases", "sourcePriorities", "extractionStrategies"],
         properties: {
-          fieldId: { type: "string", enum: INTAKE_FIELD_REGISTRY.fields.map((field) => field.id) },
+          fieldId: { type: "string", maxLength: 180 },
           searchConcepts: { type: "array", maxItems: 8, items: { type: "string", maxLength: 80 } },
           labelAliases: { type: "array", maxItems: 8, items: { type: "string", maxLength: 80 } },
-          sourcePriorities: { type: "array", maxItems: INTAKE_SEARCH_EVIDENCE_TYPES.length, items: { type: "string", enum: INTAKE_SEARCH_EVIDENCE_TYPES } },
-          extractionStrategies: { type: "array", maxItems: INTAKE_EXTRACTION_STRATEGIES.length, items: { type: "string", enum: INTAKE_EXTRACTION_STRATEGIES } }
+          sourcePriorities: { type: "array", maxItems: INTAKE_SEARCH_EVIDENCE_TYPES.length, items: { type: "string", maxLength: 80 } },
+          extractionStrategies: { type: "array", maxItems: INTAKE_EXTRACTION_STRATEGIES.length, items: { type: "string", maxLength: 80 } }
         }
       }
     }

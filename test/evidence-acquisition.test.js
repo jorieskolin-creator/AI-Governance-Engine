@@ -14,6 +14,7 @@ import { CODE_EVIDENCE_SUMMARY_VERSION, validateCodeEvidenceSummary } from "../s
 import { ACQUIRED_FACT_SELECTION_VERSION, createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "../src/intake/acquired-facts.js";
 import { DOCUMENT_EVIDENCE_SUMMARY_VERSION, validateDocumentEvidenceSummary } from "../src/intake/document-evidence.js";
 import { MEDIA_EVIDENCE_SUMMARY_VERSION, validateMediaEvidenceSummary } from "../src/intake/media-evidence.js";
+import { SEMANTIC_INTAKE_EVIDENCE_VERSION, validateSemanticIntakeEvidence } from "../src/intake/semantic-intake-evidence.js";
 import { createTabularEvidenceUnit, TABULAR_EVIDENCE_SUMMARY_VERSION, validateTabularEvidenceSummary } from "../src/intake/tabular-evidence.js";
 import { setAcquisitionGenAiStatus, validateAcquisitionDiagnostics } from "../src/intake/acquisition-diagnostics.js";
 import { classifyUploadPath, provisionalIngestionManifest } from "../public/upload-types.js";
@@ -130,8 +131,9 @@ test("raw code stays local while the provider-eligible unit contains only a vali
 
   assert.equal(screened.localSourceUnits.length, 1);
   assert.match(screened.localSourceUnits[0].content, new RegExp(rawMarker));
-  assert.equal(screened.sourceUnits.length, 1);
-  const egressUnit = screened.sourceUnits[0];
+  assert.equal(screened.sourceUnits.length, 2);
+  const egressUnit = screened.sourceUnits.find((unit) => unit.evidenceKind === "CODE_SUMMARY");
+  const semanticUnit = screened.sourceUnits.find((unit) => unit.evidenceKind === "SEMANTIC_INTAKE_SUMMARY");
   assert.equal(egressUnit.evidenceKind, "CODE_SUMMARY");
   assert.equal(egressUnit.derivation.rawContentIncluded, false);
   assert.doesNotMatch(egressUnit.path, /orchid|private|runtime/i);
@@ -141,6 +143,10 @@ test("raw code stays local while the provider-eligible unit contains only a vali
   assert.deepEqual(summary.capabilitySignals, ["AUTHORIZATION", "RATE_LIMITING", "EXTERNAL_MODEL_PROVIDER", "INPUT_VALIDATION"]);
   assert.ok(summary.limitations.includes("NO_RAW_CODE_OR_CONFIGURATION_INCLUDED"));
   assert.doesNotMatch(egressUnit.content, /openai|anthropic|gemini|grok|kimi/i);
+  const semantic = validateSemanticIntakeEvidence(JSON.parse(semanticUnit.content));
+  assert.equal(semantic.schemaVersion, SEMANTIC_INTAKE_EVIDENCE_VERSION);
+  assert.ok(semantic.observations.some((item) => item.conceptId === "EXTERNAL_GENERATIVE_AI"));
+  assert.doesNotMatch(semanticUnit.content, new RegExp(rawMarker));
   const providerPrompt = discoveryRecheckPrompt([], [{ sourceUnits: screened.sourceUnits }]);
   assert.doesNotMatch(providerPrompt, new RegExp(rawMarker));
   assert.doesNotMatch(providerPrompt, /orchid-runtime|src\/private/i);
@@ -271,7 +277,7 @@ test("the acquisition manifest records the code lane, raw handling, derivation a
   }] });
 
   const item = run.sourceIngestion.items[0];
-  assert.equal(run.sourceIngestion.acquisitionContractVersion, "evidence-acquisition-1.1.0");
+  assert.equal(run.sourceIngestion.acquisitionContractVersion, "evidence-acquisition-1.2.0");
   assert.equal(run.sourceIngestion.laneCounts.CODE_CONFIGURATION_LOCAL_ANALYSIS, 1);
   assert.deepEqual({ lane: item.acquisitionLane, raw: item.rawContentPolicy, egress: item.egressPolicy }, {
     lane: "CODE_CONFIGURATION_LOCAL_ANALYSIS",
@@ -315,7 +321,7 @@ test("AI Intake recheck transmits the code summary contract and records that raw
   assert.match(transmittedPrompt, new RegExp(CODE_EVIDENCE_SUMMARY_VERSION));
   assert.doesNotMatch(transmittedPrompt, new RegExp(rawMarker));
   assert.doesNotMatch(transmittedPrompt, /package\.json/i);
-  assert.match(transmittedPrompt, /"field":"name"[^}]*"valueWithheld":true/);
+  assert.doesNotMatch(transmittedPrompt, /"field":"name"/);
   assert.equal(run.transmissionManifest[0].containsRawEvidence, false);
   assert.deepEqual(run.transmissionManifest[0].derivationContracts, [CODE_EVIDENCE_SUMMARY_VERSION]);
 });

@@ -7,6 +7,7 @@ import { stableId } from "../core/hash.js";
 import { intakeField } from "../intake/field-registry.js";
 import { COGNITIVE_PROVIDERS } from "./provider-adapters.js";
 import { setAcquisitionGenAiStatus } from "../intake/acquisition-diagnostics.js";
+import { semanticIntakeUnitSupportsField } from "../intake/semantic-intake-evidence.js";
 
 const MAX_RECHECK_CHARS = 60_000;
 
@@ -21,22 +22,12 @@ function relevantPackets(run, provider, approval) {
   return run.packets.filter((packet) => approved.has(packet.id)).map((packet) => {
     const sourceUnits = packet.sourceUnits.filter((unit) => {
       if (used >= MAX_RECHECK_CHARS || unit.media) return false;
-      const relevant = ["DECLARATION", "CODE_SUMMARY", "TABULAR_SUMMARY", "MEDIA_SUMMARY", "DOCUMENT_SUMMARY"].includes(unit.evidenceKind);
+      const relevant = ["DECLARATION", "CODE_SUMMARY", "TABULAR_SUMMARY", "MEDIA_SUMMARY", "DOCUMENT_SUMMARY", "SEMANTIC_INTAKE_SUMMARY"].includes(unit.evidenceKind);
       if (relevant) used += unit.content.length;
       return relevant && used <= MAX_RECHECK_CHARS;
     });
     return { ...packet, sourceUnits };
   }).filter((packet) => packet.sourceUnits.length);
-}
-
-function candidateMatchesCurrent(value, currentValue) {
-  const normalized = (item) => String(item ?? "").replaceAll("_", " ").replace(/\s+/g, " ").trim().toLowerCase();
-  if (Array.isArray(currentValue)) {
-    const proposed = String(value ?? "").split(/[,;|\n]/).map(normalized).filter(Boolean).sort();
-    return proposed.join("|") === currentValue.map(normalized).sort().join("|");
-  }
-  if (typeof currentValue === "boolean") return currentValue ? /^(?:yes|true)$/i.test(String(value).trim()) : /^(?:no|false)$/i.test(String(value).trim());
-  return normalized(value) === normalized(currentValue);
 }
 
 function candidateValueAllowed(fieldId, value) {
@@ -53,12 +44,10 @@ function candidateValueAllowed(fieldId, value) {
   return field.dataType === "STRING";
 }
 
-function safeTargetValue(run, fact) {
-  const localOnlySources = new Set(run.registeredSources.filter((source) => source.rawContentPolicy === "LOCAL_ONLY").map((source) => source.id));
-  const localUnits = new Map((run.localSourceUnits ?? []).map((unit) => [unit.id, unit]));
-  const sourceUnitIds = fact.sourceUnitIds ?? [];
-  const localOnly = sourceUnitIds.length > 0 && sourceUnitIds.every((id) => localOnlySources.has(localUnits.get(id)?.sourceId));
-  return { currentValue: localOnly ? null : fact.value, valueWithheld: localOnly };
+function acquiredFactUnitSupportsField(unit, fieldId) {
+  if (unit?.evidenceKind !== "ACQUIRED_FACT_SELECTION") return false;
+  const selection = JSON.parse(unit.content);
+  return Array.isArray(selection.facts) && selection.facts.some((fact) => fact.fieldId === fieldId);
 }
 
 export async function recheckDiscovery(run, input, options = {}) {
@@ -76,16 +65,18 @@ export async function recheckDiscovery(run, input, options = {}) {
   if (options.acquiredFactUnit && packets.length) packets[0] = { ...packets[0], sourceUnits: [...packets[0].sourceUnits, options.acquiredFactUnit] };
   if (!packets.length) throw new Error("No approved evidence packet is available for discovery recheck");
   const activeQuestionIds = activeIntakeQuestionIds(run.solutionProfile.assessmentIntakeFacts);
+  const gapByField = new Map(run.intakeGapAnalysis.fields.map((field) => [field.fieldId, field]));
+  const selectedFactFields = new Set(options.acquiredFactUnit ? JSON.parse(options.acquiredFactUnit.content).facts.map((fact) => fact.fieldId) : []);
+  const needsProposal = (fieldId) => gapByField.get(fieldId)?.state === "MISSING_UNKNOWN" || selectedFactFields.has(fieldId);
   const targetFields = [
-    ...Object.values(run.solutionProfile.fields).filter((item) => intakeField(item.field)?.genAiProposalAllowed && (item.status !== "CONFIRMED" || item.factClass === "SELF_DECLARED")).map((item) => ({ field: item.field, ...safeTargetValue(run, item), status: item.status, factClass: item.factClass })),
-    ...Object.values(run.solutionProfile.assessmentIntakeFacts ?? {}).filter((item) => activeQuestionIds.has(item.questionId) && intakeField(`intakeAnswers.${item.questionId}`)?.genAiProposalAllowed && (item.answerState === "UNKNOWN" || !["SUPPORTED", "PARTIAL"].includes(item.supportStatus))).map((item) => ({ field: `intakeAnswers.${item.questionId}`, ...safeTargetValue(run, item), status: item.supportStatus, factClass: item.origin }))
+    ...Object.values(run.solutionProfile.fields).filter((item) => intakeField(item.field)?.genAiProposalAllowed && needsProposal(item.field)).map((item) => ({ field: item.field, currentValue: null, valueWithheld: item.status !== "UNKNOWN", status: item.status, factClass: item.factClass })),
+    ...Object.values(run.solutionProfile.assessmentIntakeFacts ?? {}).filter((item) => activeQuestionIds.has(item.questionId) && intakeField(`intakeAnswers.${item.questionId}`)?.genAiProposalAllowed && needsProposal(`intakeAnswers.${item.questionId}`)).map((item) => ({ field: `intakeAnswers.${item.questionId}`, currentValue: null, valueWithheld: item.answerState !== "UNKNOWN", status: item.supportStatus, factClass: item.origin }))
   ];
   const client = options.client ?? new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2, maxTokens: 60_000, maxMs: 180_000 }) });
   const generated = await client.generate({ profile, prompt: discoveryRecheckPrompt(targetFields, packets), schemaName: "discovery_recheck", schema: DISCOVERY_RECHECK_SCHEMA, packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.discoveryRecheck });
   const units = new Map(packets.flatMap((packet) => packet.sourceUnits).map((unit) => [unit.id, unit]));
   const targets = new Set(targetFields.map((item) => item.field));
   const targetByField = new Map(targetFields.map((item) => [item.field, item]));
-  const rewritableFields = new Set(["intendedPurpose", "expectedValue", "operatingBoundary.allowedUses", "operatingBoundary.excludedUses", "operatingBoundary.userScope", "operatingBoundary.dataScope", "operatingBoundary.integrationScope", "operatingBoundary.permissionScope", "operatingBoundary.autonomyScope"]);
   const returnedByField = new Map();
   for (const item of generated.value.candidates.filter((candidate) => targets.has(candidate.field))) {
     returnedByField.set(item.field, [...(returnedByField.get(item.field) ?? []), item]);
@@ -95,7 +86,7 @@ export async function recheckDiscovery(run, input, options = {}) {
     if (returned.length !== 1) return {
       field,
       status: returned.length ? "REJECTED_UNSUPPORTED" : "NOT_FOUND",
-      recommendation: returned.length ? "RESOLVE_CONFLICT" : "PROVIDE_INFORMATION",
+      recommendation: "PROVIDE_INFORMATION",
       value: "",
       sourceUnitIds: [],
       evidenceQuotes: [],
@@ -115,16 +106,16 @@ export async function recheckDiscovery(run, input, options = {}) {
     const citedIds = new Set(item.sourceUnitIds);
     const citationCoverageValid = citedIds.size === exactQuoteIds.size && [...citedIds].every((id) => exactQuoteIds.has(id));
     const supportedResultHasEvidence = item.status === "NOT_FOUND" || item.sourceUnitIds.length > 0;
+    const applicableSupportValid = item.status === "NOT_FOUND" || item.sourceUnitIds.some((id) => semanticIntakeUnitSupportsField(units.get(id), field) || acquiredFactUnitSupportsField(units.get(id), field));
     const target = targetByField.get(field);
     const currentMissing = target.currentValue === null || target.currentValue === undefined || target.currentValue === "" || target.currentValue === "UNKNOWN" || Array.isArray(target.currentValue) && target.currentValue.length === 0;
     const candidateValueValid = item.status === "NOT_FOUND" || item.status === "CONFLICTING" || candidateValueAllowed(field, item.value);
     const recommendationValid = item.status === "NOT_FOUND" ? item.recommendation === "PROVIDE_INFORMATION" && item.value === ""
-      : item.status === "CONFLICTING" ? item.recommendation === "RESOLVE_CONFLICT" && exactQuoteIds.size >= 2
-        : item.recommendation === "ACCEPT_CURRENT" ? !currentMissing && target.status !== "CONFLICTING" && candidateMatchesCurrent(item.value, target.currentValue)
-          : item.recommendation === "REVIEW_REWRITE" ? !currentMissing && rewritableFields.has(field) && item.value.trim() !== "" && !candidateMatchesCurrent(item.value, target.currentValue)
-            : item.recommendation === "REVIEW_CANDIDATE" && currentMissing && item.value.trim() !== "";
-    const valid = quotesValid && idsValid && citationCoverageValid && supportedResultHasEvidence && candidateValueValid && recommendationValid;
-    return { ...item, status: valid ? item.status : "REJECTED_UNSUPPORTED", recommendation: valid ? item.recommendation : "RESOLVE_CONFLICT", limitations: valid ? ["AI verification is advisory, requires user confirmation and cannot change the deterministic Intake draft."] : ["The model output failed citation or recommendation validation and was rejected."] };
+      : item.status === "CANDIDATE" && item.recommendation === "REVIEW_CANDIDATE" && currentMissing && item.value.trim() !== "";
+    const valid = quotesValid && idsValid && citationCoverageValid && supportedResultHasEvidence && applicableSupportValid && candidateValueValid && recommendationValid;
+    return valid
+      ? { ...item, limitations: ["AI verification is advisory, requires user confirmation and cannot change the deterministic Intake draft."] }
+      : { ...item, status: "REJECTED_UNSUPPORTED", recommendation: "PROVIDE_INFORMATION", value: "", sourceUnitIds: [], evidenceQuotes: [], rationale: "The returned item was not eligible for Intake preparation.", limitations: ["The model output failed citation or recommendation validation and was rejected."] };
   }).map((candidate) => ({ id: stableId("intake-proposal", candidate), ...candidate }));
   run.transmissionManifest ??= [];
   const transmittedUnits = packets.flatMap((packet) => packet.sourceUnits);

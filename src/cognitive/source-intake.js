@@ -8,6 +8,7 @@ import { createMediaEvidenceUnit, MEDIA_EVIDENCE_SUMMARY_VERSION } from "../inta
 import { createTabularEvidenceUnit, TABULAR_EVIDENCE_SUMMARY_VERSION } from "../intake/tabular-evidence.js";
 import { extractStructuredHtml } from "../intake/html-evidence.js";
 import { createLocalOcrSession, imageDimensionsForOcr, OCR_ENGINE, OCR_ENGINE_VERSION, OCR_LANGUAGE, rasterizePdfPageForOcr } from "../intake/ocr-evidence.js";
+import { createSemanticIntakeEvidenceUnit } from "../intake/semantic-intake-evidence.js";
 
 const MAX_SOURCE_BYTES = 15 * 1024 * 1024;
 const MAX_EXTRACTED_CHARACTERS = 5_000_000;
@@ -388,6 +389,8 @@ export async function parseAndScreenSources(sources, options = {}) {
             ? [createCodeEvidenceUnit({ sourceId, sourceHash, path: source.path, sourceKind, content: bytes.toString("utf8"), findings: sourceFindings })]
             : approvedIntake ? localUnits
               : [createDocumentEvidenceUnit({ sourceId, sourceHash, format: source.format, sourceKind, segments, findings: sourceFindings })];
+      const semanticUnit = !approvedIntake && !tabular ? createSemanticIntakeEvidenceUnit({ sourceId, sourceHash, path: source.path, sourceKind, localUnits }) : null;
+      if (semanticUnit) egressUnits.push(semanticUnit);
       const acquisitionLane = media ? "MEDIA_LOCAL_OCR_ANALYSIS" : extraction.ocrDiagnostics ? "DOCUMENT_LOCAL_OCR_ANALYSIS" : tabular ? "TABULAR_LOCAL_ANALYSIS" : codeOrConfiguration ? "CODE_CONFIGURATION_LOCAL_ANALYSIS" : approvedIntake ? "APPROVED_INTAKE" : "DOCUMENT_LOCAL_ANALYSIS";
       const localOnly = !approvedIntake;
       localSourceUnits.push(...localUnits);

@@ -6,9 +6,10 @@ import { INTAKE_CANDIDATE_PACKAGE_VERSION, validateIntakeCandidatePackage } from
 import { validateDocumentEvidenceSummary } from "./document-evidence.js";
 import { INTAKE_FIELD_REGISTRY } from "./field-registry.js";
 import { classifyIntakeSearchEvidence, INTAKE_SEARCH_REGISTRY, intakeSearchField } from "./search-registry.js";
+import { validateSemanticIntakeEvidence } from "./semantic-intake-evidence.js";
 import { validateTabularEvidenceSummary } from "./tabular-evidence.js";
 
-export const INTAKE_GAP_ANALYSIS_VERSION = "intake-gap-analysis-1.2.0";
+export const INTAKE_GAP_ANALYSIS_VERSION = "intake-gap-analysis-1.3.0";
 
 const FIELD_STATES = new Set(["PRESENT", "CONFLICTING", "MISSING_UNKNOWN"]);
 const RETRIEVAL_DISPOSITIONS = new Set([
@@ -20,7 +21,7 @@ const RETRIEVAL_DISPOSITIONS = new Set([
   "UNKNOWN_SOURCE_SILENCE",
   "UNKNOWN_NO_APPLICABLE_SOURCE"
 ]);
-const SIGNAL_TYPES = new Set(["DOCUMENT_TOPIC", "CODE_CAPABILITY", "TABULAR_SEMANTIC"]);
+const SIGNAL_TYPES = new Set(["DOCUMENT_TOPIC", "CODE_CAPABILITY", "TABULAR_SEMANTIC", "SEMANTIC_OBSERVATION"]);
 
 const FIELD_CONCEPTS = Object.freeze([
   [/purpose|expectedValue/i, ["DOCUMENT_TOPIC:PURPOSE_AND_VALUE"]],
@@ -40,6 +41,7 @@ const FIELD_CONCEPTS = Object.freeze([
 
 function safeSignals(providerUnits) {
   const signals = new Map();
+  const semanticSignalsByField = new Map();
   const add = (type, values) => {
     for (const value of values) {
       const key = `${type}:${value}`;
@@ -52,11 +54,20 @@ function safeSignals(providerUnits) {
     if (unit.evidenceKind === "DOCUMENT_SUMMARY") add("DOCUMENT_TOPIC", validateDocumentEvidenceSummary(summary).topicSignals);
     else if (unit.evidenceKind === "CODE_SUMMARY") add("CODE_CAPABILITY", validateCodeEvidenceSummary(summary).capabilitySignals);
     else if (unit.evidenceKind === "TABULAR_SUMMARY") add("TABULAR_SEMANTIC", validateTabularEvidenceSummary(summary).semanticSignals);
+    else if (unit.evidenceKind === "SEMANTIC_INTAKE_SUMMARY") {
+      const observations = validateSemanticIntakeEvidence(summary).observations;
+      add("SEMANTIC_OBSERVATION", observations.map((observation) => `${observation.conceptType}.${observation.conceptId}`));
+      for (const observation of observations) {
+        const key = `SEMANTIC_OBSERVATION:${observation.conceptType}.${observation.conceptId}`;
+        for (const fieldId of observation.applicableIntakeFields) semanticSignalsByField.set(fieldId, new Set([...(semanticSignalsByField.get(fieldId) ?? []), key]));
+      }
+    }
   }
-  return [...signals.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([key, sourceCount]) => {
+  const coverage = [...signals.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([key, sourceCount]) => {
     const separator = key.indexOf(":");
     return { signalType: key.slice(0, separator), signalId: key.slice(separator + 1), sourceCount };
   });
+  return { coverage, semanticSignalsByField };
 }
 
 function relevantConceptKeys(field) {
@@ -156,7 +167,8 @@ export function validateIntakeGapAnalysis(analysis) {
 export function createIntakeGapAnalysis({ candidatePackage, acquisitionDiagnostics, sourceIngestion, localSourceUnits, providerUnits }) {
   validateIntakeCandidatePackage(candidatePackage);
   validateAcquisitionDiagnostics(acquisitionDiagnostics);
-  const safeConceptCoverage = safeSignals(providerUnits);
+  const safeSignalsResult = safeSignals(providerUnits);
+  const safeConceptCoverage = safeSignalsResult.coverage;
   const safeSignalKeys = new Set(safeConceptCoverage.map((signal) => `${signal.signalType}:${signal.signalId}`));
   const searchableUnits = localSourceUnits.filter((unit) => !unit.ocr || unit.ocr.qualificationState === "QUALIFIED").map((unit) => ({ ...unit, searchEvidenceType: classifyIntakeSearchEvidence(unit) }));
   const availableEvidenceTypes = [...new Set(searchableUnits.map((unit) => unit.searchEvidenceType).filter(Boolean))].sort();
@@ -171,7 +183,7 @@ export function createIntakeGapAnalysis({ candidatePackage, acquisitionDiagnosti
     const eligibleUnits = searchableUnits.filter((unit) => rule.evidenceTypes.includes(unit.searchEvidenceType));
     const coveredEvidenceTypes = rule.evidenceTypes.filter((type) => availableEvidenceTypes.includes(type));
     const technicalLoss = technicalLossFor(rule, sourceIngestion, acquisitionDiagnostics);
-    const relevantSafeConceptSignals = relevantConceptKeys(field).filter((key) => safeSignalKeys.has(key));
+    const relevantSafeConceptSignals = [...new Set([...relevantConceptKeys(field), ...(safeSignalsResult.semanticSignalsByField.get(field.id) ?? [])])].filter((key) => safeSignalKeys.has(key));
     const disposition = retrievalDisposition({ state, privacyBlocked, technicalLoss, coveredEvidenceTypes, relevantSafeConceptSignals });
     return {
       fieldId: field.id,

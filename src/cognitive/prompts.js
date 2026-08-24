@@ -4,8 +4,8 @@ import { sha256, stableStringify } from "../core/hash.js";
 export const PROMPT_VERSIONS = Object.freeze({
   solution: "solution-understanding-2.1.0",
   solutionVerification: "solution-fact-verification-3.0.0",
-  discoveryRecheck: "discovery-recheck-1.2.0",
-  retrievalPlanning: "intake-retrieval-planning-1.0.0",
+  discoveryRecheck: "discovery-recheck-1.3.0",
+  retrievalPlanning: "intake-retrieval-planning-1.1.0",
   routing: "semantic-routing-2.0.0",
   domain: "domain-assessment-3.0.0",
   verification: "claim-verification-3.0.0",
@@ -71,11 +71,13 @@ END_SOURCE_PACKET`;
 export function discoveryRecheckPrompt(targetFields, packets) {
   return `${TRUST_PREAMBLE}
 
-Task: verify only the Assessment Intake fields listed below. This is Intake verification, not an A-F assessment, legal classification, risk decision, readiness decision or approval. Return exactly one result for every target field and no result for any other field. A generic keyword occurrence is not support. Short jurisdiction codes such as FI count only in a labelled jurisdiction, deployment, contract, customer, or processing context. Regulatory roles require an explicit role statement. Product-name variants may be treated as aliases only when the source connects them to the same repository or product.
+Task: draft optional values only for the missing Assessment Intake fields listed below. This is Intake preparation, not an A-F assessment, source comparison, legal classification, risk decision, readiness decision or approval. Return exactly one result for every target field and no result for any other field.
 
-Use ACCEPT_CURRENT when the current value is clear and contextually supported as written. Use REVIEW_REWRITE only when a source-grounded wording improvement would make the same meaning clearer; intendedPurpose is the primary field where this can be useful. A rewrite must preserve the source meaning and is only a proposal for the user. Use REVIEW_CANDIDATE when a missing value can be proposed from explicit source content. Use PROVIDE_INFORMATION with NOT_FOUND and an empty value when the sources do not answer the field. Use RESOLVE_CONFLICT with CONFLICTING when supplied sources materially disagree. Do not infer or rewrite legal classifications, questionnaire determinations, lifecycle authority, or risk conclusions.
+SEMANTIC_INTAKE_SUMMARY units contain local deterministic observations expressed only as controlled concept IDs, their applicable Intake fields, and a neutral source representation. You may synthesize concise, editable wording from one or more observations explicitly mapped to the target field. This bounded synthesis may combine supported audiences, uses, inputs, features, or integrations, but it must not add a person, organization, product name, implementation state, operating state, owner, jurisdiction, legal role, data classification, or capability absent from those observations. Generic topic or capability summaries alone are not enough to propose a value. Keep document, code, and configuration representations separate; do not compare them or characterize their relationship.
 
-Every result other than NOT_FOUND must cite at least one supplied source-unit ID and one exact short quote copied from that unit. Return field values as concise display text. The Engine will validate citations and will not apply any returned value automatically.
+Use CANDIDATE with REVIEW_CANDIDATE only when an applicable controlled observation or a user-selected acquired fact supports the proposed wording. Otherwise use NOT_FOUND with PROVIDE_INFORMATION and an empty value. Do not return CONFLICTING, ACCEPT_CURRENT, REVIEW_REWRITE, or RESOLVE_CONFLICT in this Intake-preparation step. Do not infer questionnaire determinations, lifecycle authority, or governance conclusions.
+
+Every CANDIDATE must cite at least one supporting unit ID and one exact short JSON fragment copied from that unit, such as a concept ID. Return concise display text. The Engine validates field applicability and citations, and never applies a returned value automatically; only the user may accept, edit, or decline it.
 
 TARGET_FIELDS
 ${stableStringify(targetFields)}

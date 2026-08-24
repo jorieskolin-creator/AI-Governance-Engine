@@ -11,7 +11,7 @@ import { COGNITIVE_PROVIDERS } from "./provider-adapters.js";
 import { ModelBudget, StructuredModelClient } from "./provider-client.js";
 import { intakeRetrievalPlanningPrompt, PROMPT_VERSIONS } from "./prompts.js";
 
-export const INTAKE_RETRIEVAL_PLAN_VERSION = "intake-retrieval-plan-1.0.0";
+export const INTAKE_RETRIEVAL_PLAN_VERSION = "intake-retrieval-plan-1.1.0";
 export const RETRIEVAL_PLANNING_PURPOSE = "INTAKE_RETRIEVAL_PLANNING_FROM_SAFE_METRICS";
 
 const AUTHORITY = "RETRIEVAL_SUGGESTION_ONLY_NO_FACT_VALUE_CLASSIFICATION_FINDING_OR_APPROVAL_AUTHORITY";
@@ -23,11 +23,60 @@ const FIXED_LIMITATIONS = Object.freeze([
 const SAFE_TERM = /^[\p{L}\p{N}][\p{L}\p{N} _/-]{0,79}$/u;
 const ASSERTIVE_TERM = /\b(?:is|are|was|were|has|have|will|must|should|approved|compliant|certified|safe)\b/i;
 
+function termIsSafe(value, field) {
+  const prohibitedValues = new Set([...(field.allowedValues ?? []), "YES", "NO", "TRUE", "FALSE", "UNKNOWN", "NOT_APPLICABLE"].map((item) => String(item).replaceAll("_", " ").toLocaleLowerCase()));
+  return typeof value === "string" && value === value.trim() && SAFE_TERM.test(value) && value.split(/\s+/).length <= 8 && !ASSERTIVE_TERM.test(value) && !prohibitedValues.has(value.replaceAll("_", " ").toLocaleLowerCase());
+}
+
 function validateTerms(values, label, field) {
   invariant(Array.isArray(values) && values.length <= 8, `${label} are invalid`);
   invariant(new Set(values.map((value) => value.toLocaleLowerCase())).size === values.length, `${label} must be unique`);
-  const prohibitedValues = new Set([...(field.allowedValues ?? []), "YES", "NO", "TRUE", "FALSE", "UNKNOWN", "NOT_APPLICABLE"].map((value) => String(value).replaceAll("_", " ").toLocaleLowerCase()));
-  invariant(values.every((value) => typeof value === "string" && value === value.trim() && SAFE_TERM.test(value) && value.split(/\s+/).length <= 8 && !ASSERTIVE_TERM.test(value) && !prohibitedValues.has(value.replaceAll("_", " ").toLocaleLowerCase())), `${label} contain an unsafe, value-like, or unbounded term`);
+  invariant(values.every((value) => termIsSafe(value, field)), `${label} contain an unsafe, value-like, or unbounded term`);
+}
+
+function uniqueAllowed(values, allowed) {
+  return [...new Set(values.filter((value) => allowed.includes(value)))];
+}
+
+function uniqueSafeTerms(values, field) {
+  const seen = new Set();
+  return values.filter((value) => {
+    const key = String(value).toLocaleLowerCase();
+    if (seen.has(key) || !termIsSafe(value, field)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 8);
+}
+
+function normalizeSuggestions(suggestions, context) {
+  const returnedByField = new Map();
+  for (const suggestion of suggestions) if (!returnedByField.has(suggestion.fieldId)) returnedByField.set(suggestion.fieldId, suggestion);
+  let changedSuggestionCount = 0;
+  let defaultedSuggestionCount = 0;
+  const normalized = context.targetFields.map((target) => {
+    const returned = returnedByField.get(target.fieldId);
+    const field = intakeField(target.fieldId);
+    const searchConcepts = uniqueSafeTerms(returned?.searchConcepts ?? [], field);
+    const labelAliases = uniqueSafeTerms(returned?.labelAliases ?? [], field);
+    let sourcePriorities = uniqueAllowed(returned?.sourcePriorities ?? [], target.registeredEvidenceTypes);
+    let extractionStrategies = uniqueAllowed(returned?.extractionStrategies ?? [], target.registeredExtractionStrategies);
+    if (searchConcepts.length + labelAliases.length + sourcePriorities.length + extractionStrategies.length === 0) {
+      sourcePriorities = [target.registeredEvidenceTypes[0]];
+      extractionStrategies = [target.registeredExtractionStrategies[0]];
+      defaultedSuggestionCount += 1;
+    }
+    const value = { fieldId: target.fieldId, searchConcepts, labelAliases, sourcePriorities, extractionStrategies };
+    if (!returned || JSON.stringify(value) !== JSON.stringify(returned)) changedSuggestionCount += 1;
+    return value;
+  });
+  return {
+    suggestions: normalized,
+    diagnostics: {
+      changedSuggestionCount,
+      defaultedSuggestionCount,
+      ignoredSuggestionCount: suggestions.filter((suggestion, index) => !context.targetFields.some((target) => target.fieldId === suggestion.fieldId) || suggestions.findIndex((item) => item.fieldId === suggestion.fieldId) !== index).length
+    }
+  };
 }
 
 function artifactClassMetrics(sourceIngestion) {
@@ -112,10 +161,12 @@ export async function planIntakeRetrieval(run, input, options = {}) {
   const policy = options.policy ?? acquisitionAssistancePolicy(options.env);
   setAcquisitionGenAiStatus(run, "REQUESTED");
   run.trace.push({ stage: "INTAKE_RETRIEVAL_PLANNING", status: "RUNNING", at: new Date().toISOString(), contextHash });
+  let failurePhase = "ROUTE_SELECTION";
   try {
     const profile = policy.choose("RETRIEVAL_PLANNING", { allowedProviders: input.providers });
     invariant(profile.operationalRole === "WORKHORSE", "Retrieval planning requires the WORKHORSE role");
     const client = options.client ?? new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2, maxTokens: 30_000, maxMs: 120_000 }) });
+    failurePhase = "PROVIDER_EXECUTION";
     const generated = await client.generate({
       profile,
       prompt: intakeRetrievalPlanningPrompt(context),
@@ -124,6 +175,8 @@ export async function planIntakeRetrieval(run, input, options = {}) {
       packetHash: contextHash,
       promptVersion: PROMPT_VERSIONS.retrievalPlanning
     });
+    failurePhase = "OUTPUT_NORMALIZATION";
+    const normalized = normalizeSuggestions(generated.value.suggestions, context);
     const payload = {
       schemaVersion: INTAKE_RETRIEVAL_PLAN_VERSION,
       gapAnalysisVersion: run.intakeGapAnalysis.schemaVersion,
@@ -132,7 +185,7 @@ export async function planIntakeRetrieval(run, input, options = {}) {
       provider: profile.provider,
       configuredModel: profile.model,
       authority: AUTHORITY,
-      suggestions: generated.value.suggestions.map((suggestion) => structuredClone(suggestion)),
+      suggestions: normalized.suggestions,
       limitations: [...FIXED_LIMITATIONS]
     };
     const plan = validateIntakeRetrievalPlan({ ...payload, planHash: sha256(payload) }, run.intakeGapAnalysis);
@@ -150,15 +203,15 @@ export async function planIntakeRetrieval(run, input, options = {}) {
       approvedAt: new Date().toISOString(),
       transmittedAt: new Date().toISOString()
     });
-    run.retrievalPlan = { status: "COMPLETED", plan, trace: generated.trace };
+    run.retrievalPlan = { status: "COMPLETED", plan, normalization: normalized.diagnostics, trace: generated.trace };
     setAcquisitionGenAiStatus(run, "COMPLETED");
     run.trace.push({ stage: "INTAKE_RETRIEVAL_PLANNING", status: "COMPLETED", at: new Date().toISOString(), contextHash, outputHash: generated.trace.outputHash });
     return run.retrievalPlan;
   } catch (error) {
     const failure = classifyCognitiveFailure(error);
-    run.retrievalPlan = { status: "UNAVAILABLE", failureCode: failure.code, retryDisposition: failure.retryDisposition, policy: "Deterministic Intake gaps remain unchanged; no retrieval suggestion was executed." };
+    run.retrievalPlan = { status: "UNAVAILABLE", failureCode: failure.code, failurePhase, retryDisposition: failure.retryDisposition, policy: "Deterministic Intake gaps remain unchanged; no retrieval suggestion was executed. A retry requires a new explicit user request." };
     setAcquisitionGenAiStatus(run, "UNAVAILABLE", failure.code);
-    run.trace.push({ stage: "INTAKE_RETRIEVAL_PLANNING", status: "UNAVAILABLE", at: new Date().toISOString(), contextHash, failureCode: failure.code, retryDisposition: failure.retryDisposition });
+    run.trace.push({ stage: "INTAKE_RETRIEVAL_PLANNING", status: "UNAVAILABLE", at: new Date().toISOString(), contextHash, failureCode: failure.code, failurePhase, retryDisposition: failure.retryDisposition });
     throw error;
   }
 }

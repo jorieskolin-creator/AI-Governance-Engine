@@ -101,7 +101,7 @@ test("a supplied dossier still requires confirmation and produces an immutable e
   await assert.rejects(() => confirmPreflightDossier(run, { dossier: structuredClone(SAMPLE_REQUEST.dossier) }), /not awaiting intake confirmation/i);
 });
 
-test("AI discovery recheck cannot recover raw document values from a controlled summary", async () => {
+test("AI discovery recheck does not retarget deterministic local values that safe summaries withhold", async () => {
   const run = await createPreflight({ sources: [{ path: "README.md", mimeType: "text/markdown", content: "# FinOps Engine\nSolution name: FinOps Engine\nIntended purpose: Assess FinOps evidence for governance decisions." }] });
   const unit = run.packets[0].sourceUnits[0];
   const policy = modelPolicy(MOONSHOT_CREDENTIALS);
@@ -115,14 +115,14 @@ test("AI discovery recheck cannot recover raw document values from a controlled 
   const before = structuredClone(run.solutionProfile);
   const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] }));
   const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
-  assert.equal(result.candidates[0].status, "REJECTED_UNSUPPORTED");
-  assert.equal(result.candidates[0].recommendation, "RESOLVE_CONFLICT");
-  assert.equal(result.candidates.find((item) => item.field === "intendedPurpose").recommendation, "RESOLVE_CONFLICT");
+  assert.equal(result.targetFields.includes("name"), false);
+  assert.equal(result.targetFields.includes("intendedPurpose"), false);
+  assert.equal(result.candidates.some((item) => item.field === "name" || item.field === "intendedPurpose"), false);
   assert.ok(result.candidates.some((item) => item.status === "NOT_FOUND" && item.recommendation === "PROVIDE_INFORMATION"));
   assert.equal(result.targetFields.includes("intakeAnswers.SYSTEMIC_RISK_MODEL"), false);
   assert.equal(run.stage, "INTAKE_AI_VERIFICATION_COMPLETED");
   assert.ok(run.trace.some((item) => item.stage === "INTAKE_AI_VERIFICATION" && item.status === "RUNNING"));
-  assert.match(result.candidates[0].limitations[0], /failed citation or recommendation validation/i);
+  assert.match(result.candidates[0].limitations[0], /information remains unknown/i);
   assert.deepEqual(run.solutionProfile, before);
   assert.equal(run.transmissionManifest[0].stage, "DISCOVERY_RECHECK");
   assert.equal(run.transmissionManifest[0].provider, "MOONSHOT");
@@ -132,19 +132,21 @@ test("AI discovery recheck cannot recover raw document values from a controlled 
   await assert.rejects(() => recheckDiscovery(run, { approvedPackets }, { policy, client }), /not available from the current run state/i);
 });
 
-test("AI Intake verification rejects ACCEPT_CURRENT when the returned value differs", async () => {
-  const run = await createPreflight({ sources: [{ path: "README.md", mimeType: "text/markdown", content: "# Internal Assistant\nSolution name: Internal Assistant" }] });
-  const unit = run.packets[0].sourceUnits[0];
+test("AI Intake preparation rejects non-proposal recommendation modes", async () => {
+  const run = await createPreflight({ sources: [{ path: "README.md", mimeType: "text/markdown", content: "The assistant is designed for recruiters." }] });
+  const unit = run.packets.flatMap((packet) => packet.sourceUnits).find((item) => item.evidenceKind === "SEMANTIC_INTAKE_SUMMARY");
+  const quote = '"conceptId":"RECRUITER"';
   const policy = modelPolicy(MOONSHOT_CREDENTIALS);
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ profile }) => ({
-    value: { candidates: [{ field: "name", status: "CANDIDATE", recommendation: "ACCEPT_CURRENT", value: "Public Assistant", sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote: "Solution name: Internal Assistant" }], rationale: "Incorrectly claims a different value is current." }] },
+    value: { candidates: [{ field: "users", status: "CANDIDATE", recommendation: "ACCEPT_CURRENT", value: "Recruiters", sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote }], rationale: "Uses a recommendation mode prohibited during missing-field preparation." }] },
     responseModel: profile.model, usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
   }) });
   const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] }));
   const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
-  const candidate = result.candidates.find((item) => item.field === "name");
+  const candidate = result.candidates.find((item) => item.field === "users");
   assert.equal(candidate.status, "REJECTED_UNSUPPORTED");
-  assert.equal(candidate.recommendation, "RESOLVE_CONFLICT");
+  assert.equal(candidate.recommendation, "PROVIDE_INFORMATION");
+  assert.equal(candidate.value, "");
 });
 
 test("AI Intake verification excludes fields prohibited by the registered proposal contract", async () => {
@@ -166,20 +168,20 @@ test("AI Intake verification excludes fields prohibited by the registered propos
 test("AI Intake verification rejects empty and incompletely covered citations", async () => {
   for (const mode of ["EMPTY_QUOTE", "UNCITED_SOURCE"]) {
     const run = await createPreflight({ sources: [
-      { path: "README.md", mimeType: "text/markdown", content: "# Internal Assistant\nSolution name: Internal Assistant" },
-      { path: "support.md", mimeType: "text/markdown", content: "Supporting product context." }
+      { path: "README.md", mimeType: "text/markdown", content: "The assistant is designed for recruiters." },
+      { path: "support.md", mimeType: "text/markdown", content: "The assistant is designed for hiring managers." }
     ] });
-    const units = run.packets.flatMap((packet) => packet.sourceUnits);
+    const units = run.packets.flatMap((packet) => packet.sourceUnits).filter((item) => item.evidenceKind === "SEMANTIC_INTAKE_SUMMARY");
     const policy = modelPolicy(MOONSHOT_CREDENTIALS);
     const sourceUnitIds = mode === "UNCITED_SOURCE" ? units.map((unit) => unit.id) : [units[0].id];
-    const quote = mode === "EMPTY_QUOTE" ? "" : "Solution name: Internal Assistant";
+    const quote = mode === "EMPTY_QUOTE" ? "" : '"conceptId":"RECRUITER"';
     const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2 }), transport: async ({ profile }) => ({
-      value: { candidates: [{ field: "name", status: "CANDIDATE", recommendation: "ACCEPT_CURRENT", value: "Internal Assistant", sourceUnitIds, evidenceQuotes: [{ sourceUnitId: units[0].id, quote }], rationale: "Citation validation adversarial case." }] },
+      value: { candidates: [{ field: "users", status: "CANDIDATE", recommendation: "REVIEW_CANDIDATE", value: "Recruiters", sourceUnitIds, evidenceQuotes: [{ sourceUnitId: units[0].id, quote }], rationale: "Citation validation adversarial case." }] },
       responseModel: profile.model, usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 }
     }) });
     const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] }));
     const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
-    assert.equal(result.candidates.find((item) => item.field === "name").status, "REJECTED_UNSUPPORTED", mode);
+    assert.equal(result.candidates.find((item) => item.field === "users").status, "REJECTED_UNSUPPORTED", mode);
   }
 });
 

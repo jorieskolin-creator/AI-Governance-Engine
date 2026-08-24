@@ -89,6 +89,8 @@ The FinOps materials are **non-authoritative design inspiration and regression i
 
 ## Refined implementation plan
 
+Current status: Phase 1 items 1–9 are implemented, including the privacy-safe `semantic-intake-evidence-1.0.0` projection, normalized `WORKHORSE` retrieval suggestions and field-applicable `REASONER` proposals. Automated synthetic acceptance verifies that raw documents, code and private values remain local and that proposals do not mutate Intake. Item 10 still requires controlled end-to-end calibration with representative uploaded material and explicitly authorized live provider calls.
+
 ### Phase 1 — Evidence Acquisition and Intake completion
 
 Implement each item as a small, independently validated and reviewable change.
@@ -137,7 +139,9 @@ Implement each item as a small, independently validated and reviewable change.
    - Re-enter DLP, sanitization, candidate validation, and packet hashing after every pass.
 
 9. **Proposal and UI integration**
-   - Generate optional editable proposals only from validated safe candidates.
+   - Generate optional editable proposals only from validated field-mapped semantic observations or user-selected controlled facts.
+   - Preserve document, code and configuration representations separately and defer every comparison to Analysis.
+   - Return no proposal when the safe package does not support the missing field.
    - Clearly distinguish deterministic observations, conflicts, GenAI retrieval suggestions, GenAI value proposals, user edits, and unknowns.
    - Preserve the user-only final approval boundary.
 

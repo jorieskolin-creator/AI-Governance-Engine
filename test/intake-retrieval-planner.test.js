@@ -83,7 +83,7 @@ test("the WORKHORSE planner receives only safe metrics and returns suggestion-on
   assert.throws(() => validateIntakeRetrievalPlan(unsupported, run.intakeGapAnalysis), /source priorities/i);
 });
 
-test("planner output cannot carry field values, conclusions, or incomplete field coverage", async () => {
+test("planner output filters unsafe terms and restores incomplete field coverage from registered defaults", async () => {
   const run = await createPreflight({ sources: [{
     path: "docs/architecture.md",
     mimeType: "text/markdown",
@@ -107,12 +107,21 @@ test("planner output cannot carry field values, conclusions, or incomplete field
   });
 
   const asserted = structuredClone(run);
-  await assert.rejects(() => planIntakeRetrieval(asserted, consent(asserted), { policy: policy(), client: makeClient((suggestions) => { suggestions[0].searchConcepts = ["system is approved"]; }) }), /value-like|unsafe/i);
-  assert.equal(asserted.retrievalPlan.status, "UNAVAILABLE");
+  const filtered = await planIntakeRetrieval(asserted, consent(asserted), { policy: policy(), client: makeClient((suggestions) => {
+    suggestions[0].searchConcepts = ["system is approved"];
+    suggestions[0].sourcePriorities = ["UNREGISTERED_EVIDENCE_TYPE"];
+    suggestions[0].extractionStrategies = ["UNREGISTERED_STRATEGY"];
+  }) });
+  assert.equal(filtered.status, "COMPLETED");
+  assert.deepEqual(filtered.plan.suggestions[0].searchConcepts, []);
+  assert.ok(filtered.plan.suggestions[0].sourcePriorities.every((value) => context.targetFields[0].registeredEvidenceTypes.includes(value)));
+  assert.ok(filtered.plan.suggestions[0].extractionStrategies.every((value) => context.targetFields[0].registeredExtractionStrategies.includes(value)));
+  assert.ok(filtered.normalization.changedSuggestionCount > 0);
 
   const incomplete = structuredClone(run);
-  await assert.rejects(() => planIntakeRetrieval(incomplete, consent(incomplete), { policy: policy(), client: makeClient((suggestions) => { suggestions.pop(); }) }), /field coverage is incomplete/i);
-  assert.equal(incomplete.retrievalPlan.status, "UNAVAILABLE");
+  const restored = await planIntakeRetrieval(incomplete, consent(incomplete), { policy: policy(), client: makeClient((suggestions) => { suggestions.pop(); }) });
+  assert.equal(restored.plan.suggestions.length, context.targetFields.length);
+  assert.equal(restored.normalization.defaultedSuggestionCount, 1);
 });
 
 test("retrieval planning requires explicit consent and never replays a timeout through another provider", async () => {
@@ -134,6 +143,8 @@ test("retrieval planning requires explicit consent and never replays a timeout t
   assert.equal(calls, 1);
   assert.equal(run.retrievalPlan.status, "UNAVAILABLE");
   assert.equal(run.retrievalPlan.failureCode, "PROVIDER_TIMEOUT");
+  assert.equal(run.retrievalPlan.failurePhase, "PROVIDER_EXECUTION");
+  assert.equal(run.trace.at(-1).failurePhase, "PROVIDER_EXECUTION");
   assert.equal(run.transmissionManifest, undefined);
   assert.doesNotMatch(JSON.stringify(run.retrievalPlan), /Simulated provider timeout/);
 });
@@ -151,5 +162,6 @@ test("an explicitly qualification-gated WORKHORSE policy still fails closed befo
   assert.equal(calls, 0);
   assert.equal(run.retrievalPlan.status, "UNAVAILABLE");
   assert.equal(run.retrievalPlan.failureCode, "MODEL_ROUTE_UNAVAILABLE");
+  assert.equal(run.retrievalPlan.failurePhase, "ROUTE_SELECTION");
   assert.deepEqual(run.acquisitionDiagnostics.genAi, { status: "UNAVAILABLE", failureCode: "MODEL_ROUTE_UNAVAILABLE" });
 });

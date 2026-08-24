@@ -9,6 +9,7 @@ import { createApprovedIntakeSnapshot } from "../intake/contracts.js";
 import { createAcquiredFactPackage } from "../intake/acquired-facts.js";
 import { createAcquisitionDiagnostics } from "../intake/acquisition-diagnostics.js";
 import { createIntakeCandidatePackage } from "../intake/candidate-contract.js";
+import { createIntakeGapAnalysis } from "../intake/gap-analysis.js";
 
 const DEFAULT_PACKET_CHARS = 18_000;
 
@@ -50,6 +51,7 @@ export function publicPreflightView(run) {
     acquiredFacts: run.acquiredFacts,
     sourceIngestion: run.sourceIngestion,
     acquisitionDiagnostics: run.acquisitionDiagnostics ?? null,
+    intakeGapAnalysis: run.intakeGapAnalysis ?? null,
     discoveryRecheck: run.discoveryRecheck ?? null,
     approvedIntake: run.approvedIntake ? {
       schemaVersion: run.approvedIntake.schemaVersion,
@@ -86,6 +88,13 @@ export async function createPreflight(input, options = {}) {
     dlpFindings: run.dlpFindings,
     acquiredFacts: run.acquiredFacts
   });
+  run.intakeGapAnalysis = createIntakeGapAnalysis({
+    candidatePackage: run.intakeCandidates,
+    acquisitionDiagnostics: run.acquisitionDiagnostics,
+    sourceIngestion: run.sourceIngestion,
+    localSourceUnits: run.localSourceUnits,
+    providerUnits: run.packets.flatMap((packet) => packet.sourceUnits)
+  });
   run.trace.push({ stage: "PREFLIGHT", status: "COMPLETED", at: now.toISOString(), outputHash: sha256({ manifest: run.registeredSources, dlp: run.dlpFindings, packets: run.packets.map((item) => item.hash) }) });
   return run;
 }
@@ -102,6 +111,7 @@ export function publicDiscoveryView(run) {
     sourceManifest: run.registeredSources,
     sourceIngestion: run.sourceIngestion,
     acquisitionDiagnostics: run.acquisitionDiagnostics ?? null,
+    intakeGapAnalysis: run.intakeGapAnalysis ?? null,
     discoveryRecheck: run.discoveryRecheck ?? null,
     citationIndex: run.packets.flatMap((packet) => packet.sourceUnits.map((unit) => ({ sourceUnitId: unit.id, path: unit.path, locator: unit.locator, sha256: unit.sha256 })))
   };

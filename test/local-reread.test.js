@@ -9,7 +9,7 @@ import { createRetrievalPlannerContext, planIntakeRetrieval, RETRIEVAL_PLANNING_
 import { executeLocalReread, LOCAL_REREAD_PURPOSE, validateLocalReread } from "../src/intake/local-reread.js";
 import { createIntakeResolutionDraft } from "../src/intake/contracts.js";
 
-const policy = () => modelPolicy({ MOONSHOT_API_KEY: "test" }, { qualificationRequired: false });
+const policy = () => modelPolicy({ MOONSHOT_API_KEY: "test" });
 
 async function plannedRun(sources, aliases = {}, strategies = {}) {
   const run = await createPreflight({ sources });

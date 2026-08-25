@@ -20,7 +20,7 @@ import { setAcquisitionGenAiStatus, validateAcquisitionDiagnostics } from "../sr
 import { classifyUploadPath, provisionalIngestionManifest } from "../public/upload-types.js";
 
 const rawMarker = "internal-project-orchid-customer-table";
-const modelPolicy = (env) => createModelPolicy(env, { qualificationRequired: false });
+const modelPolicy = (env) => createModelPolicy(env);
 
 test("synthetic regression inputs distinguish technical loss from genuine source silence", async () => {
   const fixture = (name) => readFile(new URL(`./fixtures/evidence-acquisition/${name}`, import.meta.url), "utf8");
@@ -65,8 +65,8 @@ test("synthetic regression inputs distinguish technical loss from genuine source
   tampered.sourceSilence.count = 99;
   assert.throws(() => validateAcquisitionDiagnostics(tampered), /source-silence summary is inconsistent/i);
 
-  setAcquisitionGenAiStatus(run, "UNAVAILABLE", "MODEL_PROFILES_UNAPPROVED");
-  assert.deepEqual(run.acquisitionDiagnostics.genAi, { status: "UNAVAILABLE", failureCode: "MODEL_PROFILES_UNAPPROVED" });
+  setAcquisitionGenAiStatus(run, "UNAVAILABLE", "MODEL_ROUTE_UNAVAILABLE");
+  assert.deepEqual(run.acquisitionDiagnostics.genAi, { status: "UNAVAILABLE", failureCode: "MODEL_ROUTE_UNAVAILABLE" });
 });
 
 test("technical loss distinguishes partial extraction from an unavailable source", async () => {

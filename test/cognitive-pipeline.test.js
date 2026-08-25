@@ -15,7 +15,7 @@ import { readinessPackageJsonSchema, validateReadinessPackage } from "../src/rea
 const ALL_PROVIDERS = ["OPENAI", "XAI", "MOONSHOT"];
 const ALL_CREDENTIALS = { OPENAI_API_KEY: "test", XAI_API_KEY: "test", MOONSHOT_API_KEY: "test" };
 const MOONSHOT_CREDENTIALS = { MOONSHOT_API_KEY: "test" };
-const modelPolicy = (env) => createModelPolicy(env, { qualificationRequired: false });
+const modelPolicy = (env) => createModelPolicy(env);
 
 function preflightInput(sources) {
   return { dossier: structuredClone(SAMPLE_REQUEST.dossier), sources };

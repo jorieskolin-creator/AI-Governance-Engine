@@ -60,9 +60,13 @@ export async function recheckDiscovery(run, input, options = {}) {
   const providers = commonApprovedProviders(approval);
   if (!providers.length) throw new Error("One provider must be explicitly approved for every discovery packet");
   const policy = options.policy ?? acquisitionAssistancePolicy(options.env);
-  const profile = policy.choose("SOLUTION_UNDERSTANDING", { allowedProviders: providers });
-  const packets = relevantPackets(run, profile.provider, approval);
-  if (options.acquiredFactUnit && packets.length) packets[0] = { ...packets[0], sourceUnits: [...packets[0].sourceUnits, options.acquiredFactUnit] };
+  const profiles = policy.candidates("SOLUTION_UNDERSTANDING", { allowedProviders: providers });
+  const packetsFor = (provider) => {
+    const selected = relevantPackets(run, provider, approval);
+    if (options.acquiredFactUnit && selected.length) selected[0] = { ...selected[0], sourceUnits: [...selected[0].sourceUnits, options.acquiredFactUnit] };
+    return selected;
+  };
+  let packets = packetsFor(profiles[0].provider);
   if (!packets.length) throw new Error("No approved evidence packet is available for discovery recheck");
   const activeQuestionIds = activeIntakeQuestionIds(run.solutionProfile.assessmentIntakeFacts);
   const gapByField = new Map(run.intakeGapAnalysis.fields.map((field) => [field.fieldId, field]));
@@ -72,8 +76,10 @@ export async function recheckDiscovery(run, input, options = {}) {
     ...Object.values(run.solutionProfile.fields).filter((item) => intakeField(item.field)?.genAiProposalAllowed && needsProposal(item.field)).map((item) => ({ field: item.field, currentValue: null, valueWithheld: item.status !== "UNKNOWN", status: item.status, factClass: item.factClass })),
     ...Object.values(run.solutionProfile.assessmentIntakeFacts ?? {}).filter((item) => activeQuestionIds.has(item.questionId) && intakeField(`intakeAnswers.${item.questionId}`)?.genAiProposalAllowed && needsProposal(`intakeAnswers.${item.questionId}`)).map((item) => ({ field: `intakeAnswers.${item.questionId}`, currentValue: null, valueWithheld: item.answerState !== "UNKNOWN", status: item.supportStatus, factClass: item.origin }))
   ];
-  const client = options.client ?? new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2, maxTokens: 60_000, maxMs: 180_000 }) });
-  const generated = await client.generate({ profile, prompt: discoveryRecheckPrompt(targetFields, packets), schemaName: "discovery_recheck", schema: DISCOVERY_RECHECK_SCHEMA, packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.discoveryRecheck });
+  const client = options.client ?? new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 4, maxTokens: 120_000, maxMs: 360_000 }) });
+  const generated = await client.generate({ profile: profiles[0], fallbackProfiles: profiles.slice(1), prompt: discoveryRecheckPrompt(targetFields, packets), schemaName: "discovery_recheck", schema: DISCOVERY_RECHECK_SCHEMA, packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.discoveryRecheck });
+  const profile = generated.profile;
+  packets = packetsFor(profile.provider);
   const units = new Map(packets.flatMap((packet) => packet.sourceUnits).map((unit) => [unit.id, unit]));
   const targets = new Set(targetFields.map((item) => item.field));
   const targetByField = new Map(targetFields.map((item) => [item.field, item]));

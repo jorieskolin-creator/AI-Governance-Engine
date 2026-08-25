@@ -38,7 +38,7 @@ async function waitUntilHealthy(baseUrl, child) {
   throw new Error("Test server did not become healthy");
 }
 
-test("HTTP workflow exposes readiness and fails closed before unapproved provider execution", async () => {
+test("HTTP workflow exposes readiness and fails closed before unconfigured provider execution", async () => {
   const port = await availablePort();
   const baseUrl = new URL(`http://127.0.0.1:${port}`);
   const child = spawn(process.execPath, ["src/server.js"], {
@@ -62,22 +62,21 @@ test("HTTP workflow exposes readiness and fails closed before unapproved provide
     assert.equal(health.body.runStore, "MEMORY");
     assert.deepEqual(health.body.cognitiveReadiness, {
       status: "CONFIGURATION_REQUIRED",
-      issueCodes: ["MODEL_CREDENTIALS_MISSING", "MODEL_PROFILES_UNAPPROVED"],
+      issueCodes: ["MODEL_CREDENTIALS_MISSING"],
       credentials: { requiredProviderCount: 3, configuredProviderCount: 0 },
-      qualification: { requiredProfileCount: 6, approvedProfileCount: 0 },
+      roleSlots: { requiredSlotCount: 6, configuredSlotCount: 6 },
       topologyStatus: "NOT_EVALUATED"
     });
 
     const models = await request(baseUrl, "/api/v2/models");
     assert.equal(models.status, 200);
-    assert.equal(models.body.schemaVersion, "model-policy-view-1.0.0");
+    assert.equal(models.body.schemaVersion, "model-policy-view-1.1.0");
     assert.equal(models.body.mode, "ALWAYS_ON");
     assert.deepEqual(models.body.readiness, health.body.cognitiveReadiness);
     assert.equal(models.body.roleSlots.length, 6);
-    assert.equal(new Set(models.body.roleSlots.map((slot) => slot.approvalRef)).size, 6);
     assert.ok(models.body.roleSlots.every((slot) => Array.isArray(slot.stages) && slot.stages.length > 0));
-    assert.equal(models.body.profiles.length, 18);
-    assert.ok(models.body.profiles.every((profile) => !profile.credentialAvailable && profile.qualificationStatus === "APPROVAL_REQUIRED"));
+    assert.equal(models.body.profiles.length, 16);
+    assert.ok(models.body.profiles.every((profile) => !profile.credentialAvailable));
 
     const packageSchema = await request(baseUrl, "/api/v2/contracts/readiness-package/2.6.0");
     assert.equal(packageSchema.status, 200);

@@ -11,7 +11,7 @@ import { ModelBudget, StructuredModelClient } from "../src/cognitive/provider-cl
 import { modelPolicy as createModelPolicy, requiredGovernanceProviders } from "../src/cognitive/model-policy.js";
 import { cancellationError } from "../src/cognitive/failure-policy.js";
 
-const modelPolicy = (env) => createModelPolicy(env, { qualificationRequired: false });
+const modelPolicy = (env) => createModelPolicy(env);
 
 const sourceUnit = {
   id: "unit-1", sourceId: "src-1", path: "src/control.js", locator: "text;lines:1-1", sha256: "source-hash",
@@ -137,12 +137,12 @@ test("publication quality remains independent from readiness", () => {
   assert.equal(gate.readinessIndependent, true);
 });
 
-test("provider responses from an unapproved model are rejected and traced", async () => {
+test("provider responses from an unexpected model are rejected and traced", async () => {
   const policy = modelPolicy({ OPENAI_API_KEY: "test" });
   const profile = policy.choose("VERIFICATION");
   const schema = { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } };
   const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2, maxTokens: 100000 }), transport: async () => ({ value: { ok: true }, responseModel: "different-unapproved-model", usage: { totalTokens: 1 } }) });
-  await assert.rejects(() => client.generate({ profile, prompt: "test", schemaName: "model_identity", schema, packetHash: "hash", promptVersion: "1" }), /unapproved model/i);
+  await assert.rejects(() => client.generate({ profile, prompt: "test", schemaName: "model_identity", schema, packetHash: "hash", promptVersion: "1" }), /unexpected model/i);
   assert.equal(client.traces[0].status, "FAILED");
   assert.match(client.traces[0].requestId, /^model-request-/);
 });
@@ -150,6 +150,7 @@ test("provider responses from an unapproved model are rejected and traced", asyn
 test("provider cancellation is propagated and classified without retry", async () => {
   const policy = modelPolicy({ OPENAI_API_KEY: "test" });
   const profile = policy.choose("VERIFICATION");
+  const fallbackProfile = { ...profile, id: `${profile.id}-fallback`, routePriority: "FALLBACK" };
   const schema = { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } };
   const controller = new AbortController();
   let calls = 0;
@@ -163,7 +164,7 @@ test("provider cancellation is propagated and classified without retry", async (
       return { value: { ok: true }, responseModel: profile.model, usage: { totalTokens: 1 } };
     }
   });
-  await assert.rejects(client.generate({ profile, prompt: "test", schemaName: "cancel", schema, packetHash: "hash", promptVersion: "1" }), /cancel test/i);
+  await assert.rejects(client.generate({ profile, fallbackProfiles: [fallbackProfile], prompt: "test", schemaName: "cancel", schema, packetHash: "hash", promptVersion: "1" }), /cancel test/i);
   assert.equal(calls, 1);
   assert.equal(client.traces[0].failureCode, "RUN_CANCELLED");
   assert.equal(client.traces[0].retryDisposition, "DO_NOT_RETRY");
@@ -172,10 +173,13 @@ test("provider cancellation is propagated and classified without retry", async (
 test("per-stage model-call budgets fail closed", async () => {
   const policy = modelPolicy({ OPENAI_API_KEY: "test" });
   const profile = policy.choose("VERIFICATION");
+  const fallbackProfile = { ...profile, id: `${profile.id}-fallback`, routePriority: "FALLBACK" };
   const schema = { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } };
   const budget = new ModelBudget({ maxCalls: 5, maxTokens: 100000, maxCallsByStage: { VERIFICATION: 1 } });
-  const client = new StructuredModelClient({ policy, budget, transport: async () => ({ value: { ok: true }, responseModel: profile.model, usage: { totalTokens: 1 } }) });
+  let calls = 0;
+  const client = new StructuredModelClient({ policy, budget, transport: async () => { calls += 1; return { value: { ok: true }, responseModel: profile.model, usage: { totalTokens: 1 } }; } });
   await client.generate({ profile, prompt: "first", schemaName: "budget", schema, packetHash: "1", promptVersion: "1" });
-  await assert.rejects(() => client.generate({ profile, prompt: "second", schemaName: "budget", schema, packetHash: "2", promptVersion: "1" }), /budget exhausted for VERIFICATION/i);
+  await assert.rejects(() => client.generate({ profile, fallbackProfiles: [fallbackProfile], prompt: "second", schemaName: "budget", schema, packetHash: "2", promptVersion: "1" }), /budget exhausted for VERIFICATION/i);
+  assert.equal(calls, 1);
   assert.equal(budget.view().callsByStage.VERIFICATION, 1);
 });

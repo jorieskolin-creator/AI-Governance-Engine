@@ -52,7 +52,7 @@ const operationalLogFields = new Set([
   "requestId", "method", "route", "statusCode", "durationMs", "runId", "runStatus", "runStage",
   "failureCode", "retryDisposition", "selectedCount", "candidateCount", "parsedCount", "failedCount",
   "privacyBlockedCount", "recoveredCount", "conflictingCount", "remainingUnknownCount", "runStore",
-  "provider", "configuredModel"
+  "provider", "configuredModel", "step", "stepStatus"
 ]);
 
 function logOperational(level, event, fields = {}) {
@@ -130,7 +130,7 @@ function startLeaseHeartbeat(run, controller) {
 
 function automaticApproval(run, policy = modelPolicy(), stage = null) {
   const providers = stage
-    ? [...new Set(policy.profiles.filter((profile) => profile.stage === stage && profile.credentialAvailable && profile.qualificationStatus !== "APPROVAL_REQUIRED").map((profile) => profile.provider))]
+    ? [...new Set(policy.profiles.filter((profile) => profile.stage === stage && profile.credentialAvailable).map((profile) => profile.provider))]
     : requiredGovernanceProviders(policy);
   if (!providers.length && stage) policy.choose(stage);
   return validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
@@ -197,9 +197,10 @@ async function startClaimedCognitiveRun(run) {
         knowledge,
         policy,
         signal: controller.signal,
-        onCheckpoint: async () => {
+        onCheckpoint: async ({ step, status }) => {
           if (!await runStore.renewLease(run.id)) throw Object.assign(new Error("Cognitive execution lease could not be renewed"), { failureCode: "ORCHESTRATION_LEASE_LOST", fatal: true });
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          logOperational(status === "FAILED" ? "ERROR" : status === "PARTIAL" ? "WARN" : "INFO", "cognitive_step_checkpoint", { runId: run.id, runStatus: run.status, runStage: run.stage, step, stepStatus: status });
         },
         domainConcurrency: positiveEnvNumber("COGNITIVE_MAX_CONCURRENCY", 3),
         budgets: {

@@ -13,10 +13,10 @@ The governing privacy rule remains unchanged: raw documents, source code, config
 - Baseline before this handoff document: `1a5077f`
 - Provider set: OpenAI, xAI/Grok, and Moonshot/Kimi only; no Gemini work
 - Roles:
-  - `WORKHORSE`: retrieval planning, routing, extraction, and routine domain assessment
+  - `WORKHORSE`: retrieval planning, semantic routing, and routine domain assessment; source extraction is deterministic and local
   - `REASONER`: editable Intake proposals, solution understanding, adjudication, and synthesis
   - `QUALITY_CHECKER`: verification and fact-checking
-- The live Railway configuration has all three provider credentials and six configured role slots. Advisory acquisition test runs may exercise the configured `WORKHORSE` and `REASONER` candidates; decision-ready cognitive analysis still requires qualified exact slots in `MODEL_PROFILE_APPROVALS`.
+- The live Railway configuration has all three provider credentials and six configured role slots. Configured `WORKHORSE`, `REASONER`, and `QUALITY_CHECKER` routes execute directly; no separate model-profile approval variable is used.
 - At the last completed validation, 193 tests passed and the production dependency audit was clean.
 
 Confirm the actual `origin/main`, working tree, tests, and live non-secret readiness before relying on these observations.
@@ -31,7 +31,7 @@ Confirm the actual `origin/main`, working tree, tests, and live non-secret readi
 - PostgreSQL-safe checkpoints, leases, queue claims, recovery, cancellation, and bounded sequencing
 - Seven-step cognitive ledger and provider-neutral response schemas
 - OpenAI, xAI, and Moonshot adapters with model identity validation
-- Three-role routing, cross-provider verification, third-provider adjudication, and fail-closed qualification
+- Three-role routing, cross-provider verification, third-provider adjudication, and fail-closed topology/credential validation
 - Final readiness-package runtime validation and initial published JSON Schema
 - Real HTTP workflow test and non-secret deployment readiness surfaces
 
@@ -55,7 +55,7 @@ Root causes verified in the implementation:
 3. Inert HTML extraction removes all script blocks. Some standalone reports store substantial structured content in embedded scripts, which is therefore not inspected.
 4. Document provider summaries intentionally expose topic categories but no names, values, source text, or quotes. They are privacy-safe but too coarse to support factual GenAI Intake proposals.
 5. The current `discovery-recheck` asks GenAI for field proposals even though its safe packet often contains insufficient field-level evidence.
-6. Full cognitive analysis remains blocked while configured models are unqualified; advisory acquisition assistance is separately available for controlled test runs.
+6. Full cognitive analysis is no longer blocked by a separate model-qualification gate; configured credentials, topology, evidence authorization, schema validation and budgets remain enforced.
 
 This behavior is consistent with current safeguards but is not sufficient for the intended enterprise evidence workflow. It is not caused by the unfinished Knowledge Base; Intake acquisition occurs before Knowledge Base analysis.
 
@@ -89,7 +89,7 @@ The FinOps materials are **non-authoritative design inspiration and regression i
 
 ## Refined implementation plan
 
-Current status: Phase 1 items 1–9 are implemented, including the privacy-safe `semantic-intake-evidence-1.0.0` projection, normalized `WORKHORSE` retrieval suggestions and field-applicable `REASONER` proposals. Automated synthetic acceptance verifies that raw documents, code and private values remain local and that proposals do not mutate Intake. Item 10 still requires controlled end-to-end calibration with representative uploaded material and explicitly authorized live provider calls.
+Current status: Phase 1 items 1–9 are implemented, including the privacy-safe `semantic-intake-evidence-1.0.0` projection, normalized `WORKHORSE` retrieval suggestions and field-applicable `REASONER` proposals. Automated synthetic acceptance verifies that raw documents, code and private values remain local and that proposals do not mutate Intake. Representative end-to-end runs remain necessary to evaluate acquisition quality and model behavior.
 
 ### Phase 1 — Evidence Acquisition and Intake completion
 
@@ -149,16 +149,16 @@ Implement each item as a small, independently validated and reviewable change.
     - Re-run the authorized FinOps scenario.
     - Recover useful candidates where evidence supports them, expose conflicts, and preserve genuine unknowns.
     - Prove that archives, HTML source, code, OCR text, spreadsheet values, and pixels do not reach providers.
-    - Verify timeout uncertainty does not cause automatic replay or provider switching.
+    - Verify eligible failures use only authorized fallbacks and that cancellation, lease loss and Engine budget exhaustion do not switch providers.
 
 ### Phase 2 — Resume remaining prior-plan work
 
 Begin only after Phase 1 acceptance passes:
 
 1. Complete nested readiness-package schemas and published integration contracts.
-2. Integrate and validate the finalized Knowledge Base taxonomy and release artifacts.
-3. Qualify the six exact model-role slots through the authorized live benchmark and human-labelled review process.
-4. Run controlled end-to-end cognitive golden cases and calibrate precision, recall, cost, and failure behavior.
+2. Integrate and validate the evolving Knowledge Base taxonomy and release artifacts without treating incomplete content as complete.
+3. Exercise the six configured model-role slots in controlled Engine runs and retain provider/model provenance.
+4. Run controlled end-to-end cognitive golden cases and evaluate precision, recall, cost, and failure behavior.
 5. Add monitoring, aggregate budgets, retention controls, operational audit export, and deployment hardening.
 6. Keep enterprise authentication and tenant authorization deferred to the integrating platform unless the user changes that decision.
 
@@ -174,7 +174,7 @@ Begin only after Phase 1 acceptance passes:
 - Code supports at most implementation evidence unless bounded execution results establish more.
 - OCR output is raw evidence until locally screened and transformed.
 - Provider differences remain explicit and every output is validated locally.
-- Timeouts or uncertain started calls are never automatically replayed through fallback providers.
+- Eligible provider failures may use only configured, evidence-authorized fallbacks; cancellation, lease loss and Engine budget exhaustion never do.
 - No live provider calls without explicit authorization.
 
 ## Instructions for the new thread

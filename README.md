@@ -6,7 +6,7 @@ Evidence-gated readiness assessment for AI solutions. The engine accepts an inte
 
 > **Active pre-production development.** The deterministic governance core, source-intake path, cognitive contract skeleton and reporting views are implemented and covered by automated tests. The Knowledge Base taxonomy and content are still being authored. Production identity, persistence, horizontal scaling, operational monitoring and deployment hardening are not complete.
 
-The repository is suitable for controlled development and calibration. It is not a production certification service, legal-advice system or formal approval authority.
+The repository is suitable for controlled pre-production assessment runs and iterative evaluation. It is not a production certification service, legal-advice system or formal approval authority.
 
 ## Implemented foundation
 
@@ -46,7 +46,7 @@ raw source (local only)
 
 Only decision-eligible adjudicated claims become locked findings and deterministic evidence. Unsupported, conflicting and unverifiable claims remain in the audit ledger. Model output cannot directly change applicability, assurance, anti-pattern state, hard gates, readiness, lifecycle boundaries or formal authority.
 
-The fixed cognitive stages map to three operational roles: `WORKHORSE` handles retrieval planning, routing, extraction and routine domain assessment; `REASONER` handles editable Intake proposals, solution understanding, adjudication and synthesis; `QUALITY_CHECKER` handles verification and fact-checking. Each role has a deterministic primary and fallback provider/model assignment. Advisory acquisition assistance may exercise a configured credentialed route so its exact profile can be evaluated during test runs; it remains schema-constrained and has no approval authority. Decision-ready cognitive execution additionally requires qualified exact profiles. Cross-provider verification and adjudication exclusions take precedence over role preference, and analysis route admission verifies that the configured topology can supply an independent verifier and third-provider adjudicator. Each provider uses a separate transport adapter behind the same application-level schemas, and every response is validated locally. Missing primary or independent qualified fallback availability produces `COGNITIVE_ASSESSMENT_INCOMPLETE`, never a silent positive fallback.
+The fixed cognitive stages map to three operational roles: `WORKHORSE` handles retrieval planning, semantic routing and routine domain assessment; deterministic extraction remains local. `REASONER` handles editable Intake proposals, solution understanding, adjudication and synthesis. `QUALITY_CHECKER` handles verification and fact-checking. Each role has a deterministic primary and fallback provider/model assignment. Configured, credentialed routes execute directly; there is no separate qualification or test mode. An eligible fallback is attempted after provider failure, timeout, quota/rate-limit failure, refusal, unexpected model identity, or exhausted structured-output repair. Cancellation, lease loss and Engine budget exhaustion never trigger fallback. Cross-provider verification and adjudication exclusions take precedence over role preference, and route admission verifies an independent verifier and third-provider adjudicator. Every response is normalized and schema-validated locally, and the actual provider/model used is retained in provenance.
 
 The engine returns readiness recommendations such as `READY_WITH_CONDITIONS`, `REMEDIATE_BEFORE_NEXT_STAGE`, `HUMAN_REVIEW_REQUIRED` and `BLOCKED_IN_CURRENT_FORM`. Legal, Privacy, Security, Governance, AI Forum and AI Board decisions remain human acts. `FORMALLY_APPROVED` is reserved for a future trusted decision connector that verifies identity, authority, signature, scope and validity.
 
@@ -132,7 +132,7 @@ See [docs/knowledge-base.md](docs/knowledge-base.md) for the runtime manifest an
 
 These limitations are development boundaries, not evidence that the corresponding production controls exist. See [SECURITY.md](SECURITY.md) and [docs/deployment.md](docs/deployment.md) for additional security and deployment context.
 
-## Model qualification
+## Model evaluation
 
 Live benchmarking is opt-in because it sends approved packets to configured providers and incurs cost:
 
@@ -140,9 +140,9 @@ Live benchmarking is opt-in because it sends approved packets to configured prov
 BENCHMARK_CONFIRM_LIVE_CALLS=true pnpm run benchmark:models
 ```
 
-Use `BENCHMARK_PROFILE_IDS` to constrain cost. The harness checks structured output and zero-tolerance integrity conditions, but deliberately reports `REQUIRES_HUMAN_LABEL_REVIEW`. Human-labelled precision and high/critical recall must meet the qualification floors before the fixed route is treated as qualified for decision-ready assessments.
+Use `BENCHMARK_PROFILE_IDS` to constrain cost. The optional harness checks structured output and zero-tolerance integrity conditions and reports `HUMAN_LABEL_REVIEW_RECOMMENDED`; it is a diagnostic tool, not a runtime gate. Normal controlled Engine runs provide the primary evidence for iterative model, prompt, precision, recall, cost and failure-behavior evaluation.
 
-Decision-ready cognitive analysis requires each role slot's exact `role-slot@PROVIDER:model` reference in `MODEL_PROFILE_APPROVALS`. This allowlist is deliberately separate from credentials: changing a configured provider or model invalidates the approval and blocks that model from the analysis pipeline until the new candidate is qualified. Advisory Intake retrieval planning and editable Intake proposals intentionally use configured credentialed `WORKHORSE` and `REASONER` candidates without this approval so test runs can produce qualification evidence. Those acquisition actions remain explicitly requested, privacy-safe, schema-validated and user-controlled, and cannot approve Intake or start analysis.
+Runtime execution requires all configured role-slot credentials and a valid independent three-provider topology. Intake retrieval and proposal actions remain explicitly requested, privacy-safe, schema-validated and user-controlled; they cannot approve Intake or start analysis. Changing a configured model takes effect on the next route selection and is visible through `/api/v2/models` and execution provenance.
 
 ## Further documentation
 

@@ -163,12 +163,13 @@ export async function planIntakeRetrieval(run, input, options = {}) {
   run.trace.push({ stage: "INTAKE_RETRIEVAL_PLANNING", status: "RUNNING", at: new Date().toISOString(), contextHash });
   let failurePhase = "ROUTE_SELECTION";
   try {
-    const profile = policy.choose("RETRIEVAL_PLANNING", { allowedProviders: input.providers });
-    invariant(profile.operationalRole === "WORKHORSE", "Retrieval planning requires the WORKHORSE role");
-    const client = options.client ?? new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 2, maxTokens: 30_000, maxMs: 120_000 }) });
+    const profiles = policy.candidates("RETRIEVAL_PLANNING", { allowedProviders: input.providers });
+    invariant(profiles.every((profile) => profile.operationalRole === "WORKHORSE"), "Retrieval planning requires the WORKHORSE role");
+    const client = options.client ?? new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 4, maxTokens: 60_000, maxMs: 240_000 }) });
     failurePhase = "PROVIDER_EXECUTION";
     const generated = await client.generate({
-      profile,
+      profile: profiles[0],
+      fallbackProfiles: profiles.slice(1),
       prompt: intakeRetrievalPlanningPrompt(context),
       schemaName: "intake_retrieval_planner",
       schema: INTAKE_RETRIEVAL_PLANNER_SCHEMA,
@@ -177,6 +178,7 @@ export async function planIntakeRetrieval(run, input, options = {}) {
     });
     failurePhase = "OUTPUT_NORMALIZATION";
     const normalized = normalizeSuggestions(generated.value.suggestions, context);
+    const profile = generated.profile;
     const payload = {
       schemaVersion: INTAKE_RETRIEVAL_PLAN_VERSION,
       gapAnalysisVersion: run.intakeGapAnalysis.schemaVersion,

@@ -18,7 +18,7 @@ const credentials = {
   XAI_API_KEY: "xai-test-secret",
   MOONSHOT_API_KEY: "moonshot-test-secret"
 };
-const candidatePolicy = (env) => modelPolicy(env, { qualificationRequired: false });
+const candidatePolicy = (env) => modelPolicy(env);
 
 test("the canonical provider catalog contains only OpenAI, xAI and Moonshot", () => {
   assert.deepEqual([...COGNITIVE_PROVIDERS].sort(), ["MOONSHOT", "OPENAI", "XAI"]);
@@ -52,65 +52,59 @@ test("role routing is deterministic and model identities are server-configurable
     ["QUALITY_CHECKER", "MOONSHOT", "moonshot-quality"]
   ]);
   assert.equal(policy.choose("VERIFICATION", { excludeProviders: ["MOONSHOT"] }).model, "openai-quality");
+  assert.ok(policy.candidates("VERIFICATION", { excludeProviders: ["MOONSHOT"] }).every((profile) => profile.provider !== "MOONSHOT"));
   assert.throws(() => modelPolicy({ ...credentials, WORKHORSE_PROVIDER: "OPENAI" }), /configured together/i);
   const slots = publicModelRoleSlots(policy);
   assert.equal(slots.length, 6);
-  assert.deepEqual(slots.find((slot) => slot.operationalRole === "WORKHORSE" && slot.routePriority === "PRIMARY").stages, ["DOMAIN_ASSESSMENT", "EXTRACTION", "RETRIEVAL_PLANNING", "ROUTING"]);
+  assert.deepEqual(slots.find((slot) => slot.operationalRole === "WORKHORSE" && slot.routePriority === "PRIMARY").stages, ["DOMAIN_ASSESSMENT", "RETRIEVAL_PLANNING", "ROUTING"]);
   assert.deepEqual(slots.find((slot) => slot.operationalRole === "REASONER" && slot.routePriority === "PRIMARY").stages, ["ADJUDICATION", "SOLUTION_UNDERSTANDING", "SYNTHESIS"]);
   assert.deepEqual(slots.find((slot) => slot.operationalRole === "QUALITY_CHECKER" && slot.routePriority === "PRIMARY").stages, ["FACT_CHECK", "VERIFICATION"]);
 });
 
-test("advisory acquisition assistance uses configured role candidates while governance execution remains qualification-gated", () => {
+test("acquisition and governance execution use the same configured role contract", () => {
   const assistance = acquisitionAssistancePolicy(credentials);
   assert.equal(assistance.choose("RETRIEVAL_PLANNING").operationalRole, "WORKHORSE");
   assert.equal(assistance.choose("SOLUTION_UNDERSTANDING").operationalRole, "REASONER");
-  assert.equal(assistance.choose("SOLUTION_UNDERSTANDING").qualificationStatus, "QUALIFICATION_CANDIDATE");
-
   const governance = modelPolicy(credentials);
-  assert.throws(() => governance.choose("SOLUTION_UNDERSTANDING"), /approved model profile/i);
-  assert.throws(() => requiredGovernanceProviders(governance), /approved model profiles/i);
+  assert.equal(governance.choose("SOLUTION_UNDERSTANDING").id, assistance.choose("SOLUTION_UNDERSTANDING").id);
+  assert.deepEqual(requiredGovernanceProviders(governance).sort(), ["MOONSHOT", "OPENAI", "XAI"]);
 });
 
-test("runtime routing always requires approval of the exact profile and model identity", () => {
-  const candidates = candidatePolicy(credentials);
-  const approvals = [...new Set(candidates.profiles.map((profile) => profile.approvalRef))].join(",");
-
-  const unapproved = modelPolicy(credentials);
-  assert.throws(() => unapproved.choose("VERIFICATION"), /approved model profile/i);
-  assert.throws(() => requiredGovernanceProviders(unapproved), /approved model profiles/i);
-  assert.deepEqual(modelPolicyReadiness(unapproved), {
-    status: "CONFIGURATION_REQUIRED",
-    issueCodes: ["MODEL_PROFILES_UNAPPROVED"],
+test("runtime readiness depends on credentials and an independent three-provider topology", () => {
+  const configured = modelPolicy(credentials);
+  assert.deepEqual(modelPolicyReadiness(configured), {
+    status: "READY",
+    issueCodes: [],
     credentials: { requiredProviderCount: 3, configuredProviderCount: 3 },
-    qualification: { requiredProfileCount: 6, approvedProfileCount: 0 },
+    roleSlots: { requiredSlotCount: 6, configuredSlotCount: 6 },
+    topologyStatus: "VALID"
+  });
+  assert.equal(modelPolicy({ ...credentials, NODE_ENV: "development" }).choose("VERIFICATION").id, configured.choose("VERIFICATION").id);
+  assert.deepEqual(modelPolicyReadiness(modelPolicy({})), {
+    status: "CONFIGURATION_REQUIRED",
+    issueCodes: ["MODEL_CREDENTIALS_MISSING"],
+    credentials: { requiredProviderCount: 3, configuredProviderCount: 0 },
+    roleSlots: { requiredSlotCount: 6, configuredSlotCount: 6 },
     topologyStatus: "NOT_EVALUATED"
   });
-  const developmentLabelCannotBypass = modelPolicy({ ...credentials, NODE_ENV: "development" });
-  assert.equal(developmentLabelCannotBypass.profiles[0].qualificationStatus, "APPROVAL_REQUIRED");
-  assert.throws(() => developmentLabelCannotBypass.choose("VERIFICATION"), /approved model profile/i);
+});
 
-  const approved = modelPolicy({ ...credentials, MODEL_PROFILE_APPROVALS: approvals });
-  assert.equal(approved.choose("VERIFICATION").qualificationStatus, "APPROVED");
-  assert.deepEqual(requiredGovernanceProviders(approved).sort(), ["MOONSHOT", "OPENAI", "XAI"]);
-  assert.equal(modelPolicyReadiness(approved).status, "READY");
-  assert.equal(modelPolicyReadiness(approved).topologyStatus, "VALID");
-
-  const changedModel = modelPolicy({
-    ...credentials,
-    MODEL_PROFILE_APPROVALS: approvals,
-    QUALITY_CHECKER_PROVIDER: "OPENAI",
-    QUALITY_CHECKER_MODEL: "unreviewed-model"
+test("provider execution falls back in route order and reports the actual model used", async () => {
+  const policy = candidatePolicy(credentials);
+  const profiles = policy.candidates("VERIFICATION");
+  const calls = [];
+  const client = new StructuredModelClient({
+    policy,
+    transport: async ({ profile, routeAttempt }) => {
+      calls.push([profile.provider, routeAttempt]);
+      if (routeAttempt === 0) throw Object.assign(new Error("primary timed out"), { name: "TimeoutError" });
+      return { value: { ok: true }, responseModel: profile.model, usage: { totalTokens: 1 } };
+    }
   });
-  assert.equal(changedModel.choose("VERIFICATION").routePriority, "FALLBACK");
-  const noApprovedQualityRoute = modelPolicy({
-    ...credentials,
-    MODEL_PROFILE_APPROVALS: approvals,
-    QUALITY_CHECKER_PROVIDER: "OPENAI",
-    QUALITY_CHECKER_MODEL: "unreviewed-model",
-    QUALITY_CHECKER_FALLBACK_PROVIDER: "XAI",
-    QUALITY_CHECKER_FALLBACK_MODEL: "unreviewed-fallback"
-  });
-  assert.throws(() => noApprovedQualityRoute.choose("VERIFICATION"), /approved model profile/i);
+  const result = await client.generate({ profile: profiles[0], fallbackProfiles: profiles.slice(1), prompt: "safe packet", schemaName: "result", schema, packetHash: "hash", promptVersion: "1" });
+  assert.equal(result.profile.id, profiles[1].id);
+  assert.deepEqual(calls, [[profiles[0].provider, 0], [profiles[1].provider, 1]]);
+  assert.deepEqual(client.traces.map((trace) => [trace.status, trace.routeAttempt, trace.routePriority]), [["FAILED", 0, "PRIMARY"], ["COMPLETED", 1, "FALLBACK"]]);
 });
 
 test("role topology requires independent verification and a third-provider adjudicator", () => {
@@ -118,6 +112,10 @@ test("role topology requires independent verification and a third-provider adjud
   assert.deepEqual(valid.claimFlow, { workhorse: "MOONSHOT", verifier: "OPENAI", adjudicator: "XAI" });
   assert.notEqual(valid.solutionFlow.reasoner, valid.solutionFlow.verifier);
   assert.notEqual(valid.publicationFlow.reasoner, valid.publicationFlow.qualityChecker);
+  const policy = candidatePolicy(credentials);
+  const assessor = policy.choose("DOMAIN_ASSESSMENT");
+  const verifier = policy.choose("VERIFICATION", { excludeProviders: [assessor.provider] });
+  assert.ok(policy.candidates("ADJUDICATION", { excludeProviders: [assessor.provider, verifier.provider] }).every((profile) => ![assessor.provider, verifier.provider].includes(profile.provider)));
 
   const twoProviderPolicy = candidatePolicy({
     ...credentials,

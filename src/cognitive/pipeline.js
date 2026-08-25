@@ -80,10 +80,13 @@ function transmittedPackets(run, provider, candidatePackets = run.packets) {
   return candidatePackets.filter((packet) => approved.has(packet.id));
 }
 
-function chooseForPackets(policy, role, run, packets, options = {}) {
+function profilesForPackets(policy, role, run, packets, options = {}) {
   const requireAll = options.requireAll !== false;
   const allowed = requireAll ? [...approvedProviderSet(run, packets)] : providersApprovedForAny(run, packets);
-  return policy.choose(role, { ...options, allowedProviders: allowed });
+  const candidates = policy.candidates(role, { ...options, allowedProviders: allowed });
+  if (requireAll || !packets.length) return candidates;
+  const primaryPackets = transmittedPackets(run, candidates[0].provider, packets);
+  return candidates.filter((profile, index) => index === 0 || transmittedPackets(run, profile.provider, primaryPackets).length === primaryPackets.length);
 }
 
 function recordTransmission(run, stageName, profile, packets, containsRawEvidence = true) {
@@ -293,10 +296,10 @@ function applyFactCheck(synthesis, checked, allowCorrections) {
 }
 
 async function runFactCheck({ client, policy, run, synthesis, lockedFindings, provisional, excludeProviders = [] }) {
-  const profile = chooseForPackets(policy, "FACT_CHECK", run, [], { excludeProviders, requireAll: false });
-  recordTransmission(run, "FINAL_FACT_CHECK", profile, [], false);
-  const checked = await client.generate({ profile, prompt: factCheckPrompt(synthesis, lockedFindings, provisional), schemaName: "narrative_fact_check", schema: FACT_CHECK_SCHEMA, packetHash: sha256({ synthesis, lockedFindings: lockedFindings.map((item) => item.id) }), promptVersion: PROMPT_VERSIONS.factCheck });
-  return { profile, value: checked.value };
+  const profiles = profilesForPackets(policy, "FACT_CHECK", run, [], { excludeProviders, requireAll: false });
+  const checked = await client.generate({ profile: profiles[0], fallbackProfiles: profiles.slice(1), prompt: factCheckPrompt(synthesis, lockedFindings, provisional), schemaName: "narrative_fact_check", schema: FACT_CHECK_SCHEMA, packetHash: sha256({ synthesis, lockedFindings: lockedFindings.map((item) => item.id) }), promptVersion: PROMPT_VERSIONS.factCheck });
+  recordTransmission(run, "FINAL_FACT_CHECK", checked.profile, [], false);
+  return { profile: checked.profile, value: checked.value };
 }
 
 export async function executeCognitiveRun(run, options = {}) {
@@ -318,18 +321,24 @@ export async function executeCognitiveRun(run, options = {}) {
   let solutionModel;
   let solutionStepStatus;
   try {
-    const solutionProfile = chooseForPackets(policy, "SOLUTION_UNDERSTANDING", run, run.packets, { requireAll: false });
-    const solutionPackets = transmittedPackets(run, solutionProfile.provider); recordTransmission(run, "SOLUTION_UNDERSTANDING", solutionProfile, solutionPackets);
-    const generated = await client.generate({ profile: solutionProfile, prompt: solutionPrompt(run.dossier, solutionPackets), schemaName: "solution_model", schema: SOLUTION_MODEL_SCHEMA, packetHash: packetHash(solutionPackets), promptVersion: PROMPT_VERSIONS.solution });
+    const solutionProfiles = profilesForPackets(policy, "SOLUTION_UNDERSTANDING", run, run.packets, { requireAll: false });
+    let solutionProfile = solutionProfiles[0];
+    const solutionPackets = transmittedPackets(run, solutionProfile.provider);
+    const generated = await client.generate({ profile: solutionProfile, fallbackProfiles: solutionProfiles.slice(1), prompt: solutionPrompt(run.dossier, solutionPackets), schemaName: "solution_model", schema: SOLUTION_MODEL_SCHEMA, packetHash: packetHash(solutionPackets), promptVersion: PROMPT_VERSIONS.solution });
+    solutionProfile = generated.profile;
+    recordTransmission(run, "SOLUTION_UNDERSTANDING", solutionProfile, solutionPackets);
     const candidate = normalizeSolutionCandidates(run.dossier, generated.value, sourceUnits);
     const observed = candidate.candidateFacts.filter((item) => item.status === "CANDIDATE");
     if (observed.length) {
       const citedIds = new Set(observed.flatMap((item) => item.sourceUnitIds)); const factPackets = run.packets.filter((packet) => packet.sourceUnits.some((unit) => citedIds.has(unit.id)));
       try {
-        const verifier = chooseForPackets(policy, "VERIFICATION", run, factPackets, { excludeProviders: [solutionProfile.provider] });
-        const approvedPackets = transmittedPackets(run, verifier.provider, factPackets); recordTransmission(run, "SOLUTION_FACT_VERIFICATION", verifier, approvedPackets);
+        const verifierProfiles = profilesForPackets(policy, "VERIFICATION", run, factPackets, { excludeProviders: [solutionProfile.provider] });
+        let verifier = verifierProfiles[0];
+        const approvedPackets = transmittedPackets(run, verifier.provider, factPackets);
         const factUnits = [...new Map(observed.flatMap((fact) => fact.sourceUnitIds.map((id) => sourceUnits.find((unit) => unit.id === id))).filter(Boolean).map((unit) => [unit.id, unit])).values()];
-        const checked = await client.generate({ profile: verifier, prompt: solutionFactVerificationPrompt(candidate, factUnits), schemaName: "solution_fact_verification", schema: SOLUTION_FACT_VERIFICATION_SCHEMA, packetHash: packetHash(approvedPackets), promptVersion: PROMPT_VERSIONS.solutionVerification });
+        const checked = await client.generate({ profile: verifier, fallbackProfiles: verifierProfiles.slice(1), prompt: solutionFactVerificationPrompt(candidate, factUnits), schemaName: "solution_fact_verification", schema: SOLUTION_FACT_VERIFICATION_SCHEMA, packetHash: packetHash(approvedPackets), promptVersion: PROMPT_VERSIONS.solutionVerification });
+        verifier = checked.profile;
+        recordTransmission(run, "SOLUTION_FACT_VERIFICATION", verifier, approvedPackets);
         solutionModel = applySolutionFactVerification(candidate, checked.value, verifier);
         if (solutionModel.integrityIssues.length) failedStages.push("SOLUTION_FACT_VERIFICATION_INCOMPLETE");
       } catch (error) {
@@ -353,9 +362,10 @@ export async function executeCognitiveRun(run, options = {}) {
   if (routing.ambiguous.length) {
     try {
       const ambiguousPackets = run.packets.map((packet) => ({ ...packet, sourceUnits: packet.sourceUnits.filter((unit) => routing.ambiguous.includes(unit)) })).filter((packet) => packet.sourceUnits.length);
-      const profile = chooseForPackets(policy, "ROUTING", run, ambiguousPackets, { requireAll: false }); const approvedPackets = transmittedPackets(run, profile.provider, ambiguousPackets);
-      recordTransmission(run, "PACKET_ROUTING", profile, approvedPackets);
-      const generated = await client.generate({ profile, prompt: routingPrompt(approvedPackets.flatMap((item) => item.sourceUnits)), schemaName: "semantic_packet_routing", schema: ROUTING_SCHEMA, packetHash: packetHash(approvedPackets), promptVersion: PROMPT_VERSIONS.routing });
+      const profiles = profilesForPackets(policy, "ROUTING", run, ambiguousPackets, { requireAll: false });
+      const approvedPackets = transmittedPackets(run, profiles[0].provider, ambiguousPackets);
+      const generated = await client.generate({ profile: profiles[0], fallbackProfiles: profiles.slice(1), prompt: routingPrompt(approvedPackets.flatMap((item) => item.sourceUnits)), schemaName: "semantic_packet_routing", schema: ROUTING_SCHEMA, packetHash: packetHash(approvedPackets), promptVersion: PROMPT_VERSIONS.routing });
+      recordTransmission(run, "PACKET_ROUTING", generated.profile, approvedPackets);
       const ambiguousIds = new Set(routing.ambiguous.map((unit) => unit.id));
       for (const route of generated.value.routes) if (ambiguousIds.has(route.sourceUnitId) && route.domains.length) routing.routes.set(route.sourceUnitId, unique(route.domains));
     } catch (error) { rethrowFatal(error); run.trace.push({ stage: "PACKET_ROUTING", status: "SEMANTIC_FALLBACK", at: new Date().toISOString(), error: error.message }); }
@@ -375,22 +385,23 @@ export async function executeCognitiveRun(run, options = {}) {
       stage(run, `DOMAIN_${domain}`, "COMPLETED", { claimCount: 0, coverage: "NO_RELEVANT_PACKET", assessedObjectCount: assessmentResults.length });
       return { domain, status: "COMPLETED", claims: [], assessmentResults };
     }
-    const profile = chooseForPackets(policy, "DOMAIN_ASSESSMENT", run, rawPackets, { requireAll: false });
-    const packets = packetsForDomain(run, profile.provider, routing.routes, domain);
+    const profiles = profilesForPackets(policy, "DOMAIN_ASSESSMENT", run, rawPackets, { requireAll: false });
+    const packets = packetsForDomain(run, profiles[0].provider, routing.routes, domain);
     if (!packets.length) throw new Error(`No approved evidence packet is available to the selected ${domain} assessor`);
-    const created = [];
+    const created = []; let lastProfile = profiles[0];
     for (const batch of batches(workItems)) {
       const scopedKnowledge = knowledgeForWorkItems(knowledge, domain, batch);
-      recordTransmission(run, `DOMAIN_${domain}`, profile, packets);
       const output = await client.generate({
-        profile,
+        profile: profiles[0], fallbackProfiles: profiles.slice(1),
         prompt: domainPrompt({ domain, dossier: run.dossier, solutionModel, packets, ...scopedKnowledge, assessmentWorkItems: batch }),
         schemaName: `domain_${domain.toLowerCase()}_claims`, schema: DOMAIN_CLAIMS_SCHEMA,
         packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.domain
       });
+      lastProfile = output.profile;
+      recordTransmission(run, `DOMAIN_${domain}`, output.profile, packets);
       for (const candidate of output.value.claims) {
         try {
-          const claim = createGovernanceClaim(candidate, { provider: profile.provider, model: profile.model, profileId: profile.id, domain });
+          const claim = createGovernanceClaim(candidate, { provider: output.profile.provider, model: output.profile.model, profileId: output.profile.id, domain });
           const mapping = validateClaimMappings(claim, knowledge); if (!mapping.valid) throw new Error(mapping.issues.join("; "));
           created.push(claim);
         } catch (error) { run.trace.push({ stage: `DOMAIN_${domain}`, status: "CLAIM_REJECTED", at: new Date().toISOString(), error: error.message }); }
@@ -398,7 +409,7 @@ export async function executeCognitiveRun(run, options = {}) {
     }
     const assessmentResults = workItems.map((item) => ({ objectId: item.objectId, status: created.some((claim) => claimMapsWorkItem(claim, item)) ? "ASSESSED" : "NO_EVIDENCE_FOUND", scope: "BOUNDED_EVIDENCE_BATCH" }));
     stage(run, `DOMAIN_${domain}`, "COMPLETED", { claimCount: created.length, assessedObjectCount: assessmentResults.length });
-    return { domain, status: "COMPLETED", profile, claims: created, assessmentResults };
+    return { domain, status: "COMPLETED", profile: lastProfile, claims: created, assessmentResults };
   });
   for (const result of domainResults.filter((item) => item.status === "FAILED")) { failedStages.push(`DOMAIN_ASSESSMENT:${result.domain}`); stage(run, `DOMAIN_${result.domain}`, "FAILED", { error: result.error }); }
   const consolidated = consolidateClaims(domainResults.flatMap((item) => item.claims)); claims = consolidated.claims;
@@ -418,33 +429,39 @@ export async function executeCognitiveRun(run, options = {}) {
     if (localInvalid) history.push(verificationRecord(claim, null, localInvalid, "LOCAL_EVIDENCE_INTEGRITY"));
     else {
       const claimPackets = run.packets.filter((packet) => packet.sourceUnits.some((unit) => claim.sourceUnitIds.includes(unit.id)));
-      let verifierProfile;
-      try { verifierProfile = chooseForPackets(policy, "VERIFICATION", run, claimPackets, { excludeProviders: [claim.extractor.provider] }); }
+      let verifierProfiles;
+      try { verifierProfiles = profilesForPackets(policy, "VERIFICATION", run, claimPackets, { excludeProviders: [claim.extractor.provider] }); }
       catch (error) { history.push(verificationRecord(claim, null, { status: "NOT_VERIFIABLE", rationale: error.message, checkedSourceUnitIds: [], conflictingSourceUnitIds: [] }, "PRIMARY")); failedStages.push(`CROSS_PROVIDER_VERIFICATION:${claim.id}`); }
-      if (verifierProfile) {
-        const approvedPackets = transmittedPackets(run, verifierProfile.provider, claimPackets); recordTransmission(run, "EVIDENCE_VERIFICATION", verifierProfile, approvedPackets);
-        const checked = await client.generate({ profile: verifierProfile, prompt: verificationPrompt(claim, citedUnits()), schemaName: "claim_verification", schema: VERIFICATION_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.verification });
+      if (verifierProfiles) {
+        const checked = await client.generate({ profile: verifierProfiles[0], fallbackProfiles: verifierProfiles.slice(1), prompt: verificationPrompt(claim, citedUnits()), schemaName: "claim_verification", schema: VERIFICATION_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.verification });
+        let verifierProfile = checked.profile;
+        recordTransmission(run, "EVIDENCE_VERIFICATION", verifierProfile, transmittedPackets(run, verifierProfile.provider, claimPackets));
         let verification = verificationRecord(claim, verifierProfile, checked.value, "PRIMARY"); history.push(verification);
         if (shouldRescan(claim, verification, consolidated.contradictionGraph, sourceUnits)) {
-          const extractorProfile = policy.profiles.find((item) => item.id === claim.extractor.profileId);
-          if (extractorProfile) {
-            recordTransmission(run, "TARGETED_RESCAN", extractorProfile, transmittedPackets(run, extractorProfile.provider, claimPackets));
-            const rescanned = await client.generate({ profile: extractorProfile, prompt: rescanPrompt(claim, verification, citedUnits()), schemaName: "targeted_rescan", schema: DOMAIN_CLAIMS_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.rescan });
+          let extractorProfiles;
+          try { extractorProfiles = profilesForPackets(policy, "DOMAIN_ASSESSMENT", run, claimPackets, { preferredProfileIds: [claim.extractor.profileId], excludeProviders: [verifierProfile.provider] }); }
+          catch { extractorProfiles = []; }
+          if (extractorProfiles.length) {
+            const rescanned = await client.generate({ profile: extractorProfiles[0], fallbackProfiles: extractorProfiles.slice(1), prompt: rescanPrompt(claim, verification, citedUnits()), schemaName: "targeted_rescan", schema: DOMAIN_CLAIMS_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.rescan });
+            recordTransmission(run, "TARGETED_RESCAN", rescanned.profile, transmittedPackets(run, rescanned.profile.provider, claimPackets));
             if (rescanned.value.claims[0]) {
               try {
-                const revised = createGovernanceClaim(rescanned.value.claims[0], { ...claim.extractor, rescanOf: originalClaim.id });
+                const revised = createGovernanceClaim(rescanned.value.claims[0], { provider: rescanned.profile.provider, model: rescanned.profile.model, profileId: rescanned.profile.id, domain: claim.extractor.domain, rescanOf: originalClaim.id });
                 if (!validateClaimMappings(revised, knowledge).valid) throw new Error("Rescanned claim mapping failed deterministic validation");
                 claim = revised; claimRecords.set(revised.id, revised);
               } catch { claim = originalClaim; }
             }
-            const rechecked = await client.generate({ profile: verifierProfile, prompt: verificationPrompt(claim, citedUnits()), schemaName: "claim_verification", schema: VERIFICATION_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.verification });
+            const recheckProfiles = profilesForPackets(policy, "VERIFICATION", run, claimPackets, { preferredProfileIds: [verifierProfile.id], excludeProviders: [claim.extractor.provider] });
+            const rechecked = await client.generate({ profile: recheckProfiles[0], fallbackProfiles: recheckProfiles.slice(1), prompt: verificationPrompt(claim, citedUnits()), schemaName: "claim_verification", schema: VERIFICATION_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.verification });
+            verifierProfile = rechecked.profile;
+            recordTransmission(run, "EVIDENCE_VERIFICATION_RECHECK", verifierProfile, transmittedPackets(run, verifierProfile.provider, claimPackets));
             verification = verificationRecord(claim, verifierProfile, rechecked.value, "TARGETED_RESCAN"); history.push(verification);
             if (!["SUPPORTED", "UNSUPPORTED"].includes(verification.status)) {
               try {
-                const adjudicator = chooseForPackets(policy, "ADJUDICATION", run, claimPackets, { excludeProviders: [claim.extractor.provider, verifierProfile.provider] });
-                recordTransmission(run, "ADJUDICATION", adjudicator, transmittedPackets(run, adjudicator.provider, claimPackets));
-                const adjudicated = await client.generate({ profile: adjudicator, prompt: adjudicationPrompt(claim, history, citedUnits()), schemaName: "claim_adjudication", schema: VERIFICATION_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.adjudication });
-                history.push(verificationRecord(claim, adjudicator, adjudicated.value, "ADJUDICATION"));
+                const adjudicatorProfiles = profilesForPackets(policy, "ADJUDICATION", run, claimPackets, { excludeProviders: [claim.extractor.provider, verifierProfile.provider] });
+                const adjudicated = await client.generate({ profile: adjudicatorProfiles[0], fallbackProfiles: adjudicatorProfiles.slice(1), prompt: adjudicationPrompt(claim, history, citedUnits()), schemaName: "claim_adjudication", schema: VERIFICATION_SCHEMA, packetHash: sha256(citedUnits().map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.adjudication });
+                recordTransmission(run, "ADJUDICATION", adjudicated.profile, transmittedPackets(run, adjudicated.profile.provider, claimPackets));
+                history.push(verificationRecord(claim, adjudicated.profile, adjudicated.value, "ADJUDICATION"));
               } catch (error) { rethrowFatal(error); failedStages.push(`ADJUDICATION:${claim.id}`); }
             }
           }
@@ -472,8 +489,10 @@ export async function executeCognitiveRun(run, options = {}) {
   await beginOrchestrationStep(run, "CONTROLLED_SYNTHESIS", onCheckpoint);
   let synthesisStepStatus;
   try {
-    const profile = chooseForPackets(policy, "SYNTHESIS", run, [], { requireAll: false }); synthesisProvider = profile.provider; recordTransmission(run, "CONTROLLED_SYNTHESIS", profile, [], false);
-    const generated = await client.generate({ profile, prompt: synthesisPrompt({ solutionModel, lockedFindings, deterministic: provisional, actions: provisional.actions }), schemaName: "readiness_synthesis", schema: SYNTHESIS_SCHEMA, packetHash: provisional.packageHash, promptVersion: PROMPT_VERSIONS.synthesis });
+    const profiles = profilesForPackets(policy, "SYNTHESIS", run, [], { requireAll: false });
+    const generated = await client.generate({ profile: profiles[0], fallbackProfiles: profiles.slice(1), prompt: synthesisPrompt({ solutionModel, lockedFindings, deterministic: provisional, actions: provisional.actions }), schemaName: "readiness_synthesis", schema: SYNTHESIS_SCHEMA, packetHash: provisional.packageHash, promptVersion: PROMPT_VERSIONS.synthesis });
+    synthesisProvider = generated.profile.provider;
+    recordTransmission(run, "CONTROLLED_SYNTHESIS", generated.profile, [], false);
     const sanitized = sanitizeSynthesis(generated.value, provisional, lockedFindings); synthesis = sanitized; integrityIncidents.push(...sanitized.integrityIncidents); stage(run, "CONTROLLED_SYNTHESIS", "COMPLETED"); synthesisStepStatus = "COMPLETED";
   } catch (error) { rethrowFatal(error); failedStages.push("CONTROLLED_SYNTHESIS"); stage(run, "CONTROLLED_SYNTHESIS", "FAILED", { error: error.message }); synthesisStepStatus = "FAILED"; }
   await finishOrchestrationStep(run, "CONTROLLED_SYNTHESIS", synthesisStepStatus, null, onCheckpoint);
@@ -496,10 +515,10 @@ export async function executeCognitiveRun(run, options = {}) {
           const previous = verificationRecords.filter((item) => item.claimId === claim.id);
           const challenge = { id: stableId("verification-challenge", { findingId, triggers: groundingTriggers }), claimId: claim.id, verifierProvider: checked.profile.provider, verifierModel: checked.profile.model, status: "CONFLICTING", rationale: groundingTriggers.filter((item) => item.affectedFindingIds.includes(findingId)).map((item) => item.rationale).join(" "), checkedSourceUnitIds: claim.sourceUnitIds, conflictingSourceUnitIds: [], attempt: "FACT_CHECK_GROUNDING_CHALLENGE" };
           try {
-            const adjudicator = chooseForPackets(policy, "ADJUDICATION", run, claimPackets, { excludeProviders: unique([claim.extractor.provider, checked.profile.provider]) });
-            recordTransmission(run, "FACT_CHECK_CLAIM_REANALYSIS", adjudicator, transmittedPackets(run, adjudicator.provider, claimPackets));
-            const rechecked = await client.generate({ profile: adjudicator, prompt: adjudicationPrompt(claim, [...previous, challenge], citedUnits), schemaName: "claim_adjudication", schema: VERIFICATION_SCHEMA, packetHash: sha256(citedUnits.map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.adjudication });
-            const record = verificationRecord(claim, adjudicator, rechecked.value, "FACT_CHECK_REANALYSIS"); verificationRecords.push(challenge, record);
+            const adjudicatorProfiles = profilesForPackets(policy, "ADJUDICATION", run, claimPackets, { excludeProviders: unique([claim.extractor.provider, checked.profile.provider]) });
+            const rechecked = await client.generate({ profile: adjudicatorProfiles[0], fallbackProfiles: adjudicatorProfiles.slice(1), prompt: adjudicationPrompt(claim, [...previous, challenge], citedUnits), schemaName: "claim_adjudication", schema: VERIFICATION_SCHEMA, packetHash: sha256(citedUnits.map((unit) => unit.sha256)), promptVersion: PROMPT_VERSIONS.adjudication });
+            recordTransmission(run, "FACT_CHECK_CLAIM_REANALYSIS", rechecked.profile, transmittedPackets(run, rechecked.profile.provider, claimPackets));
+            const record = verificationRecord(claim, rechecked.profile, rechecked.value, "FACT_CHECK_REANALYSIS"); verificationRecords.push(challenge, record);
             const adjudicated = createAdjudicatedClaim(claim, [...previous, challenge, record], sourceUnits, knowledge); adjudicatedClaims.push(adjudicated);
             const locked = lockAdjudicatedClaim(claim, adjudicated, sourceUnits); findingLockRecords.push(locked.lockRecord); replacement = locked.finding;
             outcome = replacement ? "RESOLVED" : "UNLOCKED_AFTER_REANALYSIS"; rationale = record.rationale;

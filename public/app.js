@@ -1011,7 +1011,7 @@ async function postJson(path, body = undefined) {
 }
 
 async function waitForRun(runId) {
-  for (let attempt = 0; attempt < 750; attempt += 1) {
+  for (let attempt = 0; attempt < 1000; attempt += 1) {
     const response = await fetch(`/api/v2/runs/${encodeURIComponent(runId)}`);
     const run = await response.json();
     if (!response.ok) throw new Error(run.detail || run.error || "Cognitive run status is unavailable");

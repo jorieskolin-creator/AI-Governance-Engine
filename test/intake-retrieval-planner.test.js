@@ -11,7 +11,7 @@ import {
   validateIntakeRetrievalPlan
 } from "../src/cognitive/retrieval-planner.js";
 
-const policy = () => modelPolicy({ MOONSHOT_API_KEY: "test" }, { qualificationRequired: false });
+const policy = () => modelPolicy({ MOONSHOT_API_KEY: "test" });
 
 function consent(run) {
   return {
@@ -124,12 +124,13 @@ test("planner output filters unsafe terms and restores incomplete field coverage
   assert.equal(restored.normalization.defaultedSuggestionCount, 1);
 });
 
-test("retrieval planning requires explicit consent and never replays a timeout through another provider", async () => {
+test("retrieval planning requires explicit consent and uses only explicitly allowed fallback providers", async () => {
   const run = await createPreflight({ sources: [{ path: "docs/architecture.md", mimeType: "text/markdown", content: "Monitoring and incident response narrative." }] });
   let calls = 0;
+  const fallbackPolicy = modelPolicy({ MOONSHOT_API_KEY: "test", OPENAI_API_KEY: "test" });
   const client = new StructuredModelClient({
-    policy: policy(),
-    budget: new ModelBudget({ maxCalls: 2, maxTokens: 30_000 }),
+    policy: fallbackPolicy,
+    budget: new ModelBudget({ maxCalls: 4, maxTokens: 60_000 }),
     transport: async ({ profile }) => {
       calls += 1;
       assert.equal(profile.provider, "MOONSHOT");
@@ -137,9 +138,9 @@ test("retrieval planning requires explicit consent and never replays a timeout t
     }
   });
 
-  await assert.rejects(() => planIntakeRetrieval(run, { ...consent(run), confirmed: false }, { policy: policy(), client }), /explicit retrieval-planning confirmation/i);
+  await assert.rejects(() => planIntakeRetrieval(run, { ...consent(run), confirmed: false }, { policy: fallbackPolicy, client }), /explicit retrieval-planning confirmation/i);
   assert.equal(calls, 0);
-  await assert.rejects(() => planIntakeRetrieval(run, consent(run), { policy: policy(), client }), /timeout/i);
+  await assert.rejects(() => planIntakeRetrieval(run, consent(run), { policy: fallbackPolicy, client }), /timeout/i);
   assert.equal(calls, 1);
   assert.equal(run.retrievalPlan.status, "UNAVAILABLE");
   assert.equal(run.retrievalPlan.failureCode, "PROVIDER_TIMEOUT");
@@ -149,16 +150,16 @@ test("retrieval planning requires explicit consent and never replays a timeout t
   assert.doesNotMatch(JSON.stringify(run.retrievalPlan), /Simulated provider timeout/);
 });
 
-test("an explicitly qualification-gated WORKHORSE policy still fails closed before transmission", async () => {
+test("retrieval planning fails closed before transmission when no allowed provider has credentials", async () => {
   const run = await createPreflight({ sources: [{ path: "docs/architecture.md", mimeType: "text/markdown", content: "Monitoring and incident response narrative." }] });
   let calls = 0;
-  const unqualifiedPolicy = modelPolicy({ MOONSHOT_API_KEY: "test" });
+  const unavailablePolicy = modelPolicy({ OPENAI_API_KEY: "test" });
   const client = new StructuredModelClient({
-    policy: unqualifiedPolicy,
+    policy: unavailablePolicy,
     transport: async () => { calls += 1; throw new Error("must not transmit"); }
   });
 
-  await assert.rejects(() => planIntakeRetrieval(run, consent(run), { policy: unqualifiedPolicy, client }), /approved model profile/i);
+  await assert.rejects(() => planIntakeRetrieval(run, consent(run), { policy: unavailablePolicy, client }), /provider route.*unavailable/i);
   assert.equal(calls, 0);
   assert.equal(run.retrievalPlan.status, "UNAVAILABLE");
   assert.equal(run.retrievalPlan.failureCode, "MODEL_ROUTE_UNAVAILABLE");

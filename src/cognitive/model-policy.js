@@ -1,11 +1,10 @@
 import { COGNITIVE_PROVIDERS, providerAdapter } from "./provider-adapters.js";
 
-export const MODEL_POLICY_VIEW_VERSION = "model-policy-view-1.0.0";
+export const MODEL_POLICY_VIEW_VERSION = "model-policy-view-1.1.0";
 
 const STAGE_DEFINITIONS = Object.freeze([
   { stage: "ROUTING", operationalRole: "WORKHORSE", effort: "low", maxOutputTokens: 4000 },
   { stage: "RETRIEVAL_PLANNING", operationalRole: "WORKHORSE", effort: "low", maxOutputTokens: 8000 },
-  { stage: "EXTRACTION", operationalRole: "WORKHORSE", effort: "high", maxOutputTokens: 16000 },
   { stage: "DOMAIN_ASSESSMENT", operationalRole: "WORKHORSE", effort: "high", maxOutputTokens: 20000 },
   { stage: "SOLUTION_UNDERSTANDING", operationalRole: "REASONER", effort: "high", maxOutputTokens: 16000 },
   { stage: "ADJUDICATION", operationalRole: "REASONER", effort: "high", maxOutputTokens: 8000 },
@@ -33,14 +32,6 @@ function configuredRoleSlot(env, operationalRole, slot) {
   return { provider, model };
 }
 
-function profileApprovalRef(profile) {
-  return `${profile.operationalRole.toLowerCase()}-${profile.routePriority.toLowerCase()}@${profile.provider}:${profile.model}`;
-}
-
-function approvedProfileRefs(value = "") {
-  return new Set(value.split(",").map((item) => item.trim()).filter(Boolean));
-}
-
 export function providerCredentials(env = process.env) {
   return {
     OPENAI: env.OPENAI_API_KEY || env.GPT_API_KEY || null,
@@ -49,10 +40,8 @@ export function providerCredentials(env = process.env) {
   };
 }
 
-export function modelPolicy(env = process.env, options = {}) {
+export function modelPolicy(env = process.env) {
   const credentials = providerCredentials(env);
-  const qualificationRequired = options.qualificationRequired !== false;
-  const approvals = approvedProfileRefs(env.MODEL_PROFILE_APPROVALS);
   const roleSlots = Object.fromEntries(Object.keys(ROLE_DEFAULTS).map((operationalRole) => [operationalRole, {
     PRIMARY: configuredRoleSlot(env, operationalRole, "PRIMARY"),
     FALLBACK: configuredRoleSlot(env, operationalRole, "FALLBACK")
@@ -61,39 +50,38 @@ export function modelPolicy(env = process.env, options = {}) {
     const configured = roleSlots[definition.operationalRole][routePriority];
     const id = `${configured.provider.toLowerCase()}-${definition.operationalRole.toLowerCase().replaceAll("_", "-")}-${definition.stage.toLowerCase().replaceAll("_", "-")}-${routePriority.toLowerCase()}`;
     const profile = { ...definition, role: definition.stage, ...configured, id, routePriority };
-    const approvalRef = profileApprovalRef(profile);
     return {
       ...profile,
       capabilities: providerAdapter(profile.provider).capabilities,
       operationalStatus: routePriority === "PRIMARY" ? "GOVERNANCE_ROUTE" : "FALLBACK_ROUTE",
-      credentialAvailable: Boolean(credentials[profile.provider]),
-      approvalRef,
-      qualificationStatus: approvals.has(approvalRef) ? "APPROVED" : qualificationRequired ? "APPROVAL_REQUIRED" : "QUALIFICATION_CANDIDATE"
+      credentialAvailable: Boolean(credentials[profile.provider])
     };
   }));
   return {
     profiles,
     credentials,
-    choose(stage, options = {}) {
+    candidates(stage, options = {}) {
       const excluded = new Set(options.excludeProviders ?? []);
       const allowed = options.allowedProviders ? new Set(options.allowedProviders) : null;
       const stageProfiles = profiles.filter((item) => item.stage === stage);
       const preferred = (options.preferredProfileIds ?? []).map((id) => stageProfiles.find((item) => item.id === id)).filter(Boolean);
       const routeProfiles = [...new Map([...preferred, ...stageProfiles].map((item) => [item.id, item])).values()];
       if (!routeProfiles.length) throw new Error(`No governance route is configured for ${stage}`);
-      const profile = routeProfiles.find((item) => item.credentialAvailable && (!qualificationRequired || item.qualificationStatus === "APPROVED") && !excluded.has(item.provider) && (!allowed || allowed.has(item.provider)));
-      if (profile) return profile;
+      const eligible = routeProfiles.filter((item) => item.credentialAvailable && !excluded.has(item.provider) && (!allowed || allowed.has(item.provider)));
+      if (eligible.length) return eligible;
       const providers = [...new Set(routeProfiles.map((item) => item.provider))];
       if (routeProfiles.every((item) => !item.credentialAvailable)) throw new Error(`The ${providers.join(" or ")} credential required for ${stage} is unavailable`);
-      if (qualificationRequired && routeProfiles.every((item) => item.qualificationStatus !== "APPROVED")) throw new Error(`No approved model profile is configured for ${stage}`);
       if (routeProfiles.every((item) => excluded.has(item.provider))) throw new Error(`The required independent route for ${stage} is unavailable`);
-      throw new Error(`The required provider route for ${stage} is not approved for these redacted evidence packets`);
+      throw new Error(`The required provider route for ${stage} is unavailable for these privacy-safe evidence packets`);
+    },
+    choose(stage, options = {}) {
+      return this.candidates(stage, options)[0];
     }
   };
 }
 
 export function acquisitionAssistancePolicy(env = process.env) {
-  return modelPolicy(env, { qualificationRequired: false });
+  return modelPolicy(env);
 }
 
 export function publicModelPolicy(policy) {
@@ -103,19 +91,18 @@ export function publicModelPolicy(policy) {
 export function publicModelRoleSlots(policy) {
   const slots = new Map();
   for (const profile of policy.profiles) {
-    const existing = slots.get(profile.approvalRef);
+    const slotId = `${profile.operationalRole}:${profile.routePriority}`;
+    const existing = slots.get(slotId);
     if (existing) {
       existing.stages.push(profile.stage);
       continue;
     }
-    slots.set(profile.approvalRef, {
+    slots.set(slotId, {
       operationalRole: profile.operationalRole,
       routePriority: profile.routePriority,
       provider: profile.provider,
       model: profile.model,
-      approvalRef: profile.approvalRef,
       credentialAvailable: profile.credentialAvailable,
-      qualificationStatus: profile.qualificationStatus,
       stages: [profile.stage]
     });
   }
@@ -138,13 +125,11 @@ export function validateGovernanceRouteTopology(policy) {
 }
 
 export function modelPolicyReadiness(policy) {
-  const required = [...new Map(policy.profiles.map((profile) => [profile.approvalRef, profile])).values()];
+  const required = [...new Map(policy.profiles.map((profile) => [`${profile.operationalRole}:${profile.routePriority}`, profile])).values()];
   const requiredProviders = [...new Set(required.map((profile) => profile.provider))];
   const configuredProviders = requiredProviders.filter((provider) => Boolean(policy.credentials[provider]));
-  const approvedProfiles = required.filter((profile) => profile.qualificationStatus === "APPROVED");
   const issueCodes = [];
   if (configuredProviders.length !== requiredProviders.length) issueCodes.push("MODEL_CREDENTIALS_MISSING");
-  if (approvedProfiles.length !== required.length) issueCodes.push("MODEL_PROFILES_UNAPPROVED");
   let topologyStatus = "NOT_EVALUATED";
   if (!issueCodes.length) {
     try {
@@ -159,20 +144,16 @@ export function modelPolicyReadiness(policy) {
     status: issueCodes.length ? "CONFIGURATION_REQUIRED" : "READY",
     issueCodes,
     credentials: { requiredProviderCount: requiredProviders.length, configuredProviderCount: configuredProviders.length },
-    qualification: { requiredProfileCount: required.length, approvedProfileCount: approvedProfiles.length },
+    roleSlots: { requiredSlotCount: required.length, configuredSlotCount: required.length },
     topologyStatus
   };
 }
 
 export function requiredGovernanceProviders(policy) {
-  const required = [...new Map(policy.profiles.map((profile) => [profile.approvalRef, profile])).values()];
+  const required = [...new Map(policy.profiles.map((profile) => [`${profile.operationalRole}:${profile.routePriority}`, profile])).values()];
   const unavailable = required.filter((item) => !item.credentialAvailable);
   if (unavailable.length) {
     throw new Error(`Cognitive analysis requires configured credentials for ${[...new Set(unavailable.map((item) => item.provider))].join(", ")}`);
-  }
-  const unapproved = required.filter((item) => item.qualificationStatus === "APPROVAL_REQUIRED");
-  if (unapproved.length) {
-    throw new Error(`Cognitive analysis requires approved model profiles: ${unapproved.map((item) => item.approvalRef).join(", ")}`);
   }
   validateGovernanceRouteTopology(policy);
   return [...new Set(required.map((item) => item.provider))];

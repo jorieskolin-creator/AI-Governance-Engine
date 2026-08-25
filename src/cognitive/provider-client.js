@@ -61,9 +61,9 @@ export class ModelBudget {
     this.callsByStage = new Map();
     this.tokensByStage = new Map();
     this.startedAtByStage = new Map();
-    this.maxCallsByStage = options.maxCallsByStage ?? { ROUTING: 4, RETRIEVAL_PLANNING: 2, EXTRACTION: 20, SOLUTION_UNDERSTANDING: 2, DOMAIN_ASSESSMENT: 48, VERIFICATION: 160, ADJUDICATION: 32, SYNTHESIS: 3, FACT_CHECK: 4 };
-    this.maxTokensByStage = options.maxTokensByStage ?? { ROUTING: 40000, RETRIEVAL_PLANNING: 30000, EXTRACTION: 200000, SOLUTION_UNDERSTANDING: 100000, DOMAIN_ASSESSMENT: 700000, VERIFICATION: 500000, ADJUDICATION: 200000, SYNTHESIS: 150000, FACT_CHECK: 100000 };
-    this.maxMsByStage = options.maxMsByStage ?? { ROUTING: 120000, RETRIEVAL_PLANNING: 120000, EXTRACTION: 300000, SOLUTION_UNDERSTANDING: 240000, DOMAIN_ASSESSMENT: 600000, VERIFICATION: 600000, ADJUDICATION: 300000, SYNTHESIS: 240000, FACT_CHECK: 240000 };
+    this.maxCallsByStage = options.maxCallsByStage ?? { ROUTING: 4, RETRIEVAL_PLANNING: 4, SOLUTION_UNDERSTANDING: 4, DOMAIN_ASSESSMENT: 48, VERIFICATION: 160, ADJUDICATION: 32, SYNTHESIS: 4, FACT_CHECK: 4 };
+    this.maxTokensByStage = options.maxTokensByStage ?? { ROUTING: 40000, RETRIEVAL_PLANNING: 60000, SOLUTION_UNDERSTANDING: 100000, DOMAIN_ASSESSMENT: 700000, VERIFICATION: 500000, ADJUDICATION: 200000, SYNTHESIS: 150000, FACT_CHECK: 100000 };
+    this.maxMsByStage = options.maxMsByStage ?? { ROUTING: 120000, RETRIEVAL_PLANNING: 240000, SOLUTION_UNDERSTANDING: 480000, DOMAIN_ASSESSMENT: 600000, VERIFICATION: 600000, ADJUDICATION: 300000, SYNTHESIS: 480000, FACT_CHECK: 480000 };
   }
 
   reserve(stage = "UNKNOWN", expectedOutputTokens = 0) {
@@ -106,6 +106,11 @@ function responseModelMatches(configured, returned) {
   return returned === configured || returned.startsWith(`${configured}-`);
 }
 
+function fallbackAllowed(error) {
+  const failure = classifyCognitiveFailure(error);
+  return !error?.fatal && !["RUN_CANCELLED", "ORCHESTRATION_LEASE_LOST", "COGNITIVE_BUDGET_EXHAUSTED"].includes(failure.code);
+}
+
 export class StructuredModelClient {
   constructor({ policy, budget, transport, signal } = {}) {
     this.policy = policy;
@@ -115,37 +120,42 @@ export class StructuredModelClient {
     this.traces = [];
   }
 
-  async generate({ profile, prompt, schemaName, schema, packetHash, promptVersion, media = [] }) {
+  async generate({ profile, fallbackProfiles = [], prompt, schemaName, schema, packetHash, promptVersion, media = [] }) {
     if (media.length) throw new Error("Provider transmission cannot contain media; only local deterministic media summaries are allowed");
-    const requestHash = sha256({ profile: profile.id, prompt, schemaName, schema, packetHash, promptVersion });
+    const profiles = [...new Map([profile, ...fallbackProfiles].map((item) => [item.id, item])).values()];
     let lastError;
-    for (let retry = 0; retry <= 1; retry += 1) {
-      this.signal?.throwIfAborted();
-      this.budget.reserve(profile.role, profile.maxOutputTokens ?? 0);
-      const started = Date.now();
-      const repairPrompt = retry === 0 ? prompt : `${prompt}\n\nSCHEMA_REPAIR: The previous response was malformed or violated the schema. Return one complete JSON value that exactly matches the supplied schema.`;
-      try {
-        const response = this.transport
-          ? await this.transport({ profile, prompt: repairPrompt, schemaName, schema, media: [], retry, signal: this.signal })
-          : await providerRequest(profile, this.policy.credentials[profile.provider], repairPrompt, schemaName, schema, this.signal);
+    for (let routeAttempt = 0; routeAttempt < profiles.length; routeAttempt += 1) {
+      const selectedProfile = profiles[routeAttempt];
+      const requestHash = sha256({ profile: selectedProfile.id, prompt, schemaName, schema, packetHash, promptVersion });
+      for (let retry = 0; retry <= 1; retry += 1) {
         this.signal?.throwIfAborted();
-        if (!responseModelMatches(profile.model, response.responseModel)) throw new Error(`Provider returned unapproved model ${response.responseModel ?? "UNKNOWN"}; expected ${profile.model}`);
-        validateSchema(response.value, schema);
-        this.budget.record(response.usage ?? {}, profile.role);
-        const trace = this.trace(profile, promptVersion, schemaName, packetHash, requestHash, started, response, retry, null);
-        this.traces.push(trace);
-        return { value: response.value, trace };
-      } catch (error) {
-        lastError = error;
-        this.traces.push(this.trace(profile, promptVersion, schemaName, packetHash, requestHash, started, null, retry, error));
-        const repairable = !error.statusCode && !error.refusal && (error.message.includes("malformed structured output") || error.message.startsWith("$"));
-        if (!repairable) break;
+        const started = Date.now();
+        const repairPrompt = retry === 0 ? prompt : `${prompt}\n\nSCHEMA_REPAIR: The previous response was malformed or violated the schema. Return one complete JSON value that exactly matches the supplied schema.`;
+        try {
+          this.budget.reserve(selectedProfile.role, selectedProfile.maxOutputTokens ?? 0);
+          const response = this.transport
+            ? await this.transport({ profile: selectedProfile, prompt: repairPrompt, schemaName, schema, media: [], retry, routeAttempt, signal: this.signal })
+            : await providerRequest(selectedProfile, this.policy.credentials[selectedProfile.provider], repairPrompt, schemaName, schema, this.signal);
+          this.signal?.throwIfAborted();
+          if (!responseModelMatches(selectedProfile.model, response.responseModel)) throw new Error(`Provider returned unexpected model ${response.responseModel ?? "UNKNOWN"}; expected ${selectedProfile.model}`);
+          validateSchema(response.value, schema);
+          this.budget.record(response.usage ?? {}, selectedProfile.role);
+          const trace = this.trace(selectedProfile, promptVersion, schemaName, packetHash, requestHash, started, response, retry, routeAttempt, null);
+          this.traces.push(trace);
+          return { value: response.value, trace, profile: selectedProfile };
+        } catch (error) {
+          lastError = error;
+          this.traces.push(this.trace(selectedProfile, promptVersion, schemaName, packetHash, requestHash, started, null, retry, routeAttempt, error));
+          const repairable = !error.statusCode && !error.refusal && (error.message.includes("malformed structured output") || error.message.startsWith("$"));
+          if (!repairable) break;
+        }
       }
+      if (!fallbackAllowed(lastError)) throw lastError;
     }
     throw lastError;
   }
 
-  trace(profile, promptVersion, schemaName, packetHash, requestHash, started, response, retry, error) {
+  trace(profile, promptVersion, schemaName, packetHash, requestHash, started, response, retry, routeAttempt, error) {
     const failure = error ? classifyCognitiveFailure(error) : null;
     return {
       id: `model-event-${sha256({ requestHash, retry, started }).slice(0, 24)}`,
@@ -154,7 +164,7 @@ export class StructuredModelClient {
       parameters: { effort: profile.effort },
       promptVersion, schemaName, schemaVersion: "3.1.0", packetHash, requestHash,
       usage: response?.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, latencyMs: Date.now() - started,
-      retry, refusal: Boolean(error?.refusal), status: error ? "FAILED" : "COMPLETED", error: error ? error.message : null,
+      retry, routeAttempt, routePriority: profile.routePriority, refusal: Boolean(error?.refusal), status: error ? "FAILED" : "COMPLETED", error: error ? error.message : null,
       failureCode: failure?.code ?? null,
       retryDisposition: failure?.code === "STRUCTURED_OUTPUT_INVALID" && retry > 0 ? "REVIEW_REQUIRED" : failure?.retryDisposition ?? null,
       outputHash: response ? sha256(stableStringify(response.value)) : null

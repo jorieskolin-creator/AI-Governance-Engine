@@ -6,7 +6,7 @@ import { modelPolicy } from "../src/cognitive/model-policy.js";
 import { ModelBudget, StructuredModelClient } from "../src/cognitive/provider-client.js";
 import { SEMANTIC_INTAKE_EVIDENCE_VERSION, validateSemanticIntakeEvidence } from "../src/intake/semantic-intake-evidence.js";
 
-const policy = () => modelPolicy({ MOONSHOT_API_KEY: "test" }, { qualificationRequired: false });
+const policy = () => modelPolicy({ MOONSHOT_API_KEY: "test" });
 
 test("controlled semantic Intake observations preserve source separation without raw material or evaluative content", async () => {
   const privateMarker = "Jori Private Portfolio Name";

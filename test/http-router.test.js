@@ -53,7 +53,9 @@ test("HTTP workflow exposes readiness and fails closed before unapproved provide
     stdio: ["ignore", "pipe", "pipe"]
   });
   let stderr = "";
+  let stdout = "";
   child.stderr.on("data", (chunk) => { stderr += chunk.toString().slice(0, 2000); });
+  child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
   try {
     const health = await waitUntilHealthy(baseUrl, child);
     assert.equal(health.body.status, "ok");
@@ -131,4 +133,12 @@ test("HTTP workflow exposes readiness and fails closed before unapproved provide
     if (child.exitCode === null) await once(child, "exit");
   }
   assert.equal(stderr, "");
+  const logs = stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  assert.ok(logs.some((record) => record.event === "service_started" && record.runStore === "MEMORY"));
+  assert.ok(logs.some((record) => record.event === "intake_preflight_completed" && record.parsedCount === 1));
+  assert.ok(logs.some((record) => record.event === "intake_final_approval_completed"));
+  assert.ok(logs.some((record) => record.event === "request_failed_safely" && record.statusCode === 503));
+  assert.ok(logs.some((record) => record.event === "http_request_completed" && record.route === "/api/v2/runs/:runId/confirm"));
+  assert.ok(logs.every((record) => record.timestamp && record.level && record.buildRevision));
+  assert.doesNotMatch(stdout, /Router Integration Case|current-architecture\.html|fallback provider routing/);
 });

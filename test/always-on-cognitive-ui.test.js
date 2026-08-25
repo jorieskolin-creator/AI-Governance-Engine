@@ -75,18 +75,29 @@ test("ZIP source containers require explicit local extraction", () => {
   assert.match(app, /previewSelectedSources\(\)/);
 });
 
-test("the Intake workspace is exception-focused and marks accepted AI proposals as user edits", () => {
+test("the Intake workspace prefills AI proposals without a separate acceptance action", () => {
   assert.match(index, /id="intake-review-summary"/);
   assert.equal((index.match(/class="intake-workspace-section"/g) ?? []).length, 3);
   assert.match(app, /Review exceptions first/);
-  assert.match(app, /Accept proposal/);
+  assert.match(app, /prefillProposalOnce/);
+  assert.match(app, /prefilledProposalByField/);
+  assert.match(app, /prefilled only into empty fields/);
+  assert.match(app, /editable or removable/);
   assert.match(app, /editedProposalRef/);
-  assert.match(app, /Decline proposal/);
   assert.match(app, /declinedProposalRef/);
   assert.match(app, /applyProposalToIntake/);
   assert.match(app, /field\.questionId/);
   assert.match(app, /Self-Declared · changed by user · V&V lifecycle cap applies/);
+  assert.doesNotMatch(app, /Accept proposal/);
+  assert.doesNotMatch(app, /Decline proposal/);
   assert.doesNotMatch(app, /latestSolutionProfile\.fields\[[^\]]+\]\.value\s*=/);
+});
+
+test("local re-read is hidden once Intake proposals have been requested", () => {
+  assert.match(app, /context\?\.stage === "DETERMINISTIC_DISCOVERY_COMPLETED"/);
+  assert.match(app, /&& !context\?\.recheck/);
+  assert.match(app, /latestDiscoveryContext\?\.recheck \|\| latestDiscoveryContext\?\.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED"/);
+  assert.match(server, /Local re-read must be completed before requesting GenAI Intake proposals/);
 });
 
 test("the service exposes an always-on cognitive contract without client credentials", () => {

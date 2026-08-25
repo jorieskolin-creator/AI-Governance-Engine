@@ -14,6 +14,8 @@
 10. Configure `COGNITIVE_MAX_ACTIVE_RUNS` for per-process queue concurrency and keep `COGNITIVE_QUEUE_POLL_MS` operationally reasonable.
 11. Deploy. Railway executes `pnpm run check`, starts `pnpm start`, and probes `/health`.
 
+Railway captures the service's structured JSON stdout. Expected events include `service_started`, Intake preflight/retrieval/re-read/proposal outcomes, `intake_final_approval_completed`, cognitive queue/start/finish transitions, `request_failed_safely`, and normalized `http_request_completed` records. Use the opaque `requestId` and `runId`, stable `failureCode`, `runStage`, status and aggregate counts for diagnosis. The logger deliberately excludes uploaded content and paths, request bodies, prompts, provider responses, credentials, IP addresses and arbitrary exception messages.
+
 Knowledge Base publication and Engine activation are separate operations. The Maintainer makes an immutable release available; this deployment owns selecting it, restarting safely, and confirming `/api/knowledge` plus `/api/knowledge/diagnostics`. No Engine source checkout or callback is required in the Maintainer pipeline.
 
 ## Always-on cognitive contract

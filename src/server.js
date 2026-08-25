@@ -1,4 +1,5 @@
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,6 +47,31 @@ const cognitiveRunHeartbeatMs = positiveEnvNumber("COGNITIVE_RUN_HEARTBEAT_MS", 
 if (runStore.kind === "POSTGRESQL" && cognitiveRunHeartbeatMs >= runStore.leaseMs) throw new Error("COGNITIVE_RUN_HEARTBEAT_MS must be lower than COGNITIVE_RUN_LEASE_MS");
 const rateWindows = new Map();
 const activeExecutions = new Map();
+
+const operationalLogFields = new Set([
+  "requestId", "method", "route", "statusCode", "durationMs", "runId", "runStatus", "runStage",
+  "failureCode", "retryDisposition", "selectedCount", "candidateCount", "parsedCount", "failedCount",
+  "privacyBlockedCount", "recoveredCount", "conflictingCount", "remainingUnknownCount", "runStore",
+  "provider", "configuredModel"
+]);
+
+function logOperational(level, event, fields = {}) {
+  const record = { timestamp: new Date().toISOString(), level, event, buildRevision };
+  for (const [key, value] of Object.entries(fields)) {
+    if (operationalLogFields.has(key) && (["string", "number", "boolean"].includes(typeof value) || value === null)) record[key] = value;
+  }
+  process.stdout.write(`${JSON.stringify(record)}\n`);
+}
+
+function normalizedRoute(pathname) {
+  return pathname
+    .replace(/^\/api\/v2\/runs\/[^/]+/, "/api/v2/runs/:runId")
+    .replace(/^\/api\/v2\/contracts\/readiness-package\/[^/]+$/, "/api/v2/contracts/readiness-package/:version");
+}
+
+function routeRunId(pathname) {
+  return pathname.match(/^\/api\/v2\/runs\/([^/]+)/)?.[1] ?? null;
+}
 
 function sendJson(response, status, value) {
   const body = JSON.stringify(sanitizeRestrictedValue(value));
@@ -158,6 +184,7 @@ async function startClaimedCognitiveRun(run) {
   run.stage = "COGNITIVE_EXECUTION_STARTING";
   run.executionStartedAt = new Date().toISOString();
   run.trace.push({ stage: run.stage, status: "RUNNING", at: run.executionStartedAt, queueAttempt: run.queueAttempt });
+  logOperational("INFO", "cognitive_execution_started", { runId: run.id, runStatus: run.status, runStage: run.stage });
   try { await runStore.checkpoint(run, { leaseOwner: runStore.instanceId }); }
   catch (error) { await runStore.releaseLease(run.id); throw error; }
   const controller = new AbortController();
@@ -201,6 +228,9 @@ async function startClaimedCognitiveRun(run) {
     }
     clearInterval(heartbeat);
     activeExecutions.delete(run.id);
+    logOperational(run.status === "COMPLETED" ? "INFO" : "ERROR", "cognitive_execution_finished", {
+      runId: run.id, runStatus: run.status, runStage: run.stage, failureCode: run.failureCode ?? null, retryDisposition: run.retryDisposition ?? null
+    });
     try { await runStore.releaseLease(run.id); }
     catch { /* The lease expires automatically; terminal state already failed closed above. */ }
   })();
@@ -221,6 +251,10 @@ async function dispatchQueuedRuns() {
       }
     }
   } finally { dispatchingQueue = false; }
+}
+
+function dispatchQueuedRunsSafely() {
+  void dispatchQueuedRuns().catch((error) => logOperational("ERROR", "cognitive_queue_dispatch_failed", { failureCode: safeFailureCode(error) }));
 }
 
 function publicRunView(run) {
@@ -261,6 +295,17 @@ async function serveStatic(pathname, response) {
 const server = http.createServer(async (request, response) => {
   securityHeaders(response);
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+  const requestId = randomUUID();
+  const startedAt = performance.now();
+  const route = normalizedRoute(url.pathname);
+  const runId = routeRunId(url.pathname);
+  response.setHeader("X-Request-Id", requestId);
+  response.once("finish", () => {
+    if (url.pathname.startsWith("/api/") || url.pathname === "/health") logOperational(response.statusCode >= 500 ? "ERROR" : response.statusCode >= 400 ? "WARN" : "INFO", "http_request_completed", {
+      requestId, method: request.method ?? "UNKNOWN", route, statusCode: response.statusCode,
+      durationMs: Math.round(performance.now() - startedAt), runId
+    });
+  });
   if (request.headers.origin === allowedOrigin) {
     response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
     response.setHeader("Vary", "Origin");
@@ -323,6 +368,12 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/v2/runs/preflight") {
       const run = await createPreflight(await readJson(request));
       await runStore.create(run);
+      logOperational("INFO", "intake_preflight_completed", {
+        requestId, runId: run.id, runStatus: run.status, runStage: run.stage,
+        parsedCount: run.acquisitionDiagnostics?.counts?.PARSED ?? 0,
+        failedCount: run.acquisitionDiagnostics?.counts?.FAILED ?? 0,
+        privacyBlockedCount: run.dlpFindings.filter((item) => item.blocking).length
+      });
       return sendJson(response, 201, publicPreflightView(run));
     }
     const discoverMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/discover$/);
@@ -348,6 +399,11 @@ const server = http.createServer(async (request, response) => {
           if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive retrieval-planning rate limit exceeded"), { statusCode: 429 });
           const result = await planIntakeRetrieval(run, consent, { policy: acquisitionAssistancePolicy() });
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          logOperational("INFO", "intake_retrieval_planning_completed", {
+            requestId, runId: run.id, runStatus: run.status, runStage: run.stage,
+            provider: result.plan?.provider, configuredModel: result.plan?.configuredModel,
+            candidateCount: result.plan?.suggestions?.length ?? 0
+          });
           return sendJson(response, 200, result);
         } catch (error) {
           if (!run.retrievalPlan) {
@@ -355,6 +411,7 @@ const server = http.createServer(async (request, response) => {
             setAcquisitionGenAiStatus(run, "UNAVAILABLE", run.retrievalPlan.failureCode);
           }
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          logOperational("WARN", "intake_retrieval_planning_unavailable", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage, failureCode: run.retrievalPlan.failureCode });
           return sendJson(response, 200, run.retrievalPlan);
         }
       } finally { await runStore.releaseLease(run.id); }
@@ -363,6 +420,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && localRereadMatch) {
       const run = await runStore.get(localRereadMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
+      if (run.discoveryRecheck) return sendJson(response, 409, { error: "Local re-read must be completed before requesting GenAI Intake proposals" });
       if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.retrievalPlan?.status !== "COMPLETED" || run.localReread) return sendJson(response, 409, { error: "Local re-read is not available from the current run state" });
       const consent = await readJson(request);
       if (consent?.confirmed !== true || consent?.purpose !== LOCAL_REREAD_PURPOSE) return sendJson(response, 400, { error: "Explicit confirmation is required before executing the retrieval plan locally" });
@@ -372,8 +430,14 @@ const server = http.createServer(async (request, response) => {
         try {
           const result = executeLocalReread(run, consent);
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          logOperational("INFO", "intake_local_reread_completed", {
+            requestId, runId: run.id, runStatus: run.status, runStage: run.stage,
+            recoveredCount: result.recoveredFieldIds.length, conflictingCount: result.conflictingFieldIds.length,
+            remainingUnknownCount: result.remainingUnknownFieldIds.length
+          });
           return sendJson(response, 200, result);
         } catch {
+          logOperational("WARN", "intake_local_reread_failed", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage, failureCode: "LOCAL_REREAD_VALIDATION_FAILED" });
           return sendJson(response, 422, { error: "The bounded local re-read did not complete; Intake candidates remain unchanged", failureCode: "LOCAL_REREAD_VALIDATION_FAILED" });
         }
       } finally { await runStore.releaseLease(run.id); }
@@ -405,6 +469,12 @@ const server = http.createServer(async (request, response) => {
           const assistancePolicy = acquisitionAssistancePolicy();
           const discoveryRecheck = await recheckDiscovery(run, automaticApproval(run, assistancePolicy, "SOLUTION_UNDERSTANDING"), { policy: assistancePolicy, acquiredFactUnit });
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          logOperational("INFO", "intake_proposals_completed", {
+            requestId, runId: run.id, runStatus: run.status, runStage: run.stage,
+            provider: discoveryRecheck.provider, configuredModel: discoveryRecheck.configuredModel,
+            selectedCount: consent.selectedAcquiredFactIds?.length ?? 0,
+            candidateCount: discoveryRecheck.candidates?.filter((item) => item.status === "CANDIDATE").length ?? 0
+          });
           return sendJson(response, 200, discoveryRecheck);
         } catch (error) {
           run.stage = "INTAKE_AI_VERIFICATION_UNAVAILABLE";
@@ -412,6 +482,7 @@ const server = http.createServer(async (request, response) => {
           setAcquisitionGenAiStatus(run, "UNAVAILABLE", run.discoveryRecheck.failureCode);
           run.trace.push({ stage: "INTAKE_AI_VERIFICATION", status: "UNAVAILABLE", at: new Date().toISOString(), failureCode: run.discoveryRecheck.failureCode });
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          logOperational("WARN", "intake_proposals_unavailable", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage, failureCode: run.discoveryRecheck.failureCode });
           return sendJson(response, 200, run.discoveryRecheck);
         }
       } finally { await runStore.releaseLease(run.id); }
@@ -424,6 +495,7 @@ const server = http.createServer(async (request, response) => {
       try {
         await confirmPreflightDossier(run, await readJson(request));
         await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+        logOperational("INFO", "intake_final_approval_completed", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage });
         return sendJson(response, 200, publicPreflightView(run));
       } finally { await runStore.releaseLease(run.id); }
     }
@@ -432,7 +504,8 @@ const server = http.createServer(async (request, response) => {
       const run = await runStore.get(executeMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
       await enqueueCognitiveRun(run, request);
-      void dispatchQueuedRuns().catch(() => {});
+      logOperational("INFO", "cognitive_execution_queued", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage });
+      dispatchQueuedRunsSafely();
       return sendJson(response, 202, publicRunView(run));
     }
     const restartMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/restart$/);
@@ -448,7 +521,7 @@ const server = http.createServer(async (request, response) => {
         prepareInterruptedRunRestart(run, input);
         await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
       } finally { await runStore.releaseLease(run.id); }
-      void dispatchQueuedRuns().catch(() => {});
+      dispatchQueuedRunsSafely();
       return sendJson(response, 202, publicRunView(run));
     }
     const resultMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/result$/);
@@ -471,6 +544,7 @@ const server = http.createServer(async (request, response) => {
     sendJson(response, 404, { error: "Not found" });
   } catch (error) {
     const status = error.statusCode ?? 500;
+    logOperational("ERROR", "request_failed_safely", { requestId, method: request.method ?? "UNKNOWN", route, statusCode: status, runId, failureCode: error.failureCode ?? safeFailureCode(error) });
     sendJson(response, status, {
       error: status === 500 ? "Assessment failed safely" : error.message,
       failureCode: error.failureCode ?? (status === 500 ? safeFailureCode(error) : undefined),
@@ -479,10 +553,10 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-server.listen(port, "0.0.0.0", () => console.log(`AI Governance Engine listening on ${port}`));
-const queueTimer = setInterval(() => { void dispatchQueuedRuns().catch(() => {}); }, cognitiveQueuePollMs);
+server.listen(port, "0.0.0.0", () => logOperational("INFO", "service_started", { runStore: runStore.kind }));
+const queueTimer = setInterval(dispatchQueuedRunsSafely, cognitiveQueuePollMs);
 queueTimer.unref?.();
-void dispatchQueuedRuns().catch(() => {});
+dispatchQueuedRunsSafely();
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {

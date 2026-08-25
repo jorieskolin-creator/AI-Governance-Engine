@@ -21,9 +21,8 @@ let retrievalPlanningProviders = [];
 let proposalProviders = [];
 let modelReadiness = { status: "UNAVAILABLE", issueCodes: ["MODEL_POLICY_UNAVAILABLE"] };
 const editedIntakeFields = new Set();
-const acceptedProposalByField = new Map();
-const editedProposalByField = new Map();
-const declinedProposalByField = new Map();
+const prefilledProposalByField = new Map();
+const processedProposalIds = new Set();
 const acceptedAcquiredCandidateByField = new Map();
 const editedAcquiredCandidateByField = new Map();
 const declinedAcquiredCandidateByField = new Map();
@@ -136,14 +135,9 @@ function renderQuestionnaire() {
         ? "Unknown · no information detected or declared"
         : "Self-Declared · unsupported until documentary evidence is verified";
       const fieldId = `intakeAnswers.${card.dataset.questionId}`;
-      const acceptedProposal = acceptedProposalByField.get(fieldId);
       const acceptedAcquired = acceptedAcquiredCandidateByField.get(fieldId);
       const field = intakeFieldRegistry.fields.find((item) => item.id === fieldId);
       const value = field?.dataType === "ENUM_ARRAY" ? answer.values : answer.answerState;
-      if (acceptedProposal && !proposalMatchesValue(acceptedProposal.value, value)) {
-        acceptedProposalByField.delete(fieldId);
-        editedProposalByField.set(fieldId, acceptedProposal);
-      }
       if (acceptedAcquired && !sameIntakeValue(acceptedAcquired.sanitizedCandidate, value)) {
         acceptedAcquiredCandidateByField.delete(fieldId);
         editedAcquiredCandidateByField.set(fieldId, acceptedAcquired);
@@ -238,9 +232,8 @@ function fillQuestionnaire(answers = {}) {
 
 function fillDossier(dossier) {
   editedIntakeFields.clear();
-  acceptedProposalByField.clear();
-  editedProposalByField.clear();
-  declinedProposalByField.clear();
+  prefilledProposalByField.clear();
+  processedProposalIds.clear();
   acceptedAcquiredCandidateByField.clear();
   editedAcquiredCandidateByField.clear();
   declinedAcquiredCandidateByField.clear();
@@ -285,9 +278,7 @@ function renderIntakeWorkspace(profile, recheck = null) {
     const state = acceptedAcquiredCandidateByField.has(field) ? { tone: "observed", text: "Recovered deterministic candidate selected · editable · enters Intake only on final approval" }
       : editedAcquiredCandidateByField.has(field) ? { tone: "self-declared", text: "Recovered candidate edited by user · treated as Self-Declared" }
         : declinedAcquiredCandidateByField.has(field) ? { tone: "missing", text: "Recovered candidate declined · provide a value or resolve as Unknown / Not Applicable" }
-          : acceptedProposalByField.has(field) ? { tone: "review", text: "GenAI proposal selected · editable · becomes a user decision only on final approval" }
-      : editedProposalByField.has(field) ? { tone: "self-declared", text: "GenAI proposal edited by user · treated as Self-Declared, not GenAI-authoritative" }
-      : declinedProposalByField.has(field) ? { tone: "missing", text: "GenAI proposal declined · provide a value or resolve as Unknown / Not Applicable" }
+          : prefilledProposalByField.has(field) ? { tone: "review", text: "GenAI proposal prefilled · editable or removable · becomes a user decision only on final approval" }
       : edited ? { tone: "self-declared", text: "Self-Declared · changed by user · V&V lifecycle cap applies" }
       : fact?.status === "CONFLICTING" ? { tone: "conflicting", text: "Conflict · source values require resolution" }
         : ai?.recommendation === "REVIEW_REWRITE" ? { tone: "review", text: "AI wording proposal available · accepting it becomes Self-Declared" }
@@ -379,23 +370,21 @@ function renderQuestionProposalDecision(fieldId) {
   if (acceptedAcquiredCandidateByField.has(fieldId)) state.textContent = "Recovered deterministic candidate selected · editable · enters Intake only on final approval";
   else if (editedAcquiredCandidateByField.has(fieldId)) state.textContent = "Recovered candidate edited by user · treated as Self-Declared";
   else if (declinedAcquiredCandidateByField.has(fieldId)) state.textContent = "Recovered candidate declined · provide a value or resolve as Unknown / Not Applicable";
-  else if (acceptedProposalByField.has(fieldId)) state.textContent = "GenAI proposal selected · editable · becomes a user decision only on final approval";
-  else if (editedProposalByField.has(fieldId)) state.textContent = "GenAI proposal edited by user · treated as Self-Declared, not GenAI-authoritative";
-  else if (declinedProposalByField.has(fieldId)) state.textContent = "GenAI proposal declined · provide a value or resolve as Unknown / Not Applicable";
+  else if (prefilledProposalByField.has(fieldId)) state.textContent = "GenAI proposal prefilled · editable or removable · becomes a user decision only on final approval";
 }
 
-function applyProposalToIntake(field, value) {
+function applyProposalToIntake(field, value, { focus = true } = {}) {
   if (field.questionId) {
     const card = document.querySelector(`.question-card[data-question-id="${field.questionId}"]`);
     if (!card) return false;
     if (field.dataType === "ENUM") {
       const select = card.querySelector("select"); if (!select) return false;
-      select.value = value; select.dispatchEvent(new Event("change", { bubbles: true })); select.focus();
+      select.value = value; select.dispatchEvent(new Event("change", { bubbles: true })); if (focus) select.focus();
     } else {
       const inputs = [...card.querySelectorAll('input[type="checkbox"]')];
       for (const input of inputs) input.checked = value.includes(input.value);
       const changed = inputs.find((input) => input.checked) ?? inputs[0]; if (!changed) return false;
-      changed.dispatchEvent(new Event("change", { bubbles: true })); changed.focus();
+      changed.dispatchEvent(new Event("change", { bubbles: true })); if (focus) changed.focus();
     }
     return true;
   }
@@ -404,8 +393,18 @@ function applyProposalToIntake(field, value) {
     for (const input of control.querySelectorAll('input[type="checkbox"]')) input.checked = value.includes(input.value);
   } else if (field.dataType === "BOOLEAN") control.value = value ? "YES" : "NO";
   else control.value = Array.isArray(value) ? value.join(", ") : value;
-  control.dispatchEvent(new Event("input", { bubbles: true })); control.focus();
+  control.dispatchEvent(new Event("input", { bubbles: true })); if (focus) control.focus();
   return true;
+}
+
+function prefillProposalOnce(candidate, field, proposedValue) {
+  if (processedProposalIds.has(candidate.id)) return;
+  processedProposalIds.add(candidate.id);
+  const dossier = dossierFromForm();
+  const currentValue = field.questionId ? questionnaireFieldValue(dossier, field) : dossierPathValue(dossier, field.id);
+  if (currentValue !== null) return;
+  prefilledProposalByField.set(field.id, candidate);
+  if (!applyProposalToIntake(field, proposedValue, { focus: false })) prefilledProposalByField.delete(field.id);
 }
 
 function dossierPathValue(dossier, path) {
@@ -441,7 +440,7 @@ function intakeResolutions(dossier) {
     const fact = field.questionId ? latestSolutionProfile?.assessmentIntakeFacts?.[field.questionId] : latestSolutionProfile?.fields?.[field.id];
     const answer = field.questionId ? dossier.intakeAnswers?.[field.questionId] : null;
     const value = field.questionId ? questionnaireFieldValue(dossier, field) : dossierPathValue(dossier, field.id);
-    const proposal = acceptedProposalByField.get(field.id);
+    const proposal = prefilledProposalByField.get(field.id);
     const acquiredCandidate = acceptedAcquiredCandidateByField.get(field.id);
     let resolutionState;
     if (answer?.answerState === "NOT_APPLICABLE") resolutionState = "USER_SELECTED_NOT_APPLICABLE";
@@ -455,8 +454,8 @@ function intakeResolutions(dossier) {
       resolutionState,
       explanation: answer?.explanation ?? "",
       proposalRef: resolutionState === "USER_ACCEPTED_PROPOSAL" ? proposal.id : null,
-      editedProposalRef: editedProposalByField.get(field.id)?.id ?? null,
-      declinedProposalRef: declinedProposalByField.get(field.id)?.id ?? null,
+      editedProposalRef: proposal && resolutionState === "USER_EDITED" ? proposal.id : null,
+      declinedProposalRef: proposal && ["USER_SELECTED_UNKNOWN", "USER_SELECTED_NOT_APPLICABLE"].includes(resolutionState) ? proposal.id : null,
       acquiredCandidateRef: resolutionState === "USER_ACCEPTED_ACQUIRED_CANDIDATE" ? acquiredCandidate.id : null,
       editedAcquiredCandidateRef: editedAcquiredCandidateByField.get(field.id)?.id ?? null,
       declinedAcquiredCandidateRef: declinedAcquiredCandidateByField.get(field.id)?.id ?? null,
@@ -531,9 +530,7 @@ function displayIntakeValue(value) {
 function applyAcquiredCandidate(candidate) {
   const field = intakeFieldRegistry.fields.find((entry) => entry.id === candidate.fieldId);
   if (!field) return;
-  acceptedProposalByField.delete(field.id);
-  editedProposalByField.delete(field.id);
-  declinedProposalByField.delete(field.id);
+  prefilledProposalByField.delete(field.id);
   editedAcquiredCandidateByField.delete(field.id);
   declinedAcquiredCandidateByField.delete(field.id);
   acceptedAcquiredCandidateByField.set(field.id, candidate);
@@ -611,7 +608,11 @@ function updateAcquisitionActions() {
   const planAvailable = !privacyBlocked && !context?.retrievalPlan && (context?.intakeGapAnalysis?.summary?.boundedRetrievalFieldCount ?? 0) > 0 && retrievalPlanningProviders.length > 0;
   $("request-retrieval-plan").classList.toggle("hidden", !planAvailable);
   $("request-retrieval-plan").disabled = false;
-  const rereadAvailable = context?.retrievalPlan?.status === "COMPLETED" && !context?.localReread;
+  const rereadAvailable = context?.status === "AWAITING_INTAKE_CONFIRMATION"
+    && context?.stage === "DETERMINISTIC_DISCOVERY_COMPLETED"
+    && context?.retrievalPlan?.status === "COMPLETED"
+    && !context?.localReread
+    && !context?.recheck;
   $("execute-local-reread").classList.toggle("hidden", !rereadAvailable);
   $("execute-local-reread").disabled = false;
 }
@@ -684,7 +685,7 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
     const acceptedCount = recheck.candidates?.filter((item) => item.recommendation === "ACCEPT_CURRENT").length ?? 0;
     const actionCandidates = recheck.candidates?.filter((item) => item.recommendation !== "ACCEPT_CURRENT") ?? [];
     const message = recheck.status === "COMPLETED"
-      ? `AI Intake verification completed: ${acceptedCount} current value(s) supported as written; ${actionCandidates.length} field(s) need review or more information. AI proposals do not overwrite the deterministic Intake draft.`
+      ? `AI Intake proposals completed: ${acceptedCount} current value(s) supported as written; ${actionCandidates.length} field(s) need review or more information. Supported proposals are prefilled only into empty fields and remain editable or removable until final approval.`
       : recheck.status === "BLOCKED_BY_LOCAL_DLP"
         ? "AI semantic recheck was blocked by local source screening. Missing fields remain unknown until documented or declared by the user."
         : `AI semantic recheck is unavailable: ${label(recheck.failureCode ?? recheck.status)}. The deterministic intake draft remains available.`;
@@ -699,28 +700,7 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
         const field = intakeFieldRegistry.fields.find((entry) => entry.id === candidate.field);
         const proposedValue = field ? proposalFieldValue(field, candidate.value) : null;
         const actionable = field?.genAiProposalAllowed === true && candidate.status === "CANDIDATE" && ["REVIEW_REWRITE", "REVIEW_CANDIDATE"].includes(candidate.recommendation) && proposedValue !== null;
-        if (actionable) {
-          const apply = el("button", "candidate-apply-button", "Accept proposal"); apply.type = "button";
-          apply.addEventListener("click", () => {
-            editedProposalByField.delete(candidate.field);
-            declinedProposalByField.delete(candidate.field);
-            acceptedProposalByField.set(candidate.field, candidate);
-            if (!applyProposalToIntake(field, proposedValue)) acceptedProposalByField.delete(candidate.field);
-          });
-          item.append(apply);
-        }
-        if (actionable) {
-          const decline = el("button", "candidate-decline-button", declinedProposalByField.has(candidate.field) ? "Proposal declined" : "Decline proposal"); decline.type = "button";
-          decline.disabled = declinedProposalByField.has(candidate.field);
-          decline.addEventListener("click", () => {
-            acceptedProposalByField.delete(candidate.field);
-            editedProposalByField.delete(candidate.field);
-            declinedProposalByField.set(candidate.field, candidate);
-            decline.textContent = "Proposal declined"; decline.disabled = true;
-            renderIntakeWorkspace(latestSolutionProfile, latestDiscoveryRecheck);
-          });
-          item.append(decline);
-        }
+        if (actionable) prefillProposalOnce(candidate, field, proposedValue);
         candidates.append(item);
         if (candidate.field?.startsWith("intakeAnswers.")) {
           const questionId = candidate.field.slice("intakeAnswers.".length);
@@ -754,6 +734,8 @@ async function discoverCaseInformation() {
     latestSolutionProfile = preflight.solutionProfile;
     latestDiscoveryContext = {
       profile: preflight.solutionProfile,
+      status: preflight.status,
+      stage: preflight.stage,
       dlpFindings: preflight.dlpFindings,
       citationIndex: preflight.citationIndex,
       packets: preflight.packets,
@@ -791,6 +773,8 @@ async function refreshDiscoveryContext() {
   latestDiscoveryContext = {
     ...latestDiscoveryContext,
     profile: view.solutionProfile,
+    status: view.status,
+    stage: view.stage,
     dlpFindings: view.dlpFindings,
     citationIndex: view.citationIndex,
     intakeCandidates: view.intakeCandidates,
@@ -829,7 +813,10 @@ async function requestRetrievalPlan() {
 
 async function executeLocalReread() {
   const plan = latestDiscoveryContext?.retrievalPlan?.plan;
-  if (!activeRunId || !plan) return;
+  if (!activeRunId || !plan || latestDiscoveryContext?.recheck || latestDiscoveryContext?.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED") {
+    $("execute-local-reread").classList.add("hidden");
+    return;
+  }
   if (!window.confirm("Run exactly one bounded local re-read using the reviewed suggestions? Raw sources stay local, no provider call is permitted, and every result re-enters screening, validation, and hashing.")) return;
   $("error").classList.add("hidden"); $("execute-local-reread").disabled = true;
   $("discovery-status").textContent = "Running one bounded local re-read and rebuilding validated candidate diagnostics…";
@@ -872,7 +859,7 @@ async function requestAiProposals() {
   setIntakeFlow("USER_RESOLUTION", { limitedSteps: completed ? [] : ["AI_VERIFICATION"] });
   $("request-ai-proposals").classList.add("hidden");
   $("discovery-status").textContent = completed
-    ? "Stage 4 of 5 · Optional GenAI proposals are ready for review. They remain editable and have not changed or approved any Intake value."
+    ? "Stage 4 of 5 · Supported GenAI proposals were prefilled into empty Intake fields. Edit or remove them as needed; only final approval accepts the filled information and starts analysis."
     : `Stage 4 of 5 · GenAI proposals were ${label(recheck.status).toLowerCase()}. Continue resolving the deterministic Intake manually.`;
 }
 
@@ -1126,13 +1113,8 @@ $("dossier-form").addEventListener("input", (event) => {
   const controlId = event.target.id || event.target.closest("#data-categories")?.id;
   const field = INTAKE_CONTROL_FIELDS[controlId];
   if (field && latestSolutionProfile) {
-    const acceptedProposal = acceptedProposalByField.get(field);
     const acceptedAcquired = acceptedAcquiredCandidateByField.get(field);
     const currentValue = dossierPathValue(dossierFromForm(), field);
-    if (acceptedProposal && !proposalMatchesValue(acceptedProposal.value, currentValue)) {
-      acceptedProposalByField.delete(field);
-      editedProposalByField.set(field, acceptedProposal);
-    }
     if (acceptedAcquired && !sameIntakeValue(acceptedAcquired.sanitizedCandidate, currentValue)) {
       acceptedAcquiredCandidateByField.delete(field);
       editedAcquiredCandidateByField.set(field, acceptedAcquired);

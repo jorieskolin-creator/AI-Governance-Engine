@@ -113,7 +113,7 @@ test("HTTP workflow exposes readiness and fails closed before unconfigured provi
       body: JSON.stringify({})
     });
     assert.equal(unavailableLocalReread.status, 409);
-    const dossier = validateDossier(preflight.body.solutionProfile.suggestedDossier);
+    const dossier = validateDossier({ ...preflight.body.solutionProfile.suggestedDossier, accountableOwner: "HTTP test owner" });
     const confirmed = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(preflight.body.runId)}/confirm`, {
       method: "POST",
       body: JSON.stringify({ dossier, resolutions: createIntakeResolutionDraft(dossier, preflight.body.solutionProfile), approval: { confirmed: true, actorRef: "HTTP_TEST_USER" } })

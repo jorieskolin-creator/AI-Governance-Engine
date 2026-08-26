@@ -111,7 +111,7 @@ test("durable run checkpoints exclude raw evidence and fail closed under tamperi
 
 test("approved Intake checkpoints recover without raw evidence and retain user approval", async () => {
   const run = await createPreflight({ sources: [{ path: "case.md", mimeType: "text/markdown", content: "Solution name: Governance Assistant" }] });
-  const dossier = validateDossier(run.solutionProfile.suggestedDossier);
+  const dossier = validateDossier({ ...run.solutionProfile.suggestedDossier, accountableOwner: "Test owner" });
   await confirmPreflightDossier(run, {
     dossier,
     resolutions: createIntakeResolutionDraft(dossier, run.solutionProfile),
@@ -244,7 +244,7 @@ test("approved image-summary work releases pixels and can be claimed by another 
     { path: "diagram.png", mimeType: "image/png", encoding: "base64", content: rawPixels }
   ] });
   assert.ok(run.localSourceUnits.some((unit) => unit.media?.data));
-  const dossier = validateDossier(run.solutionProfile.suggestedDossier);
+  const dossier = validateDossier({ ...run.solutionProfile.suggestedDossier, name: "Image summary case", accountableOwner: "Test owner" });
   await confirmPreflightDossier(run, {
     dossier,
     resolutions: createIntakeResolutionDraft(dossier, run.solutionProfile),

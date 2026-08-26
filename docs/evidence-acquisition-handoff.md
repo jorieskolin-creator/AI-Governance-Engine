@@ -170,6 +170,7 @@ Begin only after Phase 1 acceptance passes:
 - A retrieval plan is not evidence and cannot populate Intake directly.
 - A GenAI proposal is not a user decision.
 - Only the user can approve the final filled Intake and start Analysis.
+- Analysis requires parsed evidence plus solution name and accountable owner; every other missing Intake value remains an explicit downstream limitation rather than blocking the run.
 - Missing evidence remains `UNKNOWN`; silence does not establish absence or safety.
 - Code supports at most implementation evidence unless bounded execution results establish more.
 - OCR output is raw evidence until locally screened and transformed.

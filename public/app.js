@@ -129,7 +129,6 @@ function renderQuestionnaire() {
       const explanation = card.querySelector(".question-explanation");
       if (explanation) {
         explanation.classList.toggle("hidden", answer.answerState !== "NOT_APPLICABLE");
-        explanation.required = answer.answerState === "NOT_APPLICABLE";
       }
       card.querySelector(".question-evidence-state").textContent = answer.answerState === "UNKNOWN"
         ? "Unknown · no information detected or declared"
@@ -183,7 +182,6 @@ function updateQuestionnaireConditions() {
     const explanation = card.querySelector(".question-explanation");
     if (explanation) {
       explanation.classList.toggle("hidden", currentAnswer.answerState !== "NOT_APPLICABLE");
-      explanation.required = currentAnswer.answerState === "NOT_APPLICABLE";
     }
     if (!question.showWhen) continue;
     const parent = (intakeQuestionnaire.questions ?? []).find((item) => item.id === question.showWhen.questionId);
@@ -444,8 +442,8 @@ function intakeResolutions(dossier) {
     const acquiredCandidate = acceptedAcquiredCandidateByField.get(field.id);
     let resolutionState;
     if (answer?.answerState === "NOT_APPLICABLE") resolutionState = "USER_SELECTED_NOT_APPLICABLE";
-    else if (answer?.answerState === "HUMAN_REVIEW_REQUIRED" || (fact?.status === "CONFLICTING" || fact?.supportStatus === "CONFLICTING") && sameIntakeValue(priorFieldValue(field), value)) resolutionState = "CONFLICT_REQUIRES_RESOLUTION";
     else if (value === null) resolutionState = "USER_SELECTED_UNKNOWN";
+    else if (answer?.answerState === "HUMAN_REVIEW_REQUIRED" || (fact?.status === "CONFLICTING" || fact?.supportStatus === "CONFLICTING") && sameIntakeValue(priorFieldValue(field), value)) resolutionState = "CONFLICT_REQUIRES_RESOLUTION";
     else if (acquiredCandidate && sameIntakeValue(acquiredCandidate.sanitizedCandidate, value)) resolutionState = "USER_ACCEPTED_ACQUIRED_CANDIDATE";
     else if (proposal && proposalMatchesValue(proposal.value, value)) resolutionState = "USER_ACCEPTED_PROPOSAL";
     else if (sameIntakeValue(priorFieldValue(field), value)) resolutionState = "USER_CONFIRMED";
@@ -463,6 +461,23 @@ function intakeResolutions(dossier) {
     };
   }
   return decisions;
+}
+
+function missingAnalysisFields(dossier) {
+  return intakeFieldRegistry.fields
+    .filter((field) => field.requirement?.analysis === "VALUE_REQUIRED" && dossierPathValue(dossier, field.id) === null);
+}
+
+function requestIntakeApproval(resolutions) {
+  const unresolvedCount = Object.values(resolutions).filter((decision) => ["USER_SELECTED_UNKNOWN", "CONFLICT_REQUIRES_RESOLUTION"].includes(decision.resolutionState)).length;
+  $("intake-approval-message").textContent = unresolvedCount
+    ? `${unresolvedCount} applicable Intake field(s) remain empty or unresolved. You may go back and add information, or accept the gaps and continue. Analysis will treat them as evidence limitations and may produce a lower-readiness outcome.`
+    : "All applicable Intake fields are filled. Continue when you are ready to start Analysis.";
+  $("confirm-analysis-button").textContent = unresolvedCount ? "Accept and Continue to Analysis" : "Continue to Analysis";
+  const dialog = $("intake-approval-dialog");
+  dialog.returnValue = "";
+  dialog.showModal();
+  return new Promise((resolve) => dialog.addEventListener("close", () => resolve(dialog.returnValue === "continue"), { once: true }));
 }
 
 function bytesToBase64(buffer) {
@@ -1024,15 +1039,26 @@ async function waitForRun(runId) {
 }
 
 async function runAssessment(event) {
-  event.preventDefault(); $("error").classList.add("hidden"); $("progress").classList.remove("hidden"); $("assess-button").disabled = true;
+  event.preventDefault(); $("error").classList.add("hidden"); $("assess-button").disabled = true;
   try {
     if (!activeRunId) throw new Error("Complete deterministic discovery before starting the A–F assessment.");
     await selectedSources();
     const dossier = dossierFromForm();
+    for (const id of ["name", "owner"]) $(id).removeAttribute("aria-invalid");
+    const missing = missingAnalysisFields(dossier);
+    if (missing.length) {
+      for (const field of missing) $(field.uiControlId)?.setAttribute("aria-invalid", "true");
+      const first = $(missing[0].uiControlId);
+      first?.focus(); first?.scrollIntoView({ behavior: "smooth", block: "center" });
+      throw new Error(`Complete the two required Intake fields before analysis: ${missing.map((field) => label(field.id)).join(", ")}.`);
+    }
+    const resolutions = intakeResolutions(dossier);
+    if (!await requestIntakeApproval(resolutions)) return;
+    $("progress").classList.remove("hidden");
     setProgress("Preparing AI analysis", "Local screening is complete. Redacted evidence will be analysed by the Engine’s configured providers.");
     await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, {
       dossier,
-      resolutions: intakeResolutions(dossier),
+      resolutions,
       approval: { confirmed: true, actorRef: "INTERACTIVE_USER" }
     });
     setIntakeFlow("ASSESSMENT");

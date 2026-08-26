@@ -15,7 +15,12 @@ import { createIntakeResolutionDraft } from "../src/intake/contracts.js";
 function sampleRequest() { return structuredClone(SAMPLE_REQUEST); }
 
 function approvedInput(run, dossier) {
-  return { dossier, resolutions: createIntakeResolutionDraft(dossier, run.solutionProfile), approval: { confirmed: true, actorRef: "TEST_USER" } };
+  const completedDossier = validateDossier({
+    ...dossier,
+    name: dossier.name || "Test solution",
+    accountableOwner: dossier.accountableOwner || "Test owner"
+  });
+  return { dossier: completedDossier, resolutions: createIntakeResolutionDraft(completedDossier, run.solutionProfile), approval: { confirmed: true, actorRef: "TEST_USER" } };
 }
 
 function completeHumanClassifications() {

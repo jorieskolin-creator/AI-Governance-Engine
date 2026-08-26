@@ -93,6 +93,19 @@ test("the Intake workspace prefills AI proposals without a separate acceptance a
   assert.doesNotMatch(app, /latestSolutionProfile\.fields\[[^\]]+\]\.value\s*=/);
 });
 
+test("final Intake approval requires only solution identity and makes evidence gaps explicit", () => {
+  assert.match(index, /Solution name · required/);
+  assert.match(index, /Accountable owner · required/);
+  assert.match(index, /id="intake-approval-dialog"/);
+  assert.match(index, />Go back<\/button>/);
+  assert.match(index, />Accept and Continue to Analysis<\/button>/);
+  assert.match(app, /field\.requirement\?\.analysis === "VALUE_REQUIRED"/);
+  assert.match(app, /remain empty or unresolved/);
+  assert.match(app, /Analysis will treat them as evidence limitations/);
+  assert.match(app, /All applicable Intake fields are filled/);
+  assert.doesNotMatch(app, /explanation\.required/);
+});
+
 test("local re-read is hidden once Intake proposals have been requested", () => {
   assert.match(app, /context\?\.stage === "DETERMINISTIC_DISCOVERY_COMPLETED"/);
   assert.match(app, /&& !context\?\.recheck/);

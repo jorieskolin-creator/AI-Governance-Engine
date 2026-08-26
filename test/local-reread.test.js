@@ -87,7 +87,7 @@ test("one bounded local pass recovers sanitized candidates without provider tran
   tampered.recoveredFieldIds.pop();
   assert.throws(() => validateLocalReread(tampered, { plan: run.retrievalPlan.plan, beforePackage: before.candidatePackage, afterPackage: run.intakeCandidates }), /outcome|integrity check/i);
 
-  const dossier = validateDossier({ ...run.solutionProfile.suggestedDossier, accountableOwner: owner.sanitizedCandidate });
+  const dossier = validateDossier({ ...run.solutionProfile.suggestedDossier, name: "Local reread case", accountableOwner: owner.sanitizedCandidate });
   const resolutions = createIntakeResolutionDraft(dossier, run.solutionProfile);
   resolutions.accountableOwner = { resolutionState: "USER_ACCEPTED_ACQUIRED_CANDIDATE", acquiredCandidateRef: owner.id, acquiredCandidatePackageHash: run.intakeCandidates.packageHash };
   await confirmPreflightDossier(run, { dossier, resolutions, approval: { confirmed: true, actorRef: "TEST_USER" } });

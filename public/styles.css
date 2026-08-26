@@ -128,6 +128,13 @@ legend { color: var(--forest-2); font-size: .75rem; font-weight: 850; padding: 0
 .tri-state { margin: 7px 0 10px; }
 .submit-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-top: 24px; border-top: 1px solid var(--line); padding-top: 20px; }
 .submit-row p { margin: 0; color: var(--muted); font-size: .78rem; }
+input[aria-invalid="true"] { border-color: #a83232; box-shadow: 0 0 0 3px rgba(168, 50, 50, .12); }
+.approval-dialog { width: min(92vw, 560px); border: 1px solid var(--line); border-radius: 18px; padding: 0; color: var(--ink); box-shadow: 0 24px 80px rgba(18, 58, 49, .28); }
+.approval-dialog::backdrop { background: rgba(18, 32, 29, .56); backdrop-filter: blur(3px); }
+.approval-dialog form { padding: 26px; }
+.approval-dialog h2 { margin: 6px 0 10px; }
+.approval-dialog p:not(.eyebrow) { color: var(--muted); line-height: 1.55; }
+.approval-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 button { border: 0; border-radius: 10px; padding: 11px 16px; font-weight: 800; cursor: pointer; transition: .18s ease; }
 button:hover:not(:disabled) { transform: translateY(-1px); }
 button:disabled { opacity: .45; cursor: not-allowed; }
@@ -291,7 +298,7 @@ footer { border-top: 1px solid var(--line); padding: 24px 4vw; color: var(--mute
   .form-grid.two, .form-grid.four, .flag-groups, .metric-grid, .trace-grid, .report-metrics, .interpretation-grid, .report-domain-grid, .case-grid, .documentation-summary, .documentation-issues, .hero-case-facts, .discovery-grid, .acquired-fact-selections { grid-template-columns: 1fr; }
   .discovery-actions, .discovery-heading { align-items: stretch; flex-direction: column; }
   .lifecycle { grid-template-columns: 1fr 1fr; }
-  .submit-row, .summary-toolbar, .report-decision-top { align-items: stretch; flex-direction: column; }
+  .submit-row, .summary-toolbar, .report-decision-top, .approval-dialog-actions { align-items: stretch; flex-direction: column; }
   .summary-toolbar { position: static; }
   .export-actions { display: grid; grid-template-columns: 1fr; }
   .category-options, .questionnaire-grid { grid-template-columns: 1fr; }

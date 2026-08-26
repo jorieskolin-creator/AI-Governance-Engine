@@ -124,6 +124,7 @@ export function publicDiscoveryView(run) {
 export async function confirmPreflightDossier(run, input, options = {}) {
   if (!run || run.status !== "AWAITING_INTAKE_CONFIRMATION") throw new Error("Run is not awaiting intake confirmation");
   if (run.stage === "INTAKE_AI_VERIFICATION_IN_PROGRESS") throw new Error("Intake cannot be confirmed while AI verification is in progress");
+  if (!(run.sourceIngestion?.parsedCount > 0)) throw new Error("At least one parsed evidence source is required before analysis");
   const submittedDossier = validateDossier(input?.dossier);
   const sourceProfile = run.solutionProfile;
   const candidatePackage = validateIntakeCandidatePackage(run.intakeCandidates);

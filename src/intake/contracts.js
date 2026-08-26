@@ -19,7 +19,7 @@ export const INTAKE_RESOLUTION_STATES = Object.freeze([
   "CONFLICT_REQUIRES_RESOLUTION"
 ]);
 export const INTAKE_VALUE_ORIGINS = Object.freeze(["DETERMINISTIC_ACQUISITION", "USER_DECLARATION", "GENAI_PROPOSAL"]);
-export const APPROVED_INTAKE_SNAPSHOT_VERSION = "approved-intake-snapshot-1.2.0";
+export const APPROVED_INTAKE_SNAPSHOT_VERSION = "approved-intake-snapshot-1.3.0";
 
 const blockingResolutionStates = new Set(["UNREVIEWED", "USER_DECLINED_PROPOSAL", "CONFLICT_REQUIRES_RESOLUTION"]);
 
@@ -117,8 +117,8 @@ export function createIntakeResolutionDraft(dossier, profile) {
     const prior = priorFact(profile, field);
     let resolutionState;
     if (state === "NOT_APPLICABLE") resolutionState = "USER_SELECTED_NOT_APPLICABLE";
-    else if (state === "HUMAN_REVIEW_REQUIRED" || prior?.status === "CONFLICTING" && equalValues(priorValue(profile, field), value)) resolutionState = "CONFLICT_REQUIRES_RESOLUTION";
     else if (value === null) resolutionState = "USER_SELECTED_UNKNOWN";
+    else if (state === "HUMAN_REVIEW_REQUIRED" || prior?.status === "CONFLICTING" && equalValues(priorValue(profile, field), value)) resolutionState = "CONFLICT_REQUIRES_RESOLUTION";
     else if (equalValues(priorValue(profile, field), value)) resolutionState = "USER_CONFIRMED";
     else resolutionState = "USER_EDITED";
     return [field.id, {
@@ -180,7 +180,7 @@ function fieldRecord(field, decision, dossier, sourceProfile, discoveryRecheck, 
 
   if (decision.resolutionState === "USER_SELECTED_UNKNOWN") {
     invariant(field.unknownAllowed, `${field.id} does not allow Unknown`);
-    invariant(value === null && !["NOT_APPLICABLE", "HUMAN_REVIEW_REQUIRED"].includes(state), `${field.id} must not contain a value or unresolved classification when Unknown is selected`);
+    invariant(value === null && state !== "NOT_APPLICABLE", `${field.id} must not contain a value when Unknown is selected`);
     valueState = "UNKNOWN";
     origin = "USER_DECLARATION";
   } else if (decision.resolutionState === "USER_SELECTED_NOT_APPLICABLE") {
@@ -257,6 +257,9 @@ export function createApprovedIntakeSnapshot({ run, dossier, effectiveDossier, s
   invariant(actorRef, "approval.actorRef is required");
   invariant(approval.confirmed === true, "Only an explicit user approval may create the approved Intake snapshot");
   const activeFields = activeRegistryFields(dossier);
+  for (const field of activeFields.filter((item) => item.requirement.analysis === "VALUE_REQUIRED")) {
+    invariant(submittedValue(dossier, field) !== null, `${field.id} is required before analysis`);
+  }
   const activeIds = new Set(activeFields.map((field) => field.id));
   for (const fieldId of Object.keys(resolutions)) invariant(activeIds.has(fieldId), `Resolution supplied for unknown or inactive field: ${fieldId}`);
   invariant(Object.keys(resolutions).length === activeFields.length, "Every active Intake field requires exactly one explicit resolution");
@@ -344,9 +347,10 @@ export function validateApprovedIntakeSnapshot(snapshot, options = {}) {
     invariant(Array.isArray(record.limitations) && record.limitations.every((item) => typeof item === "string"), `${field.id}.limitations is invalid`);
     const expectedValue = submittedValue(snapshot.dossier, field);
     const state = answerState(snapshot.dossier, field);
+    if (field.requirement.analysis === "VALUE_REQUIRED") invariant(expectedValue !== null, `${field.id} is required before analysis`);
     if (record.valueState === "UNKNOWN") {
       invariant(field.unknownAllowed && record.resolutionState === "USER_SELECTED_UNKNOWN" && record.origin === "USER_DECLARATION", `${field.id} has an invalid Unknown resolution`);
-      invariant(expectedValue === null && !["NOT_APPLICABLE", "HUMAN_REVIEW_REQUIRED"].includes(state), `${field.id} Unknown does not match the approved dossier`);
+      invariant(expectedValue === null && state !== "NOT_APPLICABLE", `${field.id} Unknown does not match the approved dossier`);
     } else if (record.valueState === "NOT_APPLICABLE") {
       invariant(field.notApplicableAllowed && record.resolutionState === "USER_SELECTED_NOT_APPLICABLE" && record.origin === "USER_DECLARATION", `${field.id} has an invalid Not Applicable resolution`);
       invariant(state === "NOT_APPLICABLE" || !field.questionId && expectedValue === null, `${field.id} Not Applicable does not match the approved dossier`);

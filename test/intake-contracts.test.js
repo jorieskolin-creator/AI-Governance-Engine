@@ -11,9 +11,14 @@ import { INTAKE_QUESTIONNAIRE } from "../src/knowledge/intake-questionnaire.js";
 const source = (content = "# Intake case") => [{ path: "case.md", mimeType: "text/markdown", encoding: "utf8", content }];
 
 function approvalInput(run, dossier) {
+  const completedDossier = validateDossier({
+    ...dossier,
+    name: dossier.name || "Test solution",
+    accountableOwner: dossier.accountableOwner || "Test owner"
+  });
   return {
-    dossier,
-    resolutions: createIntakeResolutionDraft(dossier, run.solutionProfile),
+    dossier: completedDossier,
+    resolutions: createIntakeResolutionDraft(completedDossier, run.solutionProfile),
     approval: { confirmed: true, actorRef: "TEST_USER" }
   };
 }
@@ -24,6 +29,7 @@ test("the versioned registry covers every active HTML Intake control and questio
   const controls = INTAKE_FIELD_REGISTRY.fields.filter((field) => field.uiControlId);
   for (const field of controls) assert.match(html, new RegExp(`id=["']${field.uiControlId}["']`), field.id);
   assert.equal(new Set(controls.map((field) => field.uiControlId)).size, controls.length);
+  assert.deepEqual(INTAKE_FIELD_REGISTRY.fields.filter((field) => field.requirement.analysis === "VALUE_REQUIRED").map((field) => field.id), ["name", "accountableOwner"]);
   const dossierForm = html.match(/<form id="dossier-form">([\s\S]*?)<\/form>/)?.[1] ?? "";
   const activeHtmlControlIds = [...dossierForm.matchAll(/<(?:input|textarea|select) id="([^"]+)"/g)]
     .map((match) => match[1]).filter((id) => !["prohibited", "high-risk"].includes(id)).sort();
@@ -52,12 +58,15 @@ test("approval requires an explicit final resolution for every applicable field 
   assert.equal(run.approvedIntake, undefined);
 });
 
-test("Unknown is a final user resolution, conflicts remain blocking, and Not Applicable is field-governed", async () => {
+test("only identity fields block analysis; other Unknown and Not Applicable values remain valid limitations", async () => {
   const conflicting = await createPreflight({ sources: source("Accountable owner: Product Team\nAccountable owner: Risk Team") });
   const conflictingDossier = validateDossier(conflicting.solutionProfile.suggestedDossier);
+  const missingOwner = approvalInput(conflicting, conflictingDossier);
+  missingOwner.dossier.accountableOwner = "";
+  missingOwner.resolutions = createIntakeResolutionDraft(missingOwner.dossier, conflicting.solutionProfile);
   await assert.rejects(
-    () => confirmPreflightDossier(conflicting, approvalInput(conflicting, conflictingDossier)),
-    /accountableOwner is not resolved/i
+    () => confirmPreflightDossier(conflicting, missingOwner),
+    /accountableOwner is required before analysis/i
   );
 
   const unknown = await createPreflight({ sources: source() });
@@ -71,9 +80,10 @@ test("Unknown is a final user resolution, conflicts remain blocking, and Not App
     ...questionnaire.solutionProfile.suggestedDossier,
     intakeAnswers: { ROLE_REBRANDING: { answerState: "NOT_APPLICABLE", values: [] } }
   });
-  const missingExplanation = approvalInput(questionnaire, questionnaireDossier);
-  missingExplanation.resolutions["intakeAnswers.ROLE_REBRANDING"].explanation = "";
-  await assert.rejects(() => confirmPreflightDossier(questionnaire, missingExplanation), /requires an explanation for Not Applicable/i);
+  const optionalExplanation = approvalInput(questionnaire, questionnaireDossier);
+  optionalExplanation.resolutions["intakeAnswers.ROLE_REBRANDING"].explanation = "";
+  await confirmPreflightDossier(questionnaire, optionalExplanation);
+  assert.equal(questionnaire.approvedIntake.fields.find((field) => field.fieldId === "intakeAnswers.ROLE_REBRANDING").valueState, "NOT_APPLICABLE");
 });
 
 test("the immutable approved snapshot separates observed provenance from user resolution and detects tampering", async () => {

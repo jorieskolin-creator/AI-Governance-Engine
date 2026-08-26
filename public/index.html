@@ -57,7 +57,7 @@
         <form id="dossier-form">
           <div class="intake-boundary-notice"><strong>Self-Declared information has a controlled lifecycle boundary</strong><span>Information you add or change can support assessment through Verification and Validation, but progression beyond that stage is blocked until documentary support is verified.</span></div>
           <div id="intake-review-summary" class="intake-review-summary" aria-live="polite"></div>
-          <div class="form-grid two"><label>Solution name<input id="name" placeholder="Detected from product documentation or project manifest" /></label><label>Accountable owner<input id="owner" placeholder="Must be supported by ownership, RACI, charter or governance evidence" /></label></div>
+          <div class="form-grid two"><label>Solution name · required<input id="name" aria-required="true" placeholder="Detected from product documentation or project manifest" /></label><label>Accountable owner · required<input id="owner" aria-required="true" placeholder="Must be supported by ownership, RACI, charter or governance evidence" /></label></div>
           <label>Intended purpose<textarea id="purpose" rows="3" placeholder="Detected from business, product or architecture documentation"></textarea></label>
           <label>Expected value<textarea id="value" rows="2" placeholder="Measurable outcome and value hypothesis"></textarea></label>
           <div class="form-grid four">
@@ -101,6 +101,18 @@
         </form>
       </section>
 
+      <dialog id="intake-approval-dialog" class="approval-dialog" aria-labelledby="intake-approval-title" aria-describedby="intake-approval-message">
+        <form method="dialog">
+          <p class="eyebrow">Final user approval</p>
+          <h2 id="intake-approval-title">Review Intake completeness</h2>
+          <p id="intake-approval-message"></p>
+          <div class="approval-dialog-actions">
+            <button class="secondary-button" type="submit" value="back">Go back</button>
+            <button id="confirm-analysis-button" class="primary-button" type="submit" value="continue">Accept and Continue to Analysis</button>
+          </div>
+        </form>
+      </dialog>
+
       <section id="progress" class="panel progress-panel hidden" aria-live="polite"><div class="spinner"></div><div><strong id="progress-title">Building the evidence package</strong><p id="progress-detail">Registering sources, resolving applicability, verifying controls and applying hard gates.</p></div></section>
 
       <section id="results" class="hidden" aria-live="polite">
@@ -123,6 +135,6 @@
       <section id="error" class="error-panel hidden" aria-live="assertive"></section>
     </main>
     <footer>AI Governance Engine - Readiness recommendation, not formal approval</footer>
-    <script type="module" src="/app.js?v=evidence-intake-1.4.0"></script>
+    <script type="module" src="/app.js?v=evidence-intake-1.5.0"></script>
   </body>
 </html>

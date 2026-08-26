@@ -2,7 +2,7 @@ import { BOUNDARY_ENVIRONMENTS, DATA_CATEGORIES, LIFECYCLE_STAGES, USER_ACCESS_M
 import { sha256 } from "../core/hash.js";
 import { INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
 
-export const INTAKE_FIELD_REGISTRY_VERSION = "intake-field-registry-1.0.0";
+export const INTAKE_FIELD_REGISTRY_VERSION = "intake-field-registry-1.1.0";
 
 const sections = Object.freeze([
   { id: "IDENTITY_AND_PURPOSE", title: "Identity and purpose" },
@@ -47,7 +47,11 @@ const mainFields = [
   sectionId,
   dataType,
   allowedValues,
-  requirement: { intake: "RESOLUTION_REQUIRED", deployment: requiredForDeployment ? "VALUE_REQUIRED" : "OPTIONAL" },
+  requirement: {
+    intake: "RESOLUTION_REQUIRED",
+    analysis: ["name", "accountableOwner"].includes(id) ? "VALUE_REQUIRED" : "OPTIONAL",
+    deployment: requiredForDeployment ? "VALUE_REQUIRED" : "OPTIONAL"
+  },
   unknownAllowed: true,
   notApplicableAllowed: false,
   applicability: null,
@@ -55,7 +59,7 @@ const mainFields = [
   deterministicAcquisition: { supported: true, lane: "DOCUMENT_AND_CONFIGURATION_FACTS", mappings: [id] },
   genAiProposalAllowed,
   humanAuthority: "SOLUTION_OWNER",
-  lifecycleConsequence: "UNRESOLVED_BLOCKS_APPROVED_INTAKE"
+  lifecycleConsequence: ["name", "accountableOwner"].includes(id) ? "UNRESOLVED_BLOCKS_ANALYSIS" : "UNRESOLVED_REDUCES_ANALYSIS_ASSURANCE"
 }));
 
 const questionnaireFields = INTAKE_QUESTIONNAIRE.questions.map((question) => ({
@@ -65,18 +69,18 @@ const questionnaireFields = INTAKE_QUESTIONNAIRE.questions.map((question) => ({
   sectionId: `QUESTIONNAIRE_${question.sectionId}`,
   dataType: question.type === "MULTI" ? "ENUM_ARRAY" : "ENUM",
   allowedValues: [...question.options],
-  requirement: { intake: "RESOLUTION_REQUIRED", deployment: "VALUE_REQUIRED_WHEN_APPLICABLE" },
+  requirement: { intake: "RESOLUTION_REQUIRED", analysis: "OPTIONAL", deployment: "VALUE_REQUIRED_WHEN_APPLICABLE" },
   unknownAllowed: question.options.includes("UNKNOWN"),
   notApplicableAllowed: question.options.includes("NOT_APPLICABLE"),
   applicability: question.showWhen ? {
     fieldId: `intakeAnswers.${question.showWhen.questionId}`,
     answerStates: [...(question.showWhen.answerStates ?? [])]
   } : null,
-  explanationRequiredFor: question.options.includes("NOT_APPLICABLE") ? ["NOT_APPLICABLE"] : [],
+  explanationRequiredFor: [],
   deterministicAcquisition: { supported: true, lane: "LABELLED_QUESTIONNAIRE_FACTS", mappings: [question.fieldId, question.id] },
   genAiProposalAllowed: question.humanDecisionAuthority === "SOLUTION_OWNER",
   humanAuthority: question.humanDecisionAuthority,
-  lifecycleConsequence: "UNRESOLVED_BLOCKS_APPROVED_INTAKE"
+  lifecycleConsequence: "UNRESOLVED_REDUCES_ANALYSIS_ASSURANCE"
 }));
 
 function deepFreeze(value) {

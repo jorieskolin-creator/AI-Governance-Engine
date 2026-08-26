@@ -22,6 +22,7 @@
   "dependencies": {
     "@napi-rs/canvas": "0.1.100",
     "@tesseract.js-data/eng": "1.0.0",
+    "ajv": "8.20.0",
     "htmlparser2": "10.0.0",
     "mammoth": "1.12.0",
     "pdfjs-dist": "5.4.149",

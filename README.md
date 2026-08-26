@@ -23,7 +23,7 @@ The repository is suitable for controlled pre-production assessment runs and ite
 - The canonical JSON package drives both the detailed Assessment Workspace and decision-ready Assurance Summary.
 - HTML and printable views are derived from the package and do not calculate a second outcome.
 - The standard cognitive pipeline preserves raw/derived lineage, verifies citations and keeps unsupported claims outside deterministic decision evidence.
-- Knowledge authoring validates rich category JSON and compiles five runtime collections plus an immutable manifest.
+- Knowledge authoring validates schema `2.1.0` category and tactic JSON and compiles six runtime collections plus an immutable manifest.
 
 Every normal assessment uses cognitive contract `3.1.0`: independently verified solution understanding, immutable raw/derived evidence lineage, object-level assessment coverage, parallel A–F claim extraction, independent verification, bounded rescan/adjudication, deterministic assessment, controlled synthesis, repair/re-analysis, and a separate publication gate.
 
@@ -107,7 +107,7 @@ PDF native text is reconstructed into bounded headings and paragraphs before loc
 
 The bundled JavaScript catalogue is an explicitly `CALIBRATION_TEST_ONLY` bootstrap used for local development and tests. It is not an approved governance release and must not be presented as legal advice or a production control baseline.
 
-The long-term source of truth is the authoring JSON described in [knowledge-authoring/README.md](knowledge-authoring/README.md). Category PDFs and the five runtime collections are generated views. The taxonomy, stable identifier policy, status model and complete approved content are still under development.
+The long-term source of truth is the schema-validated authoring JSON described in [knowledge-authoring/README.md](knowledge-authoring/README.md). Category PDFs and the six runtime collections are generated views. The 30 capability/anti-pattern pairs, stable identifier grammar and approved Playbook object mappings are defined; the complete approved category content is still under development.
 
 Production startup requires `VERCEL_KB_MANIFEST_URL`; it does not silently fall back to the local bootstrap catalogue. The loader verifies manifest and document hashes plus structural references. Approval and release-governance enforcement will be hardened as the taxonomy and Knowledge Base are finalized.
 

@@ -16,7 +16,7 @@ function heading(doc, text, level = 1) {
 }
 
 function list(doc, values) {
-  for (const value of array(values)) {
+  for (const value of Array.isArray(values) ? values : values === undefined || values === null ? [] : [values]) {
     if (doc.y > 735) doc.addPage();
     const text = typeof value === "string" ? value : value.tactic_id
       ? `${value.tactic_id}: ${label(value.relationship ?? "Mapped tactic")}`
@@ -75,13 +75,11 @@ function objectSection(doc, object) {
   heading(doc, object.object_type === "CAPABILITY" ? "Atomic subcriteria" : "Atomic tests", 2); list(doc, object.atomic_subcriteria ?? object.atomic_tests);
   heading(doc, "Required evidence", 2); list(doc, object.required_evidence);
   heading(doc, "Indicators", 2); list(doc, object.capability_indicators ?? object.antipattern_indicators);
-  heading(doc, "Evidence rules", 2); list(doc, object.evidence_rules);
-  if (object.absence_test_requirements) { heading(doc, "Tested-absent requirements", 2); list(doc, object.absence_test_requirements); }
-  heading(doc, "False-positive guards", 2); list(doc, object.false_positive_guards);
-  heading(doc, "Prohibited inferences", 2); list(doc, object.prohibited_inferences);
+  heading(doc, "Evidence rules", 2); objectValues(doc, object.evidence_rules);
+  if (object.absence_test_contract) { heading(doc, "Tested-absent contract", 2); objectValues(doc, object.absence_test_contract); }
   if (object.validation_questions) { heading(doc, "Validation questions", 2); list(doc, object.validation_questions); }
   if (object.detection_heuristics) { heading(doc, "Detection heuristics", 2); list(doc, object.detection_heuristics); }
-  if (object.target_assurance_by_lifecycle_stage) { heading(doc, "Lifecycle assurance targets", 2); objectValues(doc, object.target_assurance_by_lifecycle_stage); }
+  if (object.target_assurance_by_lifecycle_stage) { heading(doc, "Lifecycle assurance targets", 2); list(doc, object.target_assurance_by_lifecycle_stage); }
   heading(doc, "Severity and human authority", 2); doc.fontSize(9).text(`${object.runtime_severity ?? object.severity} | ${object.human_decision_authority ?? "Not specified"}`);
   heading(doc, "Hard-gate effect", 2); objectValues(doc, object.hard_gate_effect);
   heading(doc, "Finding definitions", 2); list(doc, object.finding_definitions);
@@ -109,9 +107,15 @@ export function renderTacticPlaybookPdf(catalog, outputFile) {
     header(doc, catalog.title ?? "Governance Tactic Playbook", `Version ${catalog.version} | ${label(catalog.release_status)}`);
     doc.fillColor(COLORS.muted).fontSize(7).text(`Canonical JSON SHA-256: ${contentHash(catalog)}`);
     for (const tactic of array(catalog.tactics)) {
-      heading(doc, `${tactic.id} - ${tactic.title}`); doc.fillColor(COLORS.ink).fontSize(9).text(tactic.objective ?? "");
+      heading(doc, `${tactic.id} - ${tactic.title}`);
+      doc.fillColor(COLORS.muted).fontSize(8).text(`${label(tactic.release_status)} definition | Exact finding mapping: ${label(tactic.activation_mapping_status)}`);
+      heading(doc, "Primary object / mapping", 2); doc.fillColor(COLORS.ink).fontSize(9).text(tactic.primary_mapping_text ?? array(tactic.primary_object_mappings).join(", "));
+      heading(doc, "Function", 2); doc.fillColor(COLORS.ink).fontSize(9).text(tactic.function ?? "Not specified");
+      heading(doc, "Control purpose", 2); doc.fillColor(COLORS.ink).fontSize(9).text(tactic.control_purpose ?? tactic.objective ?? "Not specified");
+      heading(doc, "Principal outputs", 2); list(doc, tactic.principal_outputs ?? tactic.artifacts);
+      heading(doc, "Reassessment", 2); doc.fillColor(COLORS.ink).fontSize(9).text(tactic.reassessment_text ?? array(tactic.reassessment_targets).join(", "));
       heading(doc, "Assessment mappings", 2); objectValues(doc, tactic.assessment_mappings);
-      for (const [title, field] of [["Eligible findings", "eligible_finding_ids"], ["Trigger states", "trigger_states"], ["Owners", "owners"], ["Use when", "use_when"], ["Activities", "activities"], ["Required artifacts", "artifacts"], ["Acceptance criteria", "acceptance_criteria"], ["Independent verification", "verification"], ["Do not use when", "do_not_use_when"], ["Reassessment targets", "reassessment_targets"]]) { heading(doc, title, 2); list(doc, tactic[field]); }
+      for (const [title, field] of [["Eligible findings", "eligible_finding_ids"], ["Trigger states", "trigger_states"], ["Prerequisite tactics", "prerequisite_tactic_ids"], ["Owners", "owners"], ["Use when", "use_when"], ["Activities", "activities"], ["Required artifacts", "artifacts"], ["Acceptance criteria", "acceptance_criteria"], ["Independent verification", "verification"], ["Risks", "risks"], ["Do not use when", "do_not_use_when"], ["Reassessment targets", "reassessment_targets"], ["Completion effect", "completion_effect"]]) { heading(doc, title, 2); list(doc, tactic[field]); }
       doc.moveDown(0.5);
     }
   });

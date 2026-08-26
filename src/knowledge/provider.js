@@ -8,7 +8,7 @@ import { evaluateKnowledgeSnapshot } from "./diagnostics.js";
 import { INTAKE_QUESTIONNAIRE } from "./intake-questionnaire.js";
 
 const DOCUMENT_TYPES = new Set(["normativeSources", "requirements", "controls", "antipatterns", "tactics", "intakeQuestionnaire"]);
-const RELEASE_STATUSES = new Set(["APPROVED", "CALIBRATION_TEST_ONLY", "PILOT", "DRAFT", "UNSPECIFIED"]);
+const RELEASE_STATUSES = new Set(["APPROVED", "FROZEN", "PILOT", "DRAFT", "RETIRED", "CALIBRATION_TEST_ONLY", "UNSPECIFIED"]);
 
 function localSnapshot() {
   const snapshot = {

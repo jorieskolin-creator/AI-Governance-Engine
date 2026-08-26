@@ -24,9 +24,11 @@
         "id": "CTRL-A2",
         "domain": "A",
         "title": "Governed control",
+        "authoringObjectId": "A2",
         "requirementIds": ["REQ-A2"],
         "lifecycleStages": ["DESIGN_AND_DEVELOPMENT"],
-        "signals": ["FND-A2-001"]
+        "signals": ["purpose-gap"],
+        "findingDefinitions": [{ "id": "FND-A2-001" }]
       }
     ],
     "antipatterns": [
@@ -34,8 +36,9 @@
         "id": "AP-A2",
         "domain": "A",
         "title": "Governed anti-pattern",
-        "signal": "FND-A2-001",
-        "relatedControlIds": ["CTRL-A2"]
+        "signal": "purpose-gap",
+        "relatedControlIds": ["CTRL-A2"],
+        "findingDefinitions": []
       }
     ],
     "tactics": [
@@ -44,7 +47,9 @@
         "title": "Governed tactic",
         "domains": ["A"],
         "lifecycleStages": ["DESIGN_AND_DEVELOPMENT"],
-        "findingSignals": ["FND-A2-001"]
+        "findingSignals": [],
+        "eligibleFindingIds": [],
+        "assessmentMappings": { "capabilities": ["A2"], "antipatterns": ["AP-A2"], "question_ids": [] }
       }
     ],
     "intakeQuestionnaire": [

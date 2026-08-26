@@ -33,7 +33,7 @@ At startup the Engine fetches the manifest and each referenced JSON document, ch
 Diagnostic status meanings:
 
 - `PASS`: structural, hash and cross-reference checks passed and the release is approved.
-- `WARN`: the snapshot is usable for calibration, but contains a non-blocking issue such as a non-approved release or an unmapped tactic.
+- `WARN`: the snapshot is structurally usable, but contains a non-blocking issue such as a non-approved release.
 - `FAIL`: integrity or referential checks failed; the snapshot is rejected and the Engine does not start with it.
 
 ## Producer and activation boundary
@@ -47,12 +47,14 @@ Before changing a deployment, run the Engine-owned `verify-knowledge-manifest` G
 Rich capability, anti-pattern and tactic JSON must not be uploaded as direct runtime collections. Use the category authoring toolchain documented in [knowledge-authoring/README.md](../knowledge-authoring/README.md):
 
 1. Produce and validate one capability/anti-pattern pair at a time.
-2. Maintain one shared Tactic Catalog and reciprocal tactic references.
+2. Maintain one shared Tactic Catalog as the source of truth for approved `Primary object / mapping` relationships.
 3. Generate human PDFs from the canonical JSON.
 4. Validate all 60 objects together.
-5. Compile the approved authoring package into the five governance collections and, when governed, the versioned assessment-intake questionnaire.
+5. Compile the approved authoring package into six runtime collections: five governance collections plus the versioned assessment-intake questionnaire.
 6. Upload those exact files and generate the runtime manifest last from their immutable URLs and byte hashes.
 
-The compiler preserves rich authoring metadata as additive fields while emitting the existing runtime keys. Lifecycle-specific assurance targets are retained in `targetStateByLifecycle`; the Engine selects the target for the requested transition and falls back to `targetState` for older collections.
+The compiler preserves rich authoring metadata as additive fields while emitting the existing runtime keys. Lifecycle-specific assurance targets are retained separately in `minimumTechnicalAssuranceByLifecycle` and `requiredHumanAssuranceByLifecycle`; `targetStateByLifecycle` remains the combined backward-compatible gate target. The Engine selects the target for the requested transition and falls back to `targetState` for older collections.
+
+Authoring schema `2.1.0` is machine-validated before cross-document validation. Candidate tactics are retrieved only when a locked finding's assessed capability or anti-pattern matches an approved Playbook `Primary object / mapping`. Signal, domain, keyword and similarity matches are not mapping authority. The assessment package records the exact locked finding, assessment object and selected tactic; selection remains advisory and cannot close a finding or authorize progression.
 
 Normative mappings include official links, exact locators, authority type, rationale and verification date. Links establish provenance only. They do not establish that the organizational interpretation is legally correct, current or formally approved. Licensed standards remain metadata-only unless storage and machine use are authorized.

@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { readdir, readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import Ajv2020 from "ajv/dist/2020.js";
 import { INTAKE_QUESTIONNAIRE } from "./intake-questionnaire.js";
 
-export const AUTHORING_SCHEMA_VERSION = "1.0.0";
+export const AUTHORING_SCHEMA_VERSION = "2.1.0";
 export const CANONICAL_LIFECYCLE_STAGES = Object.freeze([
   "QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION",
   "DEPLOYMENT", "OPERATION_AND_MONITORING", "REVIEW_AND_EVALUATION", "RETIREMENT"
@@ -21,8 +23,26 @@ const SOURCE_AUTHORITIES = new Set([
   "BINDING_LAW", "REGULATORY_GUIDANCE", "GOVERNMENT_GUIDANCE", "INTERNAL_PROCESS", "STANDARD",
   "VOLUNTARY_FRAMEWORK", "COMMUNITY_PRACTICE", "INDUSTRY_GUIDANCE", "CONTRACTUAL_REQUIREMENT"
 ]);
-const APPROVED_STATUSES = new Set(["APPROVED", "RELEASED"]);
-const RELEASE_STATUSES = new Set(["DRAFT", "CALIBRATION_CANDIDATE", "CALIBRATION_TEST_ONLY", "PILOT", "APPROVED", "RELEASED"]);
+const APPROVED_STATUSES = new Set(["APPROVED", "FROZEN"]);
+const RELEASE_STATUSES = new Set(["DRAFT", "PILOT", "APPROVED", "FROZEN", "RETIRED"]);
+
+const require = createRequire(import.meta.url);
+const schemaDocuments = [
+  require("../../knowledge-authoring/schemas/shared-definitions.schema.json"),
+  require("../../knowledge-authoring/schemas/capability.schema.json"),
+  require("../../knowledge-authoring/schemas/antipattern.schema.json"),
+  require("../../knowledge-authoring/schemas/tactic-catalog.schema.json"),
+  require("../../knowledge-authoring/schemas/normative-source-register.schema.json")
+];
+const schemaValidator = new Ajv2020({ allErrors: true, strict: true });
+schemaValidator.addFormat("date", /^\d{4}-\d{2}-\d{2}$/);
+schemaDocuments.forEach((schema) => schemaValidator.addSchema(schema));
+const schemaIds = Object.freeze({
+  capability: "urn:ai-governance:schema:capability:2.1.0",
+  antipattern: "urn:ai-governance:schema:antipattern:2.1.0",
+  tacticCatalog: "urn:ai-governance:schema:tactic-catalog:2.1.0",
+  sourceRegister: "urn:ai-governance:schema:normative-source-register:2.1.0"
+});
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const array = (value) => Array.isArray(value) ? value : [];
@@ -34,7 +54,7 @@ async function walk(dir) {
   const result = [];
   for (const item of await readdir(dir, { withFileTypes: true })) {
     const full = path.join(dir, item.name);
-    if (item.isDirectory() && !new Set(["generated", "runtime", "node_modules", ".git"]).has(item.name)) result.push(...await walk(full));
+    if (item.isDirectory() && !new Set(["generated", "runtime", "schemas", "node_modules", ".git"]).has(item.name)) result.push(...await walk(full));
     else if (item.isFile() && item.name.toLowerCase().endsWith(".json") && item.name !== "runtime-manifest.json") result.push(full);
   }
   return result;
@@ -67,6 +87,20 @@ export async function loadAuthoringWorkspace(directory) {
 
 function issue(collection, severity, code, message, refs = {}) { collection.push({ severity, code, message, ...refs }); }
 
+function validateSchemas(workspace, issues, compat) {
+  for (const [workspaceKey, schemaKey] of [["capabilities", "capability"], ["antipatterns", "antipattern"], ["tacticCatalogs", "tacticCatalog"], ["sourceRegisters", "sourceRegister"]]) {
+    const validate = schemaValidator.getSchema(schemaIds[schemaKey]);
+    for (const { file, document } of workspace[workspaceKey]) {
+      if (compat && document.schema_version !== AUTHORING_SCHEMA_VERSION) {
+        issue(issues, "WARNING", "LEGACY_SCHEMA_COMPATIBILITY", `${file}: schema ${document.schema_version ?? "unspecified"} bypassed the 2.1.0 JSON Schema; migrate before release.`, { file });
+        continue;
+      }
+      if (validate(document)) continue;
+      for (const error of validate.errors ?? []) issue(issues, "ERROR", "JSON_SCHEMA_INVALID", `${file}${error.instancePath || "/"}: ${error.message}.`, { file, schemaId: schemaIds[schemaKey], instancePath: error.instancePath });
+    }
+  }
+}
+
 function canonicalStages(stages, compat, issues, objectId) {
   return unique(array(stages).map((stage) => {
     if (CANONICAL_LIFECYCLE_STAGES.includes(stage)) return stage;
@@ -93,7 +127,9 @@ function sourceRecordsFor(object, compat, issues) {
 
 function validateSourceRecord(record, objectId, issues, compat) {
   if (!record.source_id) issue(issues, "ERROR", "SOURCE_ID_REQUIRED", `${objectId}: source mapping is missing source_id.`, { objectId });
-  const complete = record.title && record.official_url && record.authority_type && record.relevant_locator && record.mapping_rationale && array(record.jurisdiction).length && record.effective_status && record.last_verified_on;
+  const mapping = record.relevant_locator && record.mapping_rationale && record.last_verified_on;
+  const registerEntry = record.title && record.official_url && record.authority_type && array(record.jurisdiction).length && record.effective_status && record.last_verified_on;
+  const complete = mapping || registerEntry;
   if (!complete && !compat) issue(issues, "ERROR", "SOURCE_MAPPING_INCOMPLETE", `${objectId}: ${record.source_id ?? "unknown source"} is missing required provenance fields.`, { objectId, sourceId: record.source_id });
   if (record.official_url && !/^https:\/\//i.test(record.official_url) && !/^internal:\/\//i.test(record.official_url)) issue(issues, "ERROR", "SOURCE_URL_NOT_OFFICIAL_HTTPS", `${objectId}: ${record.source_id} must use an official HTTPS or internal URL.`, { objectId, sourceId: record.source_id });
   if (record.authority_type && !SOURCE_AUTHORITIES.has(record.authority_type)) issue(issues, "ERROR", "INVALID_SOURCE_AUTHORITY", `${objectId}: unsupported authority ${record.authority_type}.`, { objectId, sourceId: record.source_id });
@@ -129,8 +165,10 @@ function runtimeSignals(object, compat, issues) {
 function validateObject(object, expectedType, compat, issues) {
   if (!object.id || !object.version || !object.title) issue(issues, "ERROR", "OBJECT_IDENTITY_INCOMPLETE", `${object.id ?? expectedType}: id, version and title are required.`, { objectId: object.id });
   if (!/^[A-F]$/.test(object.domain ?? "")) issue(issues, "ERROR", "DOMAIN_INVALID", `${object.id}: domain must be A-F.`, { objectId: object.id });
+  if (object.id?.replace(/^AP-/, "").charAt(0) !== object.domain) issue(issues, "ERROR", "OBJECT_DOMAIN_MISMATCH", `${object.id}: domain must match the stable object ID.`, { objectId: object.id });
   if (object.object_type !== expectedType) issue(issues, "ERROR", "OBJECT_TYPE_MISMATCH", `${object.id}: expected ${expectedType}.`, { objectId: object.id });
   if (!RELEASE_STATUSES.has(object.release_status)) issue(issues, "ERROR", "RELEASE_STATUS_INVALID", `${object.id}: release_status must be explicit and supported.`, { objectId: object.id });
+  if (APPROVED_STATUSES.has(object.release_status) && object.approval_record?.approved_version !== object.version) issue(issues, "ERROR", "APPROVAL_VERSION_MISMATCH", `${object.id}: approval_record.approved_version must match version.`, { objectId: object.id });
   object.__canonicalStages = canonicalStages(object.lifecycle_stages, compat, issues, object.id);
   object.__sourceRecords = sourceRecordsFor(object, compat, issues);
   object.__sourceRecords.forEach((record) => validateSourceRecord(record, object.id, issues, compat));
@@ -143,16 +181,25 @@ function validateObject(object, expectedType, compat, issues) {
   if (!array(object.primary_questions).length) issue(issues, "ERROR", "PRIMARY_QUESTIONS_REQUIRED", `${object.id}: primary_questions must not be empty.`, { objectId: object.id });
   if (!array(object.required_evidence).length) issue(issues, compat && expectedType === "ANTIPATTERN" ? "WARNING" : "ERROR", "REQUIRED_EVIDENCE_REQUIRED", `${object.id}: required_evidence must not be empty.`, { objectId: object.id });
   if (!array(object.finding_definitions).length) issue(issues, "ERROR", "FINDINGS_REQUIRED", `${object.id}: finding_definitions must not be empty.`, { objectId: object.id });
-  if (!array(object.false_positive_guards).length) issue(issues, "ERROR", "FALSE_POSITIVE_GUARDS_REQUIRED", `${object.id}: false_positive_guards must not be empty.`, { objectId: object.id });
-  if (!array(object.prohibited_inferences).length) issue(issues, "ERROR", "PROHIBITED_INFERENCES_REQUIRED", `${object.id}: prohibited_inferences must not be empty.`, { objectId: object.id });
-  if (expectedType === "CAPABILITY" && !plain(object.target_assurance_by_lifecycle_stage)) issue(issues, "ERROR", "LIFECYCLE_ASSURANCE_TARGETS_REQUIRED", `${object.id}: target_assurance_by_lifecycle_stage must be explicit.`, { objectId: object.id });
-  if (expectedType === "ANTIPATTERN" && !array(object.absence_test_requirements).length) issue(issues, "ERROR", "ABSENCE_TEST_REQUIREMENTS_REQUIRED", `${object.id}: absence_test_requirements must not be empty.`, { objectId: object.id });
+  if (!array(object.evidence_rules?.false_positive_guards).length) issue(issues, "ERROR", "FALSE_POSITIVE_GUARDS_REQUIRED", `${object.id}: evidence_rules.false_positive_guards must not be empty.`, { objectId: object.id });
+  if (!array(object.evidence_rules?.prohibited_inferences).length) issue(issues, "ERROR", "PROHIBITED_INFERENCES_REQUIRED", `${object.id}: evidence_rules.prohibited_inferences must not be empty.`, { objectId: object.id });
+  if (!array(object.target_assurance_by_lifecycle_stage).length) issue(issues, "ERROR", "LIFECYCLE_ASSURANCE_TARGETS_REQUIRED", `${object.id}: target_assurance_by_lifecycle_stage must be explicit.`, { objectId: object.id });
+  if (expectedType === "ANTIPATTERN" && !plain(object.absence_test_contract)) issue(issues, "ERROR", "ABSENCE_TEST_CONTRACT_REQUIRED", `${object.id}: absence_test_contract must be explicit.`, { objectId: object.id });
   for (const finding of array(object.finding_definitions)) {
     if (finding.assessment_object_id !== object.id) issue(issues, "ERROR", "FINDING_OWNER_MISMATCH", `${finding.id}: assessment_object_id must be ${object.id}.`, { objectId: object.id, findingId: finding.id });
     if (!array(finding.eligible_states).length) issue(issues, "ERROR", "FINDING_STATES_REQUIRED", `${finding.id}: eligible_states must not be empty.`, { objectId: object.id, findingId: finding.id });
   }
   const questionIds = new Set(array(object.primary_questions).map((item) => item.id));
-  for (const item of [...array(object.atomic_subcriteria), ...array(object.atomic_tests)]) if (item.question_ref && !questionIds.has(item.question_ref)) issue(issues, "ERROR", "QUESTION_REFERENCE_MISSING", `${item.id}: question_ref ${item.question_ref} does not resolve inside ${object.id}.`, { objectId: object.id });
+  const evidenceIds = new Set(array(object.required_evidence).map((item) => item.id));
+  const expectedQuestionIds = new Set([1, 2, 3].map((number) => `${object.id}-Q${number}`));
+  if (questionIds.size !== expectedQuestionIds.size || [...questionIds].some((id) => !expectedQuestionIds.has(id))) issue(issues, "ERROR", "QUESTION_ID_OWNER_MISMATCH", `${object.id}: question IDs must be ${[...expectedQuestionIds].join(", ")}.`, { objectId: object.id });
+  for (const evidenceId of evidenceIds) if (!evidenceId.startsWith(`EVD-${object.id}-`)) issue(issues, "ERROR", "EVIDENCE_ID_OWNER_MISMATCH", `${object.id}: evidence ID ${evidenceId} has the wrong owner prefix.`, { objectId: object.id, evidenceId });
+  for (const item of [...array(object.atomic_subcriteria), ...array(object.atomic_tests)]) {
+    const expectedPrefix = expectedType === "CAPABILITY" ? `${object.id}-SC-` : `${object.id}-AT-`;
+    if (!item.id?.startsWith(expectedPrefix)) issue(issues, "ERROR", "ATOMIC_ID_OWNER_MISMATCH", `${item.id}: expected owner prefix ${expectedPrefix}.`, { objectId: object.id });
+    if (!questionIds.has(item.question_id)) issue(issues, "ERROR", "QUESTION_REFERENCE_MISSING", `${item.id}: question_id ${item.question_id} does not resolve inside ${object.id}.`, { objectId: object.id });
+    for (const evidenceId of array(item.required_evidence_ids)) if (!evidenceIds.has(evidenceId)) issue(issues, "ERROR", "EVIDENCE_REFERENCE_MISSING", `${item.id}: evidence ${evidenceId} does not resolve inside ${object.id}.`, { objectId: object.id });
+  }
 }
 
 function consolidatedSources(workspace, objects, issues) {
@@ -177,6 +224,7 @@ function consolidatedSources(workspace, objects, issues) {
 export function validateAuthoringWorkspace(workspace, options = {}) {
   const compat = options.compatibility === true;
   const issues = [...workspace.ignored.map((item) => ({ severity: "WARNING", code: "IGNORED_JSON", message: `${item.file}: ${item.reason}`, file: item.file }))];
+  validateSchemas(workspace, issues, compat);
   const capabilities = workspace.capabilities.map((item) => structuredClone(item.document));
   const antipatterns = workspace.antipatterns.map((item) => structuredClone(item.document));
   const sourceRegisters = workspace.sourceRegisters.map((item) => structuredClone(item.document));
@@ -192,37 +240,70 @@ export function validateAuthoringWorkspace(workspace, options = {}) {
   for (const capability of capabilities) {
     const paired = `AP-${capability.id}`;
     if (!objectIds.has(paired)) issue(issues, "ERROR", "PAIR_MISSING", `${capability.id} has no paired ${paired}.`, { objectId: capability.id });
-    if (!array(capability.related_antipatterns).includes(paired)) issue(issues, "ERROR", "PAIR_REFERENCE_MISSING", `${capability.id} must reference ${paired}.`, { objectId: capability.id });
+    if (capability.paired_object_id !== paired) issue(issues, "ERROR", "PAIR_REFERENCE_MISSING", `${capability.id} must identify ${paired} as paired_object_id.`, { objectId: capability.id });
   }
   for (const antipattern of antipatterns) {
-    const relatedCapability = antipattern.related_capability ?? array(antipattern.related_criteria).find((id) => objectIds.has(id));
-    if (!relatedCapability || !objectIds.has(relatedCapability)) issue(issues, "ERROR", "CAPABILITY_REFERENCE_MISSING", `${antipattern.id} must reference its capability.`, { objectId: antipattern.id });
+    const relatedCapability = antipattern.id.replace(/^AP-/, "");
+    if (!objectIds.has(relatedCapability) || antipattern.paired_object_id !== relatedCapability) issue(issues, "ERROR", "CAPABILITY_REFERENCE_MISSING", `${antipattern.id} must identify ${relatedCapability} as paired_object_id.`, { objectId: antipattern.id });
   }
   let nestedIds = new Map();
   for (const field of ["primary_questions", "atomic_subcriteria", "atomic_tests", "required_evidence", "finding_definitions"]) nestedIds = collectIds(allObjects, field, issues, nestedIds);
   const findingIds = new Set(allObjects.flatMap((object) => array(object.finding_definitions).map((item) => item.id)));
+  const questionIds = new Set(allObjects.flatMap((object) => array(object.primary_questions).map((item) => item.id)));
   const tacticIds = new Set();
   if (workspace.tacticCatalogs.length !== 1) issue(issues, "ERROR", "GLOBAL_TACTIC_CATALOG_REQUIRED", `Exactly one global Tactic Catalog is required; found ${workspace.tacticCatalogs.length}.`);
   for (const catalog of workspace.tacticCatalogs.map((item) => item.document)) if (!RELEASE_STATUSES.has(catalog.release_status)) issue(issues, "ERROR", "TACTIC_CATALOG_RELEASE_STATUS_INVALID", `${catalog.catalog_id ?? "Tactic Catalog"}: release_status must be explicit and supported.`);
   for (const register of sourceRegisters) if (!RELEASE_STATUSES.has(register.release_status)) issue(issues, "ERROR", "SOURCE_REGISTER_RELEASE_STATUS_INVALID", `Normative Source Register: release_status must be explicit and supported.`);
+  const unloadedTacticObjectIds = new Set();
   for (const tactic of tactics) {
     if (!tactic.id || tacticIds.has(tactic.id)) issue(issues, "ERROR", "TACTIC_ID_INVALID", `${tactic.id ?? "Unknown tactic"} is missing or duplicated.`, { tacticId: tactic.id });
     tacticIds.add(tactic.id);
-    for (const id of [...array(tactic.assessment_mappings?.capabilities), ...array(tactic.assessment_mappings?.antipatterns), ...array(tactic.reassessment_targets)]) if (!objectIds.has(id)) issue(issues, compat ? "WARNING" : "ERROR", "TACTIC_OBJECT_REFERENCE_MISSING", `${tactic.id} references missing assessment object ${id}.`, { tacticId: tactic.id, objectId: id });
+    const primaryMappings = [...array(tactic.assessment_mappings?.capabilities), ...array(tactic.assessment_mappings?.antipatterns)];
+    if (!primaryMappings.length) issue(issues, "ERROR", "TACTIC_PRIMARY_OBJECT_MAPPING_REQUIRED", `${tactic.id} must retain at least one Primary object / mapping from the approved Playbook.`, { tacticId: tactic.id });
+    for (const id of primaryMappings) if (!objectIds.has(id)) unloadedTacticObjectIds.add(id);
+    for (const id of array(tactic.assessment_mappings?.question_ids)) if (!questionIds.has(id)) issue(issues, "ERROR", "TACTIC_QUESTION_REFERENCE_MISSING", `${tactic.id} references missing question ${id}.`, { tacticId: tactic.id, questionId: id });
     for (const id of array(tactic.eligible_finding_ids)) if (!findingIds.has(id)) issue(issues, "ERROR", "TACTIC_FINDING_REFERENCE_MISSING", `${tactic.id} references missing finding ${id}.`, { tacticId: tactic.id, findingId: id });
-    for (const field of ["owners", "activities", "artifacts", "acceptance_criteria", "verification", "do_not_use_when"]) if (!array(tactic[field]).length) issue(issues, "ERROR", "TACTIC_FIELD_EMPTY", `${tactic.id}: ${field} must not be empty.`, { tacticId: tactic.id });
-    if (!tactic.use_when) issue(issues, compat ? "WARNING" : "ERROR", "TACTIC_USE_WHEN_REQUIRED", `${tactic.id}: use_when must define the activation boundary.`, { tacticId: tactic.id });
-    if (!tactic.blocks_transition) issue(issues, compat ? "WARNING" : "ERROR", "TACTIC_BLOCKED_TRANSITION_REQUIRED", `${tactic.id}: blocks_transition must identify what remains blocked.`, { tacticId: tactic.id });
+    for (const id of array(tactic.prerequisite_tactic_ids)) if (!tactics.some((candidate) => candidate.id === id)) issue(issues, "ERROR", "TACTIC_PREREQUISITE_MISSING", `${tactic.id} references missing prerequisite ${id}.`, { tacticId: tactic.id, prerequisiteTacticId: id });
+    if (tactic.prerequisite_tactic_ids?.includes(tactic.id)) issue(issues, "ERROR", "TACTIC_SELF_DEPENDENCY", `${tactic.id} cannot depend on itself.`, { tacticId: tactic.id });
+    if (tactic.activation_mapping_status === "APPROVED") {
+      for (const field of ["owners", "activities", "artifacts", "acceptance_criteria", "verification", "do_not_use_when"]) if (!array(tactic[field]).length) issue(issues, "ERROR", "TACTIC_FIELD_EMPTY", `${tactic.id}: ${field} must not be empty for an enriched exact activation mapping.`, { tacticId: tactic.id });
+      if (!tactic.use_when) issue(issues, "ERROR", "TACTIC_USE_WHEN_REQUIRED", `${tactic.id}: use_when must define the enriched activation boundary.`, { tacticId: tactic.id });
+      if (!tactic.blocks_transition) issue(issues, "ERROR", "TACTIC_BLOCKED_TRANSITION_REQUIRED", `${tactic.id}: blocks_transition must identify what remains blocked.`, { tacticId: tactic.id });
+      if (!array(tactic.eligible_finding_ids).length || !array(tactic.trigger_states).length || tactic.operationalization_status !== "RUNTIME_READY") issue(issues, "ERROR", "TACTIC_EXACT_ACTIVATION_INCOMPLETE", `${tactic.id}: approved exact activation requires findings, trigger states and RUNTIME_READY operationalization.`, { tacticId: tactic.id });
+    }
+    if (APPROVED_STATUSES.has(tactic.release_status) && tactic.approval_record?.approved_version !== tactic.version) issue(issues, "ERROR", "TACTIC_APPROVAL_VERSION_MISMATCH", `${tactic.id}: approval_record.approved_version must match version.`, { tacticId: tactic.id });
   }
+  if (unloadedTacticObjectIds.size) issue(issues, "WARNING", "TACTIC_OBJECTS_NOT_LOADED", `${unloadedTacticObjectIds.size} assessment objects referenced by approved Playbook mappings are not loaded in this partial authoring workspace. Production compilation requires all mapped objects.`, { objectIds: [...unloadedTacticObjectIds].sort() });
+  for (const catalog of workspace.tacticCatalogs.map((item) => item.document)) {
+    if (catalog.source_document?.definition_authority !== "USER_CONFIRMED_FINALIZED_PLAYBOOK") continue;
+    const expected = { PURPOSE: 20, DATA: 20, MODELS: 20, ARCHITECTURE: 21, HUMAN: 21, ACCOUNTABILITY: 17 };
+    const counts = Object.fromEntries(Object.keys(expected).map((namespace) => [namespace, array(catalog.tactics).filter((tactic) => tactic.id?.startsWith(`TAC-${namespace}-`)).length]));
+    if (array(catalog.tactics).length !== 119 || Object.keys(expected).some((namespace) => counts[namespace] !== expected[namespace])) issue(issues, "ERROR", "FINALIZED_PLAYBOOK_INCOMPLETE", `The finalized Playbook must contain 119 tactics with namespace counts ${JSON.stringify(expected)}; found ${JSON.stringify(counts)}.`);
+    if (catalog.source_document.sha256 !== "b74dda0d25ceba8679bb2e182bf85a28a8c8157b0481207ae3ba1d207314bf93") issue(issues, "ERROR", "FINALIZED_PLAYBOOK_SOURCE_MISMATCH", "The finalized Playbook source hash does not match the user-approved document.");
+  }
+  const dependencies = new Map(tactics.map((tactic) => [tactic.id, array(tactic.prerequisite_tactic_ids)]));
+  const visiting = new Set(); const visited = new Set();
+  const visit = (id, path = []) => {
+    if (visiting.has(id)) { issue(issues, "ERROR", "TACTIC_DEPENDENCY_CYCLE", `Tactic dependency cycle: ${[...path, id].join(" -> ")}.`, { tacticId: id }); return; }
+    if (visited.has(id)) return;
+    visiting.add(id);
+    for (const dependency of dependencies.get(id) ?? []) if (dependencies.has(dependency)) visit(dependency, [...path, id]);
+    visiting.delete(id); visited.add(id);
+  };
+  for (const id of dependencies.keys()) visit(id);
   for (const object of allObjects) {
     const forward = new Set(array(object.candidate_tactic_refs).map((item) => item.tactic_id));
-    const reverse = new Set(tactics.filter((tactic) => [...array(tactic.assessment_mappings?.capabilities), ...array(tactic.assessment_mappings?.antipatterns)].includes(object.id)).map((item) => item.id));
     for (const id of forward) if (!tacticIds.has(id)) issue(issues, "ERROR", "OBJECT_TACTIC_REFERENCE_MISSING", `${object.id} references missing tactic ${id}.`, { objectId: object.id, tacticId: id });
-    for (const id of new Set([...forward, ...reverse])) if (!forward.has(id) || !reverse.has(id)) issue(issues, "ERROR", "TACTIC_MAPPING_NOT_RECIPROCAL", `${object.id} and ${id} are not mapped in both directions.`, { objectId: object.id, tacticId: id });
+    for (const reference of array(object.candidate_tactic_refs)) {
+      const tactic = tactics.find((item) => item.id === reference.tactic_id);
+      if (tactic && tactic.version !== reference.tactic_version) issue(issues, "ERROR", "TACTIC_VERSION_REFERENCE_MISMATCH", `${object.id} references ${reference.tactic_id} version ${reference.tactic_version}, but the catalog contains ${tactic.version}.`, { objectId: object.id, tacticId: reference.tactic_id });
+      const primaryMappings = [...array(tactic?.assessment_mappings?.capabilities), ...array(tactic?.assessment_mappings?.antipatterns)];
+      if (tactic && !primaryMappings.includes(object.id)) issue(issues, "ERROR", "OBJECT_TACTIC_MAPPING_CONFLICT", `${object.id} references ${reference.tactic_id}, but the Playbook does not identify ${object.id} as a Primary object / mapping.`, { objectId: object.id, tacticId: reference.tactic_id });
+    }
   }
   const mechanismKeys = new Map();
   for (const tactic of tactics) {
-    const key = normalize(`${tactic.objective} ${array(tactic.artifacts).join(" ")} ${array(tactic.verification).join(" ")}`);
+    const key = normalize(`${tactic.control_purpose ?? tactic.objective} ${array(tactic.principal_outputs ?? tactic.artifacts).join(" ")} ${tactic.function ?? ""}`);
     if (mechanismKeys.has(key)) issue(issues, "WARNING", "POSSIBLE_DUPLICATE_TACTIC_MECHANISM", `${tactic.id} appears equivalent to ${mechanismKeys.get(key)}.`, { tacticId: tactic.id });
     else mechanismKeys.set(key, tactic.id);
   }
@@ -234,14 +315,17 @@ export function validateAuthoringWorkspace(workspace, options = {}) {
 }
 
 function targetStates(object) {
-  const output = {};
-  for (const [rawStage, description] of Object.entries(plain(object.target_assurance_by_lifecycle_stage) ? object.target_assurance_by_lifecycle_stage : {})) {
-    const stage = LEGACY_STAGES[rawStage] ?? rawStage;
-    const text = String(description).toUpperCase();
-    const state = text.includes("FORMALLY_APPROVED") || text.includes("INDEPENDENTLY_VALIDATED") || text.includes("HUMAN_VALIDATED") ? "HUMAN_VALIDATED" : text.includes("OPERATIONALLY_OBSERVED") ? "OPERATIONALLY_OBSERVED" : text.includes("TESTED") ? "TESTED" : text.includes("IMPLEMENTED") ? "IMPLEMENTED" : "DECLARED";
-    if (CANONICAL_LIFECYCLE_STAGES.includes(stage)) output[stage] = state;
+  const technical = {};
+  const human = {};
+  const combined = {};
+  for (const target of array(object.target_assurance_by_lifecycle_stage)) {
+    const stage = LEGACY_STAGES[target.lifecycle_stage] ?? target.lifecycle_stage;
+    if (!CANONICAL_LIFECYCLE_STAGES.includes(stage)) continue;
+    technical[stage] = target.minimum_technical_assurance;
+    human[stage] = target.required_human_assurance;
+    combined[stage] = target.required_human_assurance === "NOT_REQUIRED" ? target.minimum_technical_assurance : target.required_human_assurance;
   }
-  return output;
+  return { technical, human, combined };
 }
 
 function runtimeSource(record) {
@@ -254,16 +338,17 @@ export async function compileRuntimeCollections(validation, outputDirectory, opt
   if (options.requireApproved !== false) {
     if (sourceRegisters.length !== 1) throw new Error(`Production compilation requires exactly one Normative Source Register; found ${sourceRegisters.length}`);
     const unapproved = [...capabilities, ...antipatterns].filter((item) => !APPROVED_STATUSES.has(item.release_status)).map((item) => item.id);
-    const unapprovedTactics = tactics.filter((item) => !APPROVED_STATUSES.has(item.__catalog?.release_status)).map((item) => item.id);
+    const unapprovedTactics = tactics.filter((item) => !APPROVED_STATUSES.has(item.release_status) || !APPROVED_STATUSES.has(item.__catalog?.release_status)).map((item) => item.id);
+    const unresolvedTacticObjects = tactics.flatMap((item) => [...array(item.assessment_mappings?.capabilities), ...array(item.assessment_mappings?.antipatterns)].filter((id) => ![...capabilities, ...antipatterns].some((object) => object.id === id)).map((id) => `${item.id}->${id}`));
+    const unapprovedMappings = [...capabilities, ...antipatterns].filter((item) => array(item.candidate_tactic_refs).some((reference) => reference.mapping_status !== "APPROVED")).map((item) => item.id);
     const unapprovedRegisters = sourceRegisters.filter((item) => !APPROVED_STATUSES.has(item.release_status)).map((item) => item.version ?? "source-register");
-    if (unapproved.length || unapprovedTactics.length || unapprovedRegisters.length) throw new Error(`Production compilation requires APPROVED content: ${[...unapproved, ...unapprovedTactics, ...unapprovedRegisters].join(", ")}`);
+    if (unapproved.length || unapprovedTactics.length || unapprovedMappings.length || unapprovedRegisters.length || unresolvedTacticObjects.length) throw new Error(`Production compilation requires approved or frozen content and complete Playbook object mappings: ${[...unapproved, ...unapprovedTactics, ...unapprovedMappings, ...unapprovedRegisters, ...unresolvedTacticObjects].join(", ")}`);
   }
   const normativeSources = sources.map(runtimeSource).sort((a, b) => a.id.localeCompare(b.id));
   const requirements = capabilities.map((item) => ({ id: `REQ-${item.id}`, domain: item.domain, title: item.title, sourceIds: unique(item.__sourceRecords.map((source) => source.source_id)), authority: item.runtime_authority ?? "MIXED", lifecycleStages: item.__canonicalStages, applicability: RUNTIME_APPLICABILITY.includes(item.runtime_applicability) ? item.runtime_applicability : "ALWAYS", interpretation: item.canonical_definition, humanAuthority: item.human_decision_authority ?? "GOVERNANCE", authoringObjectId: item.id, authoringVersion: item.version, governancePurpose: item.governance_purpose, applicabilityDetail: item.applicability, normativeMappings: item.__sourceRecords, findingDefinitions: item.finding_definitions })).sort((a, b) => a.id.localeCompare(b.id));
-  const controls = capabilities.map((item) => { const byLifecycle = targetStates(item); const states = Object.values(byLifecycle); return { id: `CTRL-${item.id}`, domain: item.domain, title: item.title, requirementIds: [`REQ-${item.id}`], lifecycleStages: item.__canonicalStages, targetState: states.at(-1) ?? "TESTED", targetStateByLifecycle: byLifecycle, severity: item.__runtimeSeverity, signals: item.__runtimeSignals, authoringObjectId: item.id, authoringVersion: item.version, questions: item.primary_questions, atomicSubcriteria: item.atomic_subcriteria, indicators: item.capability_indicators, requiredEvidence: item.required_evidence, evidenceRules: item.evidence_rules, falsePositiveGuards: item.false_positive_guards, prohibitedInferences: item.prohibited_inferences, findingDefinitions: item.finding_definitions, hardGateEffect: item.hard_gate_effect, candidateTacticRefs: item.candidate_tactic_refs }; }).sort((a, b) => a.id.localeCompare(b.id));
-  const runtimeAntipatterns = antipatterns.map((item) => ({ id: item.id, domain: item.domain, title: item.title, severity: item.__runtimeSeverity, signal: item.__runtimeSignals[0], signals: item.__runtimeSignals, relatedControlIds: unique([item.related_capability, ...array(item.related_criteria)].filter(Boolean).map((id) => `CTRL-${id}`)), lifecycleStages: item.__canonicalStages, authoringVersion: item.version, failureMechanism: item.failure_mechanism, consequences: item.potential_consequences, atomicTests: item.atomic_tests, indicators: item.antipattern_indicators, absenceTestRequirements: item.absence_test_requirements, evidenceRules: item.evidence_rules, falsePositiveGuards: item.false_positive_guards, prohibitedInferences: item.prohibited_inferences, findingDefinitions: item.finding_definitions, hardGateEffect: item.hard_gate_effect, candidateTacticRefs: item.candidate_tactic_refs })).sort((a, b) => a.id.localeCompare(b.id));
-  const allObjects = [...capabilities, ...antipatterns];
-  const runtimeTactics = tactics.map((item) => ({ id: item.id, version: item.version, status: APPROVED_STATUSES.has(item.__catalog?.release_status) ? "APPROVED" : item.__catalog?.release_status ?? "DRAFT", title: item.title, findingSignals: item.eligible_finding_ids, domains: unique([...array(item.assessment_mappings?.capabilities), ...array(item.assessment_mappings?.antipatterns)].map((id) => id.replace(/^AP-/, "").charAt(0))), lifecycleStages: unique(array(item.reassessment_targets).flatMap((id) => allObjects.find((object) => object.id === id)?.__canonicalStages ?? [])), useWhen: item.use_when ?? item.objective, doNotUseWhen: item.do_not_use_when, ownerRoles: item.owners, activities: item.activities, requiredArtifacts: item.artifacts, acceptanceCriteria: item.acceptance_criteria, verification: item.verification, blocksTransition: item.blocks_transition ?? "Progression remains blocked until acceptance evidence is reassessed.", completionEffect: "NEW_EVIDENCE_AND_REASSESSMENT_REQUIRED", assessmentMappings: item.assessment_mappings, eligibleFindingIds: item.eligible_finding_ids, triggerStates: item.trigger_states, reassessmentTargets: item.reassessment_targets })).sort((a, b) => a.id.localeCompare(b.id));
+  const controls = capabilities.map((item) => { const assurance = targetStates(item); const states = Object.values(assurance.combined); return { id: `CTRL-${item.id}`, domain: item.domain, title: item.title, requirementIds: [`REQ-${item.id}`], lifecycleStages: item.__canonicalStages, targetState: states.at(-1) ?? "TESTED", targetStateByLifecycle: assurance.combined, minimumTechnicalAssuranceByLifecycle: assurance.technical, requiredHumanAssuranceByLifecycle: assurance.human, severity: item.__runtimeSeverity, signals: item.__runtimeSignals, authoringObjectId: item.id, authoringVersion: item.version, pairedObjectId: item.paired_object_id, questions: item.primary_questions, atomicSubcriteria: item.atomic_subcriteria, indicators: item.capability_indicators, requiredEvidence: item.required_evidence, evidenceRules: item.evidence_rules, falsePositiveGuards: item.evidence_rules.false_positive_guards, prohibitedInferences: item.evidence_rules.prohibited_inferences, findingDefinitions: item.finding_definitions, hardGateEffect: item.hard_gate_effect, candidateTacticRefs: item.candidate_tactic_refs }; }).sort((a, b) => a.id.localeCompare(b.id));
+  const runtimeAntipatterns = antipatterns.map((item) => ({ id: item.id, domain: item.domain, title: item.title, severity: item.__runtimeSeverity, signal: item.__runtimeSignals[0], signals: item.__runtimeSignals, relatedControlIds: [`CTRL-${item.paired_object_id}`], lifecycleStages: item.__canonicalStages, authoringVersion: item.version, pairedObjectId: item.paired_object_id, failureMechanism: item.failure_mechanism, consequences: item.potential_consequences, atomicTests: item.atomic_tests, indicators: item.antipattern_indicators, absenceTestContract: item.absence_test_contract, evidenceRules: item.evidence_rules, falsePositiveGuards: item.evidence_rules.false_positive_guards, prohibitedInferences: item.evidence_rules.prohibited_inferences, findingDefinitions: item.finding_definitions, hardGateEffect: item.hard_gate_effect, candidateTacticRefs: item.candidate_tactic_refs })).sort((a, b) => a.id.localeCompare(b.id));
+  const runtimeTactics = tactics.map((item) => ({ id: item.id, version: item.version, status: APPROVED_STATUSES.has(item.release_status) && APPROVED_STATUSES.has(item.__catalog?.release_status) ? "APPROVED" : item.release_status, title: item.title, function: item.function, controlPurpose: item.control_purpose, primaryMappingText: item.primary_mapping_text, findingSignals: [], domains: unique([...array(item.assessment_mappings?.capabilities), ...array(item.assessment_mappings?.antipatterns)].map((id) => id.replace(/^AP-/, "").charAt(0))), lifecycleStages: item.eligibility?.lifecycle_stages ?? [], useWhen: item.use_when ?? item.control_purpose, doNotUseWhen: item.do_not_use_when ?? [], ownerRoles: item.owners ?? [], activities: item.activities ?? [item.control_purpose], requiredArtifacts: item.artifacts ?? item.principal_outputs, principalOutputs: item.principal_outputs, acceptanceCriteria: item.acceptance_criteria ?? [], verification: item.verification ?? ["Implementation must produce evidence for verification and reassessment."], risks: item.risks ?? [], blocksTransition: item.blocks_transition ?? "No transition is authorized by tactic selection or completion.", completionEffect: item.completion_effect, assessmentMappings: item.assessment_mappings, eligibleFindingIds: item.eligible_finding_ids, triggerStates: item.trigger_states, prerequisiteTacticIds: item.prerequisite_tactic_ids, reassessmentText: item.reassessment_text, reassessmentTargets: item.reassessment_targets, normativeSourceMappings: item.normative_source_mappings })).sort((a, b) => a.id.localeCompare(b.id));
   await mkdir(outputDirectory, { recursive: true });
   const collections = { normativeSources, requirements, controls, antipatterns: runtimeAntipatterns, tactics: runtimeTactics, intakeQuestionnaire: [structuredClone(INTAKE_QUESTIONNAIRE)] };
   for (const [type, entries] of Object.entries(collections)) if (!entries.length) throw new Error(`Compilation requires a non-empty ${type} collection`);

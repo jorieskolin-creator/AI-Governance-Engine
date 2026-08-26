@@ -40,7 +40,7 @@ test("knowledge diagnostics identifies broken cross-document references", () => 
     requirements: [{ id: "REQ-A-1", domain: "A", sourceIds: ["SRC-MISSING"], lifecycleStages: ["DESIGN_AND_DEVELOPMENT"] }],
     controls: [{ id: "CTRL-A-1", domain: "A", requirementIds: ["REQ-MISSING"], lifecycleStages: ["DESIGN_AND_DEVELOPMENT"], signals: [] }],
     antipatterns: [{ id: "AP-A-1", domain: "A", relatedControlIds: ["CTRL-MISSING"], signal: "gap" }],
-    tactics: [{ id: "TACTIC-A-1", domains: ["A"], lifecycleStages: ["DESIGN_AND_DEVELOPMENT"], findingSignals: ["unmapped"] }]
+    tactics: [{ id: "TACTIC-A-1", domains: ["A"], lifecycleStages: ["DESIGN_AND_DEVELOPMENT"], eligibleFindingIds: ["FND-MISSING"] }]
   });
   assert.equal(diagnostics.status, "FAIL");
   assert.ok(diagnostics.issues.some((item) => item.code === "BROKEN_NORMATIVE_SOURCE_REFERENCE"));
@@ -99,9 +99,9 @@ test("complete hash-pinned Vercel snapshot is accepted", async (t) => {
   const entries = {
     normativeSources: [{ id: "SRC-1", title: "Source" }],
     requirements: [{ id: "REQ-A-1", domain: "A", title: "Requirement", sourceIds: ["SRC-1"], lifecycleStages: ["DESIGN_AND_DEVELOPMENT"] }],
-    controls: [{ id: "CTRL-A-1", domain: "A", title: "Control", requirementIds: ["REQ-A-1"], lifecycleStages: ["DESIGN_AND_DEVELOPMENT"], signals: ["missing-control"] }],
-    antipatterns: [{ id: "AP-A-1", domain: "A", title: "Anti-pattern", signal: "missing-control", relatedControlIds: ["CTRL-A-1"] }],
-    tactics: [{ id: "TACTIC-A-1", title: "Tactic", domains: ["A"], lifecycleStages: ["DESIGN_AND_DEVELOPMENT"], findingSignals: ["missing-control"] }]
+    controls: [{ id: "CTRL-A-1", domain: "A", title: "Control", authoringObjectId: "A1", requirementIds: ["REQ-A-1"], lifecycleStages: ["DESIGN_AND_DEVELOPMENT"], signals: ["missing-control"], findingDefinitions: [{ id: "FND-A1-001" }] }],
+    antipatterns: [{ id: "AP-A-1", domain: "A", title: "Anti-pattern", signal: "missing-control", relatedControlIds: ["CTRL-A-1"], findingDefinitions: [] }],
+    tactics: [{ id: "TACTIC-A-1", title: "Tactic", domains: ["A"], lifecycleStages: ["DESIGN_AND_DEVELOPMENT"], assessmentMappings: { capabilities: ["A1"], antipatterns: ["AP-A-1"] } }]
   };
   const types = Object.keys(entries);
   const documents = Object.fromEntries(types.map((type) => [`https://blob.example/${type}.json`, JSON.stringify(entries[type])]));

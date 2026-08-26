@@ -271,7 +271,7 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
     actionAvailability: actions.length ? { status: "APPROVED_ACTIONS_AVAILABLE", count: actions.length, message: `${actions.length} approved action pattern(s) are linked to findings.` } : {
       status: domains.some((item) => item.gaps.length) ? "NO_APPROVED_TACTIC_AVAILABLE" : "NO_ACTION_REQUIRED",
       count: 0,
-      message: domains.some((item) => item.gaps.length) ? "Findings exist, but no exact approved tactic is available. Pilot tactics are not presented as authorized remediation." : "No playbook action is required for the declared transition."
+      message: domains.some((item) => item.gaps.length) ? "Findings exist, but no approved Playbook tactic is mapped to their assessed capability or anti-pattern. Non-approved tactics are not presented as authorized remediation." : "No playbook action is required for the declared transition."
     },
     actions,
     humanAuthority: {

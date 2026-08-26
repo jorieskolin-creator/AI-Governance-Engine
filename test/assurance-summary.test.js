@@ -52,11 +52,11 @@ test("hard gates expose deterministic clearance and authority contracts", async 
   assert.equal(gate.blockedTransition, result.solution.targetStage);
 });
 
-test("empty playbook output explains that no exact approved tactic is available", async () => {
+test("empty playbook output explains that no approved object-mapped tactic is available", async () => {
   const result = await assessSolution(request({ sources: [] }));
   assert.equal(result.actions.length, 0);
   assert.equal(result.assuranceSummary.actionAvailability.status, "NO_APPROVED_TACTIC_AVAILABLE");
-  assert.match(result.assuranceSummary.actionAvailability.message, /no exact approved tactic/i);
+  assert.match(result.assuranceSummary.actionAvailability.message, /no approved Playbook tactic is mapped/i);
 });
 
 test("standalone report is escaped, offline, lean and case-identifiable", async () => {

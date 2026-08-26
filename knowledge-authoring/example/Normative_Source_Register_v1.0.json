@@ -1,8 +1,9 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.1.0",
   "register_type": "NORMATIVE_SOURCE_REGISTER",
   "version": "1.0.0",
-  "release_status": "APPROVED",
+  "release_status": "DRAFT",
+  "approval_record": null,
   "sources": [{
     "source_id": "SRC-INTERNAL-GOV-2026",
     "title": "Internal AI Governance Process",
@@ -11,7 +12,7 @@
     "jurisdiction": ["INTERNAL"],
     "effective_status": "VERIFY_AT_ASSESSMENT",
     "last_verified_on": "2026-07-31",
-    "approval_status": "APPROVED",
+    "approval_status": "DRAFT",
     "owner_authority": "GOVERNANCE"
   }]
 }

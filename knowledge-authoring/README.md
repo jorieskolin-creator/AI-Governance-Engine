@@ -1,12 +1,18 @@
 # Category-by-category Knowledge Base production
 
-The authoring JSON is canonical. Category PDFs and the five runtime collections are generated views; do not maintain them independently.
+The authoring JSON is canonical. Category PDFs and the six runtime collections are generated views; do not maintain them independently.
+
+Schema version `2.1.0` is defined in `schemas/`. Strict validation runs the draft 2020-12 schemas first and then enforces cross-document integrity that JSON Schema cannot express: reciprocal capability/anti-pattern pairs, globally unique atomic IDs, internal question and evidence references, Playbook object mappings, tactic dependencies and source-register resolution.
+
+Stable ID forms are `A1` / `AP-A1`, `A1-Q1` / `AP-A1-Q1`, `A1-SC-001` / `AP-A1-AT-001`, `EVD-A1-001` / `EVD-AP-A1-001`, and `FND-A1-001` / `FND-AP-A1-001`. Tactic IDs use the Playbook namespace, assessment object and two-digit sequence, for example `TAC-PURPOSE-A1-01`. Published IDs are immutable; migrate older example IDs explicitly rather than aliasing them silently.
+
+The bundled A1 pair and source register are structurally complete `DRAFT` examples. The canonical catalog contains all 119 user-approved Playbook tactic definitions. Production compilation still requires all 60 approved assessment objects and the approved source register.
 
 ## One category cycle
 
 1. Copy the complete `example/A1_v1.0.json` and `example/AP-A1_v1.0.json` pair.
-2. Replace every object, question, test, evidence, finding and mapping ID with the new category IDs.
-3. Reuse or extend the single global Tactic Catalog. Keep mappings reciprocal in both category files and the catalog.
+2. Replace every object, pair, question, test, evidence, finding and mapping ID with the new category IDs.
+3. Use the canonical global Tactic Catalog. Its approved `Primary object / mapping` relationships are the mapping source of truth; category files do not need to duplicate every relationship.
 4. Add structured normative mappings with exact official URL, locator, rationale and verification date.
 5. Validate the complete authoring directory.
 6. Generate the combined human PDF from the validated JSON and review it.
@@ -14,7 +20,9 @@ The authoring JSON is canonical. Category PDFs and the five runtime collections 
 
 Canonical lifecycle stages are `QUALIFICATION_AND_REGISTRATION`, `DESIGN_AND_DEVELOPMENT`, `VERIFICATION_AND_VALIDATION`, `DEPLOYMENT`, `OPERATION_AND_MONITORING`, `REVIEW_AND_EVALUATION` and `RETIREMENT`. Controlled pilot is an operating boundary; material change is a reassessment trigger.
 
-Every category must explicitly provide `runtime_severity`, `runtime_signals`, and preferably `runtime_applicability`. These fields prevent the compiler from guessing deterministic behavior from prose.
+Every category must explicitly provide `runtime_severity`, `runtime_signals`, and `runtime_applicability`. These fields prevent the compiler from guessing deterministic behavior from prose. Technical assurance and human assurance remain separate in authoring and in the compiled controls.
+
+The category taxonomy owns assessment and finding definitions. The global Tactic Catalog owns reusable roadmap definitions and their approved `Primary object / mapping` relationships. A locked finding is connected to candidate tactics through its assessed capability or anti-pattern; the assessment result records the exact finding-to-selected-tactic grounding. The source Playbook provides function, control purpose, principal outputs and reassessment targets, but not owners, dependencies, acceptance criteria or dedicated verification procedures, so those fields are not fabricated. Tactic completion has one allowed effect: `NEW_EVIDENCE_AND_REASSESSMENT_REQUIRED`. Selection cannot close a finding, accept risk or authorize progression. Case-specific assignees, dates and action state belong to the runtime roadmap, not the reusable catalog.
 
 ## Commands
 
@@ -30,9 +38,9 @@ Use `--compat --allow-calibration` only for calibration of legacy packages. Comp
 ## Release order
 
 1. Run strict validation across all 60 assessment objects, the global Tactic Catalog and source register.
-2. Compile and inspect the five runtime collections.
+2. Compile and inspect the six runtime collections.
 3. Generate and review the 30 category PDFs and the Tactic Playbook PDF.
-4. Upload the five runtime JSON files to Vercel Blob and record their exact immutable URLs.
+4. Upload the six runtime JSON files to Vercel Blob and record their exact immutable URLs.
 5. Copy `blob-urls.example.jsonc` to a release-specific `.json` file outside the authoring input directory and replace every placeholder with the exact immutable Blob URL.
 6. Generate `runtime-manifest.json` last. The generator hashes the exact uploaded-file bytes and rejects placeholder URLs or changed files.
 7. Upload the manifest and configure Railway's `VERCEL_KB_MANIFEST_URL`.

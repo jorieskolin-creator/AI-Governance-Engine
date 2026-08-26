@@ -1,49 +1,54 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.1.0",
   "id": "A1",
   "version": "1.0.0",
-  "release_status": "APPROVED",
+  "release_status": "DRAFT",
+  "approval_record": null,
   "domain": "A",
+  "domain_title": "Purpose, value, context, roles and classification",
   "object_type": "CAPABILITY",
-  "title": "Purpose and accountable use boundary",
-  "canonical_definition": "The intended purpose, accountable owner, permitted uses and excluded uses are explicit and controlled.",
-  "governance_purpose": "Prevent purpose ambiguity and uncontrolled use expansion.",
-  "applicability": { "default_state": "APPLICABLE", "conditions": ["Applies to every AI solution."] },
+  "paired_object_id": "AP-A1",
+  "title": "Intended purpose and use boundaries",
+  "canonical_definition": "Intended purpose, users, affected persons, operating context, outputs, permitted and prohibited uses, and foreseeable misuse are precise enough to govern design and evaluation.",
+  "governance_purpose": "Prevent purpose ambiguity and uncontrolled expansion of the solution use boundary.",
+  "distinct_claim": "The intended purpose and use boundary are explicit, attributable and controlled.",
+  "applicability": { "default_state": "APPLICABLE", "conditions": ["Applies to every assessed AI solution."] },
   "runtime_applicability": "ALWAYS",
   "runtime_authority": "INTERNAL_PROCESS",
   "runtime_severity": "HIGH",
   "runtime_signals": ["purpose", "accountable-owner", "excluded-use"],
   "lifecycle_stages": ["QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION", "DEPLOYMENT", "OPERATION_AND_MONITORING", "REVIEW_AND_EVALUATION", "RETIREMENT"],
-  "primary_questions": [{ "id": "Q-A1-001", "question": "Is the intended purpose explicit and attributable?" }],
-  "atomic_subcriteria": [{ "id": "SC-A1-001", "title": "Purpose is explicit", "description": "Purpose is documented with users, outcomes and limits." }],
-  "capability_indicators": ["Approved purpose statement", "Named accountable owner"],
-  "required_evidence": [{ "id": "EV-A1-001", "title": "Purpose record", "minimum_strength": "HUMAN_VALIDATED" }],
-  "evidence_rules": ["Repository metadata alone cannot establish accountable ownership."],
-  "false_positive_guards": ["Do not treat a package description as an approved purpose."],
-  "prohibited_inferences": ["Do not infer an owner from commit authors."],
-  "target_assurance_by_lifecycle_stage": {
-    "QUALIFICATION_AND_REGISTRATION": "DECLARED",
-    "DESIGN_AND_DEVELOPMENT": "IMPLEMENTED",
-    "VERIFICATION_AND_VALIDATION": "TESTED",
-    "DEPLOYMENT": "HUMAN_VALIDATED",
-    "OPERATION_AND_MONITORING": "OPERATIONALLY_OBSERVED"
+  "primary_questions": [
+    { "id": "A1-Q1", "dimension": "DEFINITION_AND_INTENT", "question": "Are intended purpose, users, outcomes, permitted uses and prohibited uses explicitly defined?" },
+    { "id": "A1-Q2", "dimension": "IMPLEMENTATION_AND_OPERATION", "question": "Do implementation and operational boundaries enforce the declared intended purpose?" },
+    { "id": "A1-Q3", "dimension": "EVIDENCE_AND_EFFECTIVENESS", "question": "Does current attributable evidence demonstrate that the purpose boundary remains effective?" }
+  ],
+  "atomic_subcriteria": [
+    { "id": "A1-SC-001", "question_id": "A1-Q1", "criterion": "Purpose, users, outcomes and use boundaries are explicit and attributable.", "required_evidence_ids": ["EVD-A1-001"], "minimum_technical_assurance": "DECLARED", "required_human_assurance": "HUMAN_VALIDATED" },
+    { "id": "A1-SC-002", "question_id": "A1-Q2", "criterion": "Implemented use paths remain within the declared purpose boundary.", "required_evidence_ids": ["EVD-A1-002"], "minimum_technical_assurance": "IMPLEMENTED", "required_human_assurance": "NOT_REQUIRED" }
+  ],
+  "capability_indicators": ["Approved purpose and use-boundary record", "Named accountable owner"],
+  "required_evidence": [
+    { "id": "EVD-A1-001", "title": "Purpose record", "description": "Attributable record of intended purpose, users and use boundaries.", "minimum_technical_assurance": "DECLARED", "required_human_assurance": "HUMAN_VALIDATED" },
+    { "id": "EVD-A1-002", "title": "Implementation boundary", "description": "Technical evidence connecting implemented use paths to the declared purpose.", "minimum_technical_assurance": "IMPLEMENTED", "required_human_assurance": "NOT_REQUIRED" }
+  ],
+  "evidence_rules": {
+    "sufficiency": ["Purpose and implemented use paths must both be represented by attributable evidence."],
+    "evidence_ceiling": "Repository metadata alone cannot establish accountable ownership or approval.",
+    "false_positive_guards": ["Do not treat a package description as an approved purpose record."],
+    "prohibited_inferences": ["Do not infer an accountable owner from commit authorship."]
   },
-  "severity": "HIGH",
-  "hard_gate_effect": { "BLOCK": ["Deployment without an accountable owner or bounded purpose."] },
+  "target_assurance_by_lifecycle_stage": [
+    { "lifecycle_stage": "QUALIFICATION_AND_REGISTRATION", "minimum_technical_assurance": "DECLARED", "required_human_assurance": "HUMAN_VALIDATED" },
+    { "lifecycle_stage": "DESIGN_AND_DEVELOPMENT", "minimum_technical_assurance": "IMPLEMENTED", "required_human_assurance": "HUMAN_VALIDATED" },
+    { "lifecycle_stage": "VERIFICATION_AND_VALIDATION", "minimum_technical_assurance": "TESTED", "required_human_assurance": "HUMAN_VALIDATED" },
+    { "lifecycle_stage": "DEPLOYMENT", "minimum_technical_assurance": "TESTED", "required_human_assurance": "FORMALLY_APPROVED" },
+    { "lifecycle_stage": "OPERATION_AND_MONITORING", "minimum_technical_assurance": "OPERATIONALLY_OBSERVED", "required_human_assurance": "HUMAN_VALIDATED" }
+  ],
+  "hard_gate_effect": { "effect": "BLOCK", "conditions": ["Deployment lacks an accountable owner or bounded purpose."], "override_authority": "Governance decision authority" },
   "human_decision_authority": "GOVERNANCE",
   "related_criteria": [],
-  "related_antipatterns": ["AP-A1"],
-  "normative_source_mappings": [{
-    "source_id": "SRC-INTERNAL-GOV-2026",
-    "title": "Internal AI Governance Process",
-    "official_url": "internal://organization/ai-governance-process",
-    "authority_type": "INTERNAL_PROCESS",
-    "relevant_locator": "Qualification and registration",
-    "mapping_rationale": "Defines the organizational purpose and ownership record.",
-    "jurisdiction": ["INTERNAL"],
-    "effective_status": "VERIFY_AT_ASSESSMENT",
-    "last_verified_on": "2026-07-31"
-  }],
-  "finding_definitions": [{ "id": "FND-A1-001", "assessment_object_id": "A1", "title": "Purpose or accountable owner is not adequately established", "eligible_states": ["PARTIALLY_SATISFIED", "NOT_SATISFIED", "UNKNOWN"] }],
-  "candidate_tactic_refs": [{ "tactic_id": "GOV-PURPOSE-001", "relationship": "REMEDIATES_CAPABILITY_GAP", "mapping_source": "TACTIC_CATALOG", "mapping_status": "APPROVED" }]
+  "normative_source_mappings": [{ "source_id": "SRC-INTERNAL-GOV-2026", "relevant_locator": "Qualification and registration", "mapping_rationale": "Defines the organizational purpose and ownership record.", "last_verified_on": "2026-07-31" }],
+  "finding_definitions": [{ "id": "FND-A1-001", "assessment_object_id": "A1", "title": "Purpose or accountable owner is not adequately established", "eligible_states": ["PARTIALLY_SATISFIED", "NOT_SATISFIED", "UNKNOWN"], "severity": "HIGH", "human_decision_authority": "GOVERNANCE" }],
+  "candidate_tactic_refs": []
 }

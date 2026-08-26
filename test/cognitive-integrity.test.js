@@ -92,14 +92,16 @@ test("cross-domain claim consolidation preserves a contradiction graph", () => {
   assert.deepEqual(result.contradictionGraph[0].domains, ["D", "F"]);
 });
 
-test("tactics require exact approved finding-definition mappings", () => {
-  const finding = { id: "finding-1", statement: "Action validation is incomplete.", findingDefinitionIds: ["FND-D3-001"], evidenceLinks: [{ id: "link-1" }] };
-  const exact = { id: "TACTIC-1", version: "1.0.0", status: "APPROVED", title: "Validate actions", eligibleFindingIds: ["FND-D3-001"], findingSignals: [], ownerRoles: ["SECURITY"], activities: [], requiredArtifacts: [], acceptanceCriteria: [], verification: [], blocksTransition: "DEPLOYMENT", completionEffect: "NEW_EVIDENCE_AND_REASSESSMENT_REQUIRED" };
-  const signalOnly = { ...exact, id: "TACTIC-2", eligibleFindingIds: [], findingSignals: ["generic-security-gap"] };
-  const actions = selectPlaybookActions([signalOnly, exact], [finding]);
+test("tactics are retrieved by approved Primary object mappings and grounded to locked findings", () => {
+  const finding = { id: "finding-1", statement: "Action validation is incomplete.", findingDefinitionIds: ["FND-D3-001"], assessmentObjectIds: ["D3"], antiPatternIds: [], evidenceLinks: [{ id: "link-1" }] };
+  const exact = { id: "TACTIC-1", version: "1.0.0", status: "APPROVED", title: "Validate actions", assessmentMappings: { capabilities: ["D3"], antipatterns: [] }, ownerRoles: ["SECURITY"], activities: [], requiredArtifacts: [], acceptanceCriteria: [], verification: [], blocksTransition: "DEPLOYMENT", completionEffect: "NEW_EVIDENCE_AND_REASSESSMENT_REQUIRED" };
+  const unrelated = { ...exact, id: "TACTIC-2", assessmentMappings: { capabilities: ["D2"], antipatterns: [] } };
+  const actions = selectPlaybookActions([unrelated, exact], [finding]);
   assert.equal(actions.length, 1);
   assert.equal(actions[0].tacticId, "TACTIC-1");
-  assert.equal(buildActionGroundingRecords(actions, [finding], [exact])[0].status, "GROUNDED");
+  assert.deepEqual(actions[0].assessmentObjectIds, ["D3"]);
+  assert.deepEqual(actions[0].findingDefinitionIds, ["FND-D3-001"]);
+  assert.equal(buildActionGroundingRecords(actions, [finding], [exact])[0].reason, "APPROVED_PRIMARY_OBJECT_MAPPING");
 });
 
 test("finding-definition states and prohibited inferences are enforced deterministically", () => {

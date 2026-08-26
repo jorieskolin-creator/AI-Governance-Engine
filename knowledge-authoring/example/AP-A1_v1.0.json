@@ -1,44 +1,53 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.1.0",
   "id": "AP-A1",
   "version": "1.0.0",
-  "release_status": "APPROVED",
+  "release_status": "DRAFT",
+  "approval_record": null,
   "domain": "A",
+  "domain_title": "Purpose, value, context, roles and classification",
   "object_type": "ANTIPATTERN",
-  "title": "Undefined or drifting purpose",
-  "canonical_definition": "The solution is built or used without a stable, bounded and accountable purpose.",
+  "paired_object_id": "A1",
+  "title": "Undefined or elastic intended purpose",
+  "canonical_definition": "Purpose is vague, technically framed, inconsistent, or expands without controlled requalification.",
   "failure_mechanism": "Ambiguous purpose permits uncontrolled requirements, data use and deployment boundaries.",
   "potential_consequences": ["Uncontrolled use expansion", "Unclear accountability"],
-  "applicability": { "default_state": "APPLICABLE", "conditions": ["Applies to every AI solution."] },
+  "applicability": { "default_state": "APPLICABLE", "conditions": ["Applies to every assessed AI solution."] },
   "runtime_applicability": "ALWAYS",
-  "human_decision_authority": "GOVERNANCE",
   "runtime_severity": "HIGH",
   "runtime_signals": ["undefined-purpose", "purpose-drift"],
   "lifecycle_stages": ["QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION", "DEPLOYMENT", "OPERATION_AND_MONITORING", "REVIEW_AND_EVALUATION"],
-  "primary_questions": [{ "id": "Q-AP-A1-001", "question": "Do declared and implemented uses materially diverge?" }],
-  "atomic_tests": [{ "id": "T-AP-A1-001", "title": "Purpose consistency", "description": "Compare declared, implemented and operational uses." }],
+  "primary_questions": [
+    { "id": "AP-A1-Q1", "dimension": "DEFINITION_AND_INTENT", "question": "Is the declared purpose vague, inconsistent or missing material use boundaries?" },
+    { "id": "AP-A1-Q2", "dimension": "IMPLEMENTATION_AND_OPERATION", "question": "Do implemented or operational uses materially diverge from the declared purpose?" },
+    { "id": "AP-A1-Q3", "dimension": "EVIDENCE_AND_EFFECTIVENESS", "question": "Has a scoped current comparison tested declared and actual uses for divergence?" }
+  ],
+  "atomic_tests": [
+    { "id": "AP-A1-AT-001", "question_id": "AP-A1-Q1", "test": "Test whether the purpose record contains users, outcomes and explicit use boundaries.", "required_evidence_ids": ["EVD-AP-A1-001"], "minimum_technical_assurance": "DECLARED", "required_human_assurance": "HUMAN_VALIDATED" },
+    { "id": "AP-A1-AT-002", "question_id": "AP-A1-Q2", "test": "Compare declared, implemented and operational uses across the assessed boundary.", "required_evidence_ids": ["EVD-AP-A1-002"], "minimum_technical_assurance": "TESTED", "required_human_assurance": "NOT_REQUIRED" }
+  ],
   "antipattern_indicators": ["Contradictory purpose statements", "Undeclared production workflow"],
-  "required_evidence": [{ "id": "EV-AP-A1-001", "title": "Purpose comparison", "minimum_strength": "TESTED" }],
-  "absence_test_requirements": ["All material use paths are compared with the approved purpose."],
-  "evidence_rules": ["Silence cannot establish tested absence."],
-  "false_positive_guards": ["Editorial name differences alone do not prove purpose drift."],
-  "prohibited_inferences": ["Do not infer absence from a single README."],
-  "severity": "HIGH",
-  "hard_gate_effect": { "CONFIRMED_PRESENT": "Block Deployment until purpose and implementation are reconciled." },
+  "required_evidence": [
+    { "id": "EVD-AP-A1-001", "title": "Purpose record", "description": "Attributable declared purpose and explicit use boundaries.", "minimum_technical_assurance": "DECLARED", "required_human_assurance": "HUMAN_VALIDATED" },
+    { "id": "EVD-AP-A1-002", "title": "Purpose comparison", "description": "Scoped comparison of declared, implemented and operational uses.", "minimum_technical_assurance": "TESTED", "required_human_assurance": "NOT_REQUIRED" }
+  ],
+  "evidence_rules": {
+    "sufficiency": ["All material use paths must be compared with the approved purpose."],
+    "evidence_ceiling": "Silence or a single document cannot establish tested absence of purpose drift.",
+    "false_positive_guards": ["Editorial naming differences alone do not prove purpose drift."],
+    "prohibited_inferences": ["Do not infer tested absence from a single README or purpose statement."]
+  },
+  "absence_test_contract": { "scope_defined": true, "executed": true, "successful": true, "current": true, "independently_verified": true, "required_artifacts": ["Scoped purpose-to-implementation comparison"] },
+  "target_assurance_by_lifecycle_stage": [
+    { "lifecycle_stage": "QUALIFICATION_AND_REGISTRATION", "minimum_technical_assurance": "DECLARED", "required_human_assurance": "HUMAN_VALIDATED" },
+    { "lifecycle_stage": "VERIFICATION_AND_VALIDATION", "minimum_technical_assurance": "TESTED", "required_human_assurance": "HUMAN_VALIDATED" },
+    { "lifecycle_stage": "DEPLOYMENT", "minimum_technical_assurance": "TESTED", "required_human_assurance": "FORMALLY_APPROVED" },
+    { "lifecycle_stage": "OPERATION_AND_MONITORING", "minimum_technical_assurance": "OPERATIONALLY_OBSERVED", "required_human_assurance": "HUMAN_VALIDATED" }
+  ],
+  "hard_gate_effect": { "effect": "BLOCK", "conditions": ["Purpose is undefined or materially inconsistent at deployment."], "override_authority": "Governance decision authority" },
   "human_decision_authority": "GOVERNANCE",
-  "related_criteria": ["A1"],
-  "related_antipatterns": [],
-  "normative_source_mappings": [{
-    "source_id": "SRC-INTERNAL-GOV-2026",
-    "title": "Internal AI Governance Process",
-    "official_url": "internal://organization/ai-governance-process",
-    "authority_type": "INTERNAL_PROCESS",
-    "relevant_locator": "Qualification and registration",
-    "mapping_rationale": "Defines the organizational purpose and ownership record.",
-    "jurisdiction": ["INTERNAL"],
-    "effective_status": "VERIFY_AT_ASSESSMENT",
-    "last_verified_on": "2026-07-31"
-  }],
-  "finding_definitions": [{ "id": "FND-AP-A1-001", "assessment_object_id": "AP-A1", "title": "Purpose is undefined or materially inconsistent", "eligible_states": ["CONFIRMED_PRESENT", "PARTIALLY_PRESENT", "UNKNOWN"] }],
-  "candidate_tactic_refs": [{ "tactic_id": "GOV-PURPOSE-001", "relationship": "REMEDIATES_ANTIPATTERN", "mapping_source": "TACTIC_CATALOG", "mapping_status": "APPROVED" }]
+  "related_criteria": [],
+  "normative_source_mappings": [{ "source_id": "SRC-INTERNAL-GOV-2026", "relevant_locator": "Qualification and registration", "mapping_rationale": "Defines the organizational purpose and ownership record.", "last_verified_on": "2026-07-31" }],
+  "finding_definitions": [{ "id": "FND-AP-A1-001", "assessment_object_id": "AP-A1", "title": "Purpose is undefined or materially inconsistent", "eligible_states": ["CONFIRMED_PRESENT", "PARTIALLY_PRESENT", "UNKNOWN"], "severity": "HIGH", "human_decision_authority": "GOVERNANCE" }],
+  "candidate_tactic_refs": []
 }

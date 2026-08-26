@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ai-governance:schema:antipattern:2.1.0",
+  "type": "object",
+  "required": ["schema_version", "id", "version", "release_status", "approval_record", "domain", "domain_title", "object_type", "paired_object_id", "title", "canonical_definition", "failure_mechanism", "potential_consequences", "applicability", "runtime_applicability", "runtime_severity", "runtime_signals", "lifecycle_stages", "primary_questions", "atomic_tests", "antipattern_indicators", "required_evidence", "evidence_rules", "absence_test_contract", "target_assurance_by_lifecycle_stage", "hard_gate_effect", "human_decision_authority", "related_criteria", "normative_source_mappings", "finding_definitions", "candidate_tactic_refs"],
+  "properties": {
+    "schema_version": { "const": "2.1.0" },
+    "id": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/antipatternId" },
+    "version": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/semver" },
+    "release_status": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/releaseStatus" },
+    "approval_record": { "oneOf": [{ "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/approvalRecord" }, { "type": "null" }] },
+    "domain": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/domain" },
+    "domain_title": { "type": "string", "minLength": 5 },
+    "object_type": { "const": "ANTIPATTERN" },
+    "paired_object_id": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/capabilityId" },
+    "title": { "type": "string", "minLength": 5 },
+    "canonical_definition": { "type": "string", "minLength": 20 },
+    "failure_mechanism": { "type": "string", "minLength": 10 },
+    "potential_consequences": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 5 } },
+    "applicability": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/applicability" },
+    "runtime_applicability": { "enum": ["ALWAYS", "EU", "USES_DATA", "PERSONAL_DATA", "THIRD_PARTY_COMPONENTS", "USES_AGENTS", "PRODUCTION_OR_EXTERNAL", "AFFECTS_PEOPLE", "INTERACTS_WITH_PEOPLE"] },
+    "runtime_severity": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/severity" },
+    "runtime_signals": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" } },
+    "lifecycle_stages": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/lifecycleStage" } },
+    "primary_questions": {
+      "type": "array", "minItems": 3, "maxItems": 3,
+      "prefixItems": [
+        { "allOf": [{ "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/question" }, { "type": "object", "properties": { "dimension": { "const": "DEFINITION_AND_INTENT" } } }] },
+        { "allOf": [{ "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/question" }, { "type": "object", "properties": { "dimension": { "const": "IMPLEMENTATION_AND_OPERATION" } } }] },
+        { "allOf": [{ "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/question" }, { "type": "object", "properties": { "dimension": { "const": "EVIDENCE_AND_EFFECTIVENESS" } } }] }
+      ], "items": false
+    },
+    "atomic_tests": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "required": ["id", "question_id", "test", "required_evidence_ids", "minimum_technical_assurance", "required_human_assurance"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^AP-[A-F][1-5]-AT-[0-9]{3}$" },
+          "question_id": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/questionId" },
+          "test": { "type": "string", "minLength": 10 },
+          "required_evidence_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/evidenceId" } },
+          "minimum_technical_assurance": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/technicalAssurance" },
+          "required_human_assurance": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/humanAssurance" }
+        }, "additionalProperties": false
+      }
+    },
+    "antipattern_indicators": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 5 } },
+    "required_evidence": { "type": "array", "minItems": 1, "items": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/evidenceRequirement" } },
+    "evidence_rules": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/evidenceRules" },
+    "absence_test_contract": {
+      "type": "object", "required": ["scope_defined", "executed", "successful", "current", "independently_verified", "required_artifacts"],
+      "properties": {
+        "scope_defined": { "const": true }, "executed": { "const": true }, "successful": { "const": true }, "current": { "const": true }, "independently_verified": { "const": true },
+        "required_artifacts": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 5 } }
+      }, "additionalProperties": false
+    },
+    "target_assurance_by_lifecycle_stage": { "type": "array", "minItems": 1, "items": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/assuranceTarget" } },
+    "hard_gate_effect": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/hardGateEffect" },
+    "human_decision_authority": { "type": "string", "minLength": 2 },
+    "related_criteria": { "type": "array", "uniqueItems": true, "items": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/assessmentObjectId" } },
+    "normative_source_mappings": { "type": "array", "minItems": 1, "items": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/sourceMapping" } },
+    "finding_definitions": { "type": "array", "minItems": 1, "items": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/finding" } },
+    "candidate_tactic_refs": { "type": "array", "items": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/tacticRef" } }
+  },
+  "additionalProperties": false,
+  "allOf": [{ "if": { "properties": { "release_status": { "enum": ["APPROVED", "FROZEN"] } }, "required": ["release_status"] }, "then": { "properties": { "approval_record": { "$ref": "urn:ai-governance:schema:shared-definitions:2.1.0#/$defs/approvalRecord" } } } }]
+}

@@ -190,6 +190,45 @@ function narrativeItem(section, text, references = {}, supportStatus = "DETERMIN
   return { id: stableId("narrative", value), ...value };
 }
 
+function objectsUnpublished(knowledge) {
+  return knowledge?.assessmentObjectsStatus === "NOT_PUBLISHED" || knowledge?.releaseStatus === "ASSESSMENT_OBJECTS_NOT_PUBLISHED";
+}
+
+function knowledgeLimitations(knowledge) {
+  if (["APPROVED", "FROZEN"].includes(knowledge?.releaseStatus)) return [];
+  if (objectsUnpublished(knowledge) && knowledge?.playbookStatus === "APPROVED") {
+    return ["Capability and anti-pattern Knowledge Base objects are not yet published. The approved Playbook is loaded; tactics retrieve after locked findings map to those objects."];
+  }
+  return [`The assessment uses ${knowledge?.releaseStatus ?? "UNSPECIFIED"} knowledge rather than an approved production normative mapping.`];
+}
+
+function knowledgeNotice(knowledge) {
+  if (["APPROVED", "FROZEN"].includes(knowledge?.releaseStatus)) return null;
+  if (objectsUnpublished(knowledge) && knowledge?.playbookStatus === "APPROVED") {
+    return "Approved Playbook loaded. Capability and anti-pattern Knowledge Base objects are not yet published; tactics appear after locked findings map to those objects.";
+  }
+  return `${knowledge?.releaseStatus ?? "UNSPECIFIED"} KNOWLEDGE — NOT AN APPROVED PRODUCTION NORMATIVE MAPPING`;
+}
+
+function actionAvailability({ actions, domains, locked, knowledge }) {
+  if (actions.length) return { status: "APPROVED_ACTIONS_AVAILABLE", count: actions.length, message: `${actions.length} approved action pattern(s) are linked to findings.` };
+  const hasGaps = domains.some((item) => item.gaps.length);
+  if (!hasGaps) return { status: "NO_ACTION_REQUIRED", count: 0, message: "No playbook action is required for the declared transition." };
+  if (objectsUnpublished(knowledge)) {
+    return {
+      status: "NO_APPROVED_TACTIC_AVAILABLE",
+      count: 0,
+      message: locked.length
+        ? "Locked findings exist, but capability and anti-pattern Knowledge Base objects are not yet published, so Playbook tactics cannot be retrieved."
+        : "No locked findings are available to retrieve Playbook tactics. The approved Playbook is loaded; capability and anti-pattern Knowledge Base objects are not yet published."
+    };
+  }
+  if (locked.length) {
+    return { status: "NO_APPROVED_TACTIC_AVAILABLE", count: 0, message: "Locked findings exist, but no approved Playbook tactic is mapped to their assessed capability or anti-pattern. Non-approved tactics are not presented as authorized remediation." };
+  }
+  return { status: "NO_APPROVED_TACTIC_AVAILABLE", count: 0, message: "Deterministic gaps exist, but there are no locked findings to retrieve Playbook tactics. Tactics appear after verified findings map to published capability or anti-pattern objects." };
+}
+
 export function buildAssuranceSummary({ schemaVersion, recommendation, dimensions, transitionBoundary, gates, domains, actions, humanDecisions, evidence, solution, assessmentIntake, solutionProfile, documentationReadiness, knowledge, cognitive }) {
   const mode = schemaVersion.startsWith("2.") && cognitive?.coverage?.complete ? "COGNITIVE_VERIFIED" : cognitive?.assessmentMode === "DEMO" ? "DEMO" : "DETERMINISTIC_ONLY";
   const evidenceById = new Map(evidence.map((item) => [item.id, item]));
@@ -240,7 +279,7 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
   const limitations = unique([
     ...(solution.limitations ?? []),
     ...(mode === "DETERMINISTIC_ONLY" ? ["Automated indicators have not passed the cognitive claim-verification pipeline and are not confirmed findings."] : []),
-    ...(knowledge.releaseStatus !== "APPROVED" ? [`The assessment uses ${knowledge.releaseStatus ?? "UNSPECIFIED"} knowledge rather than an approved production normative mapping.`] : []),
+    ...knowledgeLimitations(knowledge),
     ...(cognitive?.coverage && !cognitive.coverage.complete ? [`Cognitive assessment incomplete: ${cognitive.coverage.failedStages.join(", ")}.`] : []),
     ...(cognitive?.publicationGate?.status === "REPORT_WITH_LIMITATIONS" ? cognitive.publicationGate.limitations.map((item) => `Publication limitation: ${item}.`) : []),
     ...(cognitive?.publicationGate?.status === "REPORT_WITHHELD" ? ["Generated assurance narrative was withheld; use the deterministic package and audit ledger."] : []),
@@ -268,11 +307,7 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
     strengths,
     blockingFindings: blockers,
     executiveGapGroups: executiveGapGroups(domains, documentationReadiness, assessmentIntake.sourceIngestion),
-    actionAvailability: actions.length ? { status: "APPROVED_ACTIONS_AVAILABLE", count: actions.length, message: `${actions.length} approved action pattern(s) are linked to findings.` } : {
-      status: domains.some((item) => item.gaps.length) ? "NO_APPROVED_TACTIC_AVAILABLE" : "NO_ACTION_REQUIRED",
-      count: 0,
-      message: domains.some((item) => item.gaps.length) ? "Findings exist, but no approved Playbook tactic is mapped to their assessed capability or anti-pattern. Non-approved tactics are not presented as authorized remediation." : "No playbook action is required for the declared transition."
-    },
+    actionAvailability: actionAvailability({ actions, domains, locked, knowledge }),
     actions,
     humanAuthority: {
       boundary: recommendation.boundary,
@@ -282,6 +317,6 @@ export function buildAssuranceSummary({ schemaVersion, recommendation, dimension
     narrativeItems,
     auditReference: { evidenceCount: evidence.length, canonicalJsonPath: "$.evidence", evidenceIncludedInExecutiveExports: false },
     limitations,
-    knowledgeNotice: knowledge.releaseStatus !== "APPROVED" ? `${knowledge.releaseStatus ?? "UNSPECIFIED"} KNOWLEDGE — NOT AN APPROVED PRODUCTION NORMATIVE MAPPING` : null
+    knowledgeNotice: knowledgeNotice(knowledge)
   };
 }

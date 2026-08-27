@@ -106,3 +106,19 @@ test("control assessment selects lifecycle-specific assurance target", () => {
   assert.equal(result[0].targetState, "HUMAN_VALIDATED");
   assert.equal(result[0].gap.targetState, "HUMAN_VALIDATED");
 });
+
+test("compiler requires an explicit version and release status", async () => {
+  const validation = validateAuthoringWorkspace(await loadAuthoringWorkspace(authoring));
+  const output = await mkdtemp(path.join(tmpdir(), "kb-runtime-required-"));
+  await assert.rejects(() => compileRuntimeCollections(validation, output, { requireApproved: false }), /explicit version/);
+  await assert.rejects(() => compileRuntimeCollections(validation, output, { version: "test-1", requireApproved: false }), /explicit releaseStatus/);
+});
+
+test("production compilation still requires all mapped capability and anti-pattern objects", async () => {
+  const validation = validateAuthoringWorkspace(await loadAuthoringWorkspace(authoring));
+  const output = await mkdtemp(path.join(tmpdir(), "kb-runtime-prod-"));
+  await assert.rejects(
+    () => compileRuntimeCollections(validation, output, { version: "prod-1", releaseStatus: "APPROVED" }),
+    /complete Playbook object mappings/
+  );
+});

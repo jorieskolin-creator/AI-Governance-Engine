@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { sha256 } from "../src/core/hash.js";
-import { loadKnowledgeSnapshot } from "../src/knowledge/provider.js";
+import { loadKnowledgeSnapshot, knowledgeManifestView } from "../src/knowledge/provider.js";
 import { evaluateKnowledgeSnapshot } from "../src/knowledge/diagnostics.js";
+import { TACTICS } from "../src/knowledge/playbook.js";
+import { selectPlaybookActions } from "../src/core/playbook-engine.js";
 
 async function maintainerContractPayload() {
   const fixture = JSON.parse(await readFile(new URL("./fixtures/maintainer-runtime-1.1.0.json", import.meta.url), "utf8"));
@@ -108,15 +110,77 @@ test("complete hash-pinned Vercel snapshot is accepted", async (t) => {
   const manifest = {
     schemaVersion: "1.0.0",
     version: "approved-2026-08",
-    releaseStatus: "CALIBRATION_TEST_ONLY",
+    releaseStatus: "DRAFT",
     documents: types.map((type) => ({ id: type, type, url: `https://blob.example/${type}.json`, sha256: sha256(documents[`https://blob.example/${type}.json`]) }))
   };
   globalThis.fetch = async (url) => new Response(url.endsWith("manifest.json") ? JSON.stringify(manifest) : documents[url], { status: 200 });
   const snapshot = await loadKnowledgeSnapshot({ production: true, manifestUrl: "https://blob.example/manifest.json" });
   assert.equal(snapshot.source, "VERCEL_BLOB");
   assert.equal(snapshot.version, "approved-2026-08");
-  assert.equal(snapshot.releaseStatus, "CALIBRATION_TEST_ONLY");
+  assert.equal(snapshot.releaseStatus, "DRAFT");
   assert.equal(snapshot.diagnostics.status, "WARN");
   assert.equal(snapshot.diagnostics.errorCount, 0);
   for (const type of types) assert.equal(snapshot[type].length, 1);
+});
+
+test("local snapshot loads the approved Playbook and leaves assessment objects unpublished", async () => {
+  const snapshot = await loadKnowledgeSnapshot({ production: false, manifestUrl: "" });
+  assert.equal(snapshot.source, "LOCAL_BOOTSTRAP");
+  assert.equal(snapshot.releaseStatus, "ASSESSMENT_OBJECTS_NOT_PUBLISHED");
+  assert.equal(snapshot.playbookStatus, "APPROVED");
+  assert.equal(snapshot.assessmentObjectsStatus, "NOT_PUBLISHED");
+  assert.equal(snapshot.tactics.length, 119);
+  assert.ok(snapshot.tactics.every((item) => item.status === "APPROVED" && item.id.startsWith("TAC-")));
+  assert.ok(snapshot.tactics.some((item) => item.id === "TAC-PURPOSE-A1-01"));
+  assert.equal(snapshot.diagnostics.status, "WARN");
+  assert.equal(snapshot.diagnostics.errorCount, 0);
+  assert.ok(snapshot.diagnostics.issues.some((item) => item.code === "ASSESSMENT_OBJECTS_NOT_PUBLISHED"));
+  assert.equal(snapshot.diagnostics.issues.some((item) => item.code === "KNOWLEDGE_NOT_APPROVED"), false);
+  const view = knowledgeManifestView(snapshot);
+  assert.equal(view.playbookStatus, "APPROVED");
+  assert.equal(view.assessmentObjectsStatus, "NOT_PUBLISHED");
+  assert.equal(view.counts.tactics, 119);
+});
+
+test("approved catalog tactics retrieve from locked findings on published object IDs", () => {
+  const finding = {
+    id: "finding-a1",
+    statement: "The purpose boundary is not locked.",
+    findingDefinitionIds: ["FND-A1-001"],
+    assessmentObjectIds: ["A1"],
+    antiPatternIds: ["AP-A1"],
+    evidenceLinks: [{ id: "link-1" }]
+  };
+  const actions = selectPlaybookActions(TACTICS, [finding]);
+  assert.ok(actions.length > 0);
+  assert.ok(actions.every((item) => item.tacticId.startsWith("TAC-")));
+  assert.ok(actions.some((item) => item.tacticId === "TAC-PURPOSE-A1-01"));
+});
+
+test("bootstrap control and anti-pattern IDs do not retrieve approved Playbook tactics", () => {
+  const finding = {
+    id: "finding-bootstrap",
+    statement: "Purpose is undefined.",
+    findingDefinitionIds: [],
+    assessmentObjectIds: [],
+    antiPatternIds: ["AP-A-01"],
+    evidenceLinks: []
+  };
+  assert.equal(selectPlaybookActions(TACTICS, [finding]).length, 0);
+});
+
+test("an APPROVED snapshot still fails when Playbook mappings cannot resolve", () => {
+  const diagnostics = evaluateKnowledgeSnapshot({
+    releaseStatus: "APPROVED",
+    playbookStatus: "APPROVED",
+    assessmentObjectsStatus: "PUBLISHED",
+    normativeSources: [{ id: "SRC-1" }],
+    requirements: [{ id: "REQ-A-1", domain: "A", sourceIds: ["SRC-1"], lifecycleStages: ["DESIGN_AND_DEVELOPMENT"] }],
+    controls: [{ id: "CTRL-A-1", domain: "A", requirementIds: ["REQ-A-1"], lifecycleStages: ["DESIGN_AND_DEVELOPMENT"] }],
+    antipatterns: [{ id: "AP-A-01", domain: "A", relatedControlIds: ["CTRL-A-1"] }],
+    tactics: [{ id: "TAC-PURPOSE-A1-01", status: "APPROVED", domains: ["A"], lifecycleStages: [], assessmentMappings: { capabilities: ["A1"], antipatterns: ["AP-A1"] } }],
+    intakeQuestionnaire: { questions: [{ id: "Q1" }] }
+  });
+  assert.equal(diagnostics.status, "FAIL");
+  assert.ok(diagnostics.issues.some((item) => item.code === "TACTIC_WITHOUT_PRIMARY_OBJECT_MAPPING" && item.severity === "ERROR"));
 });

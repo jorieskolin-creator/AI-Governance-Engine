@@ -40,8 +40,15 @@ export function evaluateKnowledgeSnapshot(snapshot) {
     const mappings = [...(item.assessmentMappings?.capabilities ?? []), ...(item.assessmentMappings?.antipatterns ?? [])];
     return !mappings.length || mappings.some((id) => !knownAssessmentObjects.has(id));
   }).map((item) => item.id);
-  if (unmappedTactics.length) add(["APPROVED", "FROZEN"].includes(snapshot.releaseStatus) ? "ERROR" : "WARNING", "TACTIC_WITHOUT_PRIMARY_OBJECT_MAPPING", "Tactics must map to assessment objects present in the active capability and anti-pattern collections.", unmappedTactics);
-  if (!["APPROVED", "FROZEN"].includes(snapshot.releaseStatus)) add("WARNING", "KNOWLEDGE_NOT_APPROVED", `Knowledge release status is ${snapshot.releaseStatus ?? "UNSPECIFIED"}; it is not an approved production mapping.`);
+  const productionRelease = ["APPROVED", "FROZEN"].includes(snapshot.releaseStatus);
+  const playbookApproved = snapshot.playbookStatus === "APPROVED" || (snapshot.tactics ?? []).some((item) => item.status === "APPROVED");
+  const objectsUnpublished = snapshot.assessmentObjectsStatus === "NOT_PUBLISHED" || snapshot.releaseStatus === "ASSESSMENT_OBJECTS_NOT_PUBLISHED";
+  if (unmappedTactics.length) {
+    if (productionRelease) add("ERROR", "TACTIC_WITHOUT_PRIMARY_OBJECT_MAPPING", "Tactics must map to assessment objects present in the active capability and anti-pattern collections.", unmappedTactics);
+    else if (objectsUnpublished || playbookApproved) add("WARNING", "ASSESSMENT_OBJECTS_NOT_PUBLISHED", "Approved Playbook tactics are loaded; capability and anti-pattern Knowledge Base objects are not yet published. Tactics appear after locked findings map to those objects.", unmappedTactics);
+    else add("WARNING", "TACTIC_WITHOUT_PRIMARY_OBJECT_MAPPING", "Tactics must map to assessment objects present in the active capability and anti-pattern collections.", unmappedTactics);
+  }
+  if (!productionRelease && !(objectsUnpublished && playbookApproved)) add("WARNING", "KNOWLEDGE_NOT_APPROVED", `Knowledge release status is ${snapshot.releaseStatus ?? "UNSPECIFIED"}; it is not an approved production mapping.`);
   const questionnaire = snapshot.intakeQuestionnaire;
   if (!questionnaire || !Array.isArray(questionnaire.questions) || !questionnaire.questions.length) add("ERROR", "INTAKE_QUESTIONNAIRE_MISSING", "The versioned assessment-intake questionnaire is missing.");
   else {

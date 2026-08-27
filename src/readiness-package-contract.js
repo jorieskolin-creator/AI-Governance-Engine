@@ -70,6 +70,9 @@ const KNOWLEDGE_SCHEMA = Object.freeze({
     version: { type: "string", minLength: 1 },
     source: { type: "string", minLength: 1 },
     releaseStatus: { type: "string", minLength: 1 },
+    playbookStatus: { type: "string", minLength: 1 },
+    playbookVersion: { type: ["string", "null"] },
+    assessmentObjectsStatus: { type: "string", minLength: 1 },
     manifestHash: SHA256_SCHEMA,
     manifestUrl: { type: ["string", "null"] },
     diagnostics: {

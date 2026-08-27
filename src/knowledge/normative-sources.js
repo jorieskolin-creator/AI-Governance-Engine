@@ -1,4 +1,4 @@
-export const KNOWLEDGE_VERSION = "ai-governance-calibration-2026-07-29";
+export const KNOWLEDGE_VERSION = "ai-governance-playbook-1.0.0-objects-unpublished";
 
 export const NORMATIVE_SOURCES = Object.freeze([
   {

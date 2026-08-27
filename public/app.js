@@ -1117,7 +1117,7 @@ function printReport() {
 stageOptions();
 function renderKnowledgeDiagnostics(kb, diagnostics) {
   const status = diagnostics?.status ?? "UNKNOWN";
-  $("knowledge-status").textContent = `${kb.releaseStatus ?? "UNSPECIFIED"} · ${kb.source} · ${status} · ${kb.version}`;
+  $("knowledge-status").textContent = `${kb.playbookStatus === "APPROVED" && kb.assessmentObjectsStatus === "NOT_PUBLISHED" ? "Playbook approved · objects unpublished" : (kb.releaseStatus ?? "UNSPECIFIED")} · ${kb.source} · ${status} · ${kb.version}`;
   const content = $("knowledge-diagnostics-content"); content.replaceChildren();
   const summary = el("div", "knowledge-diagnostics-summary");
   summary.append(el("strong", "", `${kb.source} connection: ${status}`), el("span", "", `${diagnostics?.errorCount ?? 0} error(s) · ${diagnostics?.warningCount ?? 0} warning(s) · manifest ${String(kb.manifestHash ?? "not available").slice(0, 12)}`));
@@ -1129,7 +1129,7 @@ function renderKnowledgeDiagnostics(kb, diagnostics) {
     for (const issue of issues.slice(0, 8)) list.append(el("li", "", `${issue.severity}: ${issue.message}`));
     content.append(list);
   }
-  content.append(el("p", "knowledge-diagnostics-note", "The runtime fetches the manifest and referenced JSON documents at startup, verifies configured SHA-256 hashes, validates cross-document IDs, and fails closed on integrity errors. Calibration status remains visible and is not production authority."));
+  content.append(el("p", "knowledge-diagnostics-note", "The runtime fetches the manifest and referenced JSON documents at startup, verifies configured SHA-256 hashes, validates cross-document IDs, and fails closed on integrity errors. The approved Playbook is loaded; capability and anti-pattern Knowledge Base objects remain the unpublished gap."));
 }
 
 Promise.all([

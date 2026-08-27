@@ -4,7 +4,7 @@ Evidence-gated readiness assessment for AI solutions. The engine accepts an inte
 
 ## Project status
 
-> **Active pre-production development.** The deterministic governance core, source-intake path, cognitive contract skeleton and reporting views are implemented and covered by automated tests. The Knowledge Base taxonomy and content are still being authored. Production identity, persistence, horizontal scaling, operational monitoring and deployment hardening are not complete.
+> **Active pre-production development.** The deterministic governance core, source-intake path, cognitive contract skeleton and reporting views are implemented and covered by automated tests. The approved Tactic Playbook is loaded at runtime. Capability and anti-pattern Knowledge Base objects are still being authored. Production identity, persistence, horizontal scaling, operational monitoring and deployment hardening are not complete.
 
 The repository is suitable for controlled pre-production assessment runs and iterative evaluation. It is not a production certification service, legal-advice system or formal approval authority.
 
@@ -105,11 +105,11 @@ PDF native text is reconstructed into bounded headings and paragraphs before loc
 
 ## Knowledge Base status
 
-The bundled JavaScript catalogue is an explicitly `CALIBRATION_TEST_ONLY` bootstrap used for local development and tests. It is not an approved governance release and must not be presented as legal advice or a production control baseline.
+The approved Tactic Playbook in `knowledge-authoring/catalog/` is the runtime playbook: 119 `APPROVED` tactics with Primary object / mapping relationships. Local development loads those tactics directly. They retrieve only when a locked finding carries a mapped capability or anti-pattern ID such as `A1` / `AP-A1`.
 
-The long-term source of truth is the schema-validated authoring JSON described in [knowledge-authoring/README.md](knowledge-authoring/README.md). Category PDFs and the six runtime collections are generated views. The 30 capability/anti-pattern pairs, stable identifier grammar and approved Playbook object mappings are defined; the complete approved category content is still under development.
+The unpublished Knowledge Base is the 30 capability / anti-pattern pairs. Until those objects are authored and compiled, findings cannot carry those IDs and the Playbook remains loaded but unactivated. Deterministic A–F assessment continues to use the local operational catalogue. Do not treat that catalogue as the published capability or anti-pattern Knowledge Base.
 
-Production startup requires `VERCEL_KB_MANIFEST_URL`; it does not silently fall back to the local bootstrap catalogue. The loader verifies manifest and document hashes plus structural references. Approval and release-governance enforcement will be hardened as the taxonomy and Knowledge Base are finalized.
+Production startup requires `VERCEL_KB_MANIFEST_URL`; it does not silently fall back to the local snapshot. The loader verifies manifest and document hashes plus structural references. A production release is `APPROVED` only when the compiled capability and anti-pattern objects are present and every Playbook mapping resolves.
 
 The Knowledge Base Maintainer is a separate producer. The Engine does not import Maintainer source code or share its database or process state. A Maintainer release is `PUBLISHED` when its immutable artifacts are available; Engine activation happens separately when this deployment selects that manifest. An Engine-owned manual `verify-knowledge-manifest` workflow, or `pnpm run kb:verify-runtime`, verifies an approved published manifest before activation.
 
@@ -127,7 +127,7 @@ See [docs/knowledge-base.md](docs/knowledge-base.md) for the runtime manifest an
 - Production monitoring, centralized audit logging, malware scanning, long-term package retention, incident response and deployment security validation remain future hardening work.
 - The service emits privacy-safe structured JSON operational logs to stdout for Railway collection. Logs include normalized route templates, opaque run/request identifiers, stable failure codes, stages, durations and aggregate counts; request bodies, source paths/content, prompts, provider responses, credentials and IP addresses are excluded. Centralized retention, alerting and audit governance remain deployment responsibilities.
 - Images currently rely on caller-provided sanitized metadata; a trusted image-sanitization service is not integrated.
-- Knowledge taxonomy, identifiers and release content are not finalized.
+- Capability and anti-pattern Knowledge Base objects are not yet published; the approved Playbook is loaded and waits for those object IDs.
 - Final readiness packages pass a versioned local structural, JSON-safety, authority-boundary and integrity validator before they can be returned or persisted. Full leaf-level JSON Schema publication remains future contract hardening.
 
 These limitations are development boundaries, not evidence that the corresponding production controls exist. See [SECURITY.md](SECURITY.md) and [docs/deployment.md](docs/deployment.md) for additional security and deployment context.

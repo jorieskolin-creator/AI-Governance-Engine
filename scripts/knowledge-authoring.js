@@ -23,7 +23,10 @@ try {
     const { result } = await validate(); process.exitCode = result.status === "PASS" ? 0 : 1;
   } else if (command === "compile") {
     const { result } = await validate();
-    const report = await compileRuntimeCollections(result, output, { version: value("--version", "authoring-calibration"), releaseStatus: value("--release-status", "CALIBRATION_TEST_ONLY"), requireApproved: !flag("--allow-calibration") });
+    const version = value("--version");
+    const releaseStatus = value("--release-status");
+    if (!version || !releaseStatus) throw new Error("compile requires --version and --release-status");
+    const report = await compileRuntimeCollections(result, output, { version, releaseStatus, requireApproved: !flag("--allow-unapproved-objects") });
     console.log(JSON.stringify(report, null, 2));
   } else if (command === "render") {
     const { workspace, result } = await validate();
@@ -38,5 +41,5 @@ try {
     const urls = JSON.parse(await readFile(path.resolve(urlFile), "utf8"));
     const manifest = await createRuntimeManifest(directory, urls, { version: value("--version"), releaseStatus: value("--release-status") });
     console.log(JSON.stringify(manifest, null, 2));
-  } else throw new Error("Usage: knowledge-authoring.js validate|compile|render|manifest --input <directory> [--out <directory>] [--compat] [--allow-calibration]");
+  } else throw new Error("Usage: knowledge-authoring.js validate|compile|render|manifest --input <directory> [--out <directory>] [--compat] [--allow-unapproved-objects]");
 } catch (error) { console.error(error.message); process.exitCode = 1; }

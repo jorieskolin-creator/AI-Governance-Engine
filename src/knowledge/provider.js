@@ -3,18 +3,36 @@ import { KNOWLEDGE_VERSION, NORMATIVE_SOURCES } from "./normative-sources.js";
 import { REQUIREMENTS } from "./requirements.js";
 import { CONTROLS } from "./controls.js";
 import { ANTIPATTERNS } from "./antipatterns.js";
-import { TACTICS } from "./playbook.js";
+import { PLAYBOOK_VERSION, TACTICS } from "./playbook.js";
 import { evaluateKnowledgeSnapshot } from "./diagnostics.js";
 import { INTAKE_QUESTIONNAIRE } from "./intake-questionnaire.js";
 
 const DOCUMENT_TYPES = new Set(["normativeSources", "requirements", "controls", "antipatterns", "tactics", "intakeQuestionnaire"]);
-const RELEASE_STATUSES = new Set(["APPROVED", "FROZEN", "PILOT", "DRAFT", "RETIRED", "CALIBRATION_TEST_ONLY", "UNSPECIFIED"]);
+const RELEASE_STATUSES = new Set(["APPROVED", "FROZEN", "PILOT", "DRAFT", "RETIRED", "ASSESSMENT_OBJECTS_NOT_PUBLISHED", "UNSPECIFIED"]);
+
+function derivedPlaybookStatus(snapshot) {
+  if (snapshot.playbookStatus) return snapshot.playbookStatus;
+  const tactics = snapshot.tactics ?? [];
+  if (tactics.length && tactics.every((item) => item.status === "APPROVED")) return "APPROVED";
+  return snapshot.releaseStatus ?? "UNSPECIFIED";
+}
+
+function derivedAssessmentObjectsStatus(snapshot) {
+  if (snapshot.assessmentObjectsStatus) return snapshot.assessmentObjectsStatus;
+  const unpublished = (snapshot.diagnostics?.issues ?? []).some((item) => ["ASSESSMENT_OBJECTS_NOT_PUBLISHED", "TACTIC_WITHOUT_PRIMARY_OBJECT_MAPPING"].includes(item.code));
+  if (unpublished) return "NOT_PUBLISHED";
+  if (["APPROVED", "FROZEN"].includes(snapshot.releaseStatus)) return "PUBLISHED";
+  return "UNSPECIFIED";
+}
 
 function localSnapshot() {
   const snapshot = {
     version: KNOWLEDGE_VERSION,
     source: "LOCAL_BOOTSTRAP",
-    releaseStatus: "CALIBRATION_TEST_ONLY",
+    releaseStatus: "ASSESSMENT_OBJECTS_NOT_PUBLISHED",
+    playbookStatus: "APPROVED",
+    playbookVersion: PLAYBOOK_VERSION,
+    assessmentObjectsStatus: "NOT_PUBLISHED",
     manifestUrl: null,
     normativeSources: [...NORMATIVE_SOURCES],
     requirements: [...REQUIREMENTS],
@@ -95,6 +113,9 @@ export async function loadKnowledgeSnapshot(options = {}) {
     version: manifest.version,
     source: "VERCEL_BLOB",
     releaseStatus: manifest.releaseStatus ?? "UNSPECIFIED",
+    playbookStatus: manifest.playbookStatus,
+    playbookVersion: manifest.playbookVersion,
+    assessmentObjectsStatus: manifest.assessmentObjectsStatus,
     manifestUrl,
     manifestHash: sha256(manifestBytes),
     documentChecks,
@@ -112,10 +133,14 @@ export function knowledgeManifestView(snapshot) {
     try { const parsed = new URL(manifestUrl); parsed.search = ""; parsed.hash = ""; manifestUrl = parsed.toString(); }
     catch { manifestUrl = null; }
   }
+  const withDiagnostics = snapshot.diagnostics ? snapshot : { ...snapshot, diagnostics: evaluateKnowledgeSnapshot(snapshot) };
   return {
     version: snapshot.version,
     source: snapshot.source,
     releaseStatus: snapshot.releaseStatus ?? "UNSPECIFIED",
+    playbookStatus: derivedPlaybookStatus(withDiagnostics),
+    playbookVersion: snapshot.playbookVersion ?? null,
+    assessmentObjectsStatus: derivedAssessmentObjectsStatus(withDiagnostics),
     manifestHash: snapshot.manifestHash,
     manifestUrl,
     diagnostics: {

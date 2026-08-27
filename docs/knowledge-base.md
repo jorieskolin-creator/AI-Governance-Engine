@@ -22,18 +22,18 @@ Exactly one or more documents must collectively populate each type: `normativeSo
 
 The example hash is a placeholder. Calculate the SHA-256 over the exact uploaded bytes. The engine verifies each value before accepting the snapshot. Knowledge entries should carry stable IDs, versions, authority classification, effective dates, owner authority, and approval status where applicable.
 
-The bundled local catalogue is only for development. Railway production requires the Vercel manifest, so it cannot silently fall back to an unapproved local baseline.
+The bundled local snapshot loads the approved Tactic Playbook and keeps capability / anti-pattern objects unpublished. Railway production requires the Vercel manifest, so it cannot silently fall back to the local snapshot.
 
 ## Runtime connection and integrity evaluation
 
 At startup the Engine fetches the manifest and each referenced JSON document, checks the exact SHA-256 value from the manifest, parses the JSON, and validates the combined snapshot. A hash mismatch, missing collection, invalid A-F domain or lifecycle stage, duplicate stable ID, or broken requirement/control/source reference fails startup rather than falling back silently.
 
-`GET /api/knowledge` returns the sanitized connection identity, release status, manifest hash, entry counts and diagnostic summary. `GET /api/knowledge/diagnostics` returns the full non-secret diagnostic record, including per-document hash-verification status and cross-document issues. The web intake displays the same status. A calibration, pilot or draft release remains visibly non-authoritative even when all integrity checks pass.
+`GET /api/knowledge` returns the sanitized connection identity, release status, Playbook completeness, manifest hash, entry counts and diagnostic summary. `GET /api/knowledge/diagnostics` returns the full non-secret diagnostic record, including per-document hash-verification status and cross-document issues. The web intake displays the same status. An unpublished capability / anti-pattern Knowledge Base remains visible even when the approved Playbook is loaded and all integrity checks pass.
 
 Diagnostic status meanings:
 
 - `PASS`: structural, hash and cross-reference checks passed and the release is approved.
-- `WARN`: the snapshot is structurally usable, but contains a non-blocking issue such as a non-approved release.
+- `WARN`: the snapshot is structurally usable, but contains a non-blocking issue such as unpublished capability / anti-pattern objects or a non-approved remote release.
 - `FAIL`: integrity or referential checks failed; the snapshot is rejected and the Engine does not start with it.
 
 ## Producer and activation boundary

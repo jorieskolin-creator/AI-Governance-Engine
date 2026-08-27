@@ -33,7 +33,7 @@ pnpm kb:compile -- --input "C:\path\to\authoring" --out "C:\path\to\runtime" --v
 pnpm kb:manifest -- --input "C:\path\to\runtime" --urls "C:\path\to\blob-urls.json" --version "ai-governance-1.0.0" --release-status APPROVED
 ```
 
-Use `--compat --allow-calibration` only for calibration of legacy packages. Compatibility mode maps legacy lifecycle labels, permits source-ID-only mappings, and infers missing runtime fields with visible warnings. It is not a production approval path.
+Use `--compat` only when migrating legacy authoring JSON: it maps legacy lifecycle labels, permits source-ID-only mappings, and infers missing runtime fields with visible warnings. Use `--allow-unapproved-objects` only to compile a partial workspace that is not a production release. Neither flag is a production approval path. Compile and manifest commands require explicit `--version` and `--release-status`.
 
 ## Release order
 

@@ -56,7 +56,11 @@ test("empty playbook output explains that no approved object-mapped tactic is av
   const result = await assessSolution(request({ sources: [] }));
   assert.equal(result.actions.length, 0);
   assert.equal(result.assuranceSummary.actionAvailability.status, "NO_APPROVED_TACTIC_AVAILABLE");
-  assert.match(result.assuranceSummary.actionAvailability.message, /no approved Playbook tactic is mapped/i);
+  assert.match(result.assuranceSummary.actionAvailability.message, /capability and anti-pattern Knowledge Base objects are not yet published/i);
+  assert.match(result.assuranceSummary.knowledgeNotice, /Approved Playbook loaded/i);
+  assert.equal(result.knowledge.playbookStatus, "APPROVED");
+  assert.equal(result.knowledge.assessmentObjectsStatus, "NOT_PUBLISHED");
+  assert.equal(result.knowledge.counts.tactics, 119);
 });
 
 test("standalone report is escaped, offline, lean and case-identifiable", async () => {

@@ -147,6 +147,7 @@ Runtime execution requires all configured role-slot credentials and a valid inde
 ## Further documentation
 
 - [Architecture and trust boundaries](docs/architecture.md)
+- [Thinking-flow architecture snapshot](docs/thinking-flow.html)
 - [Knowledge Base runtime contract](docs/knowledge-base.md)
 - [Knowledge authoring workflow](knowledge-authoring/README.md)
 - [Deployment skeleton](docs/deployment.md)

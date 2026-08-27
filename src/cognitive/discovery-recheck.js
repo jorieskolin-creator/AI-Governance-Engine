@@ -3,7 +3,7 @@ import { ModelBudget, StructuredModelClient } from "./provider-client.js";
 import { acquisitionAssistancePolicy } from "./model-policy.js";
 import { discoveryRecheckPrompt, packetHash, PROMPT_VERSIONS } from "./prompts.js";
 import { activeIntakeQuestionIds } from "../knowledge/intake-questionnaire.js";
-import { stableId } from "../core/hash.js";
+import { sha256, stableId } from "../core/hash.js";
 import { intakeField } from "../intake/field-registry.js";
 import { COGNITIVE_PROVIDERS } from "./provider-adapters.js";
 import { setAcquisitionGenAiStatus } from "../intake/acquisition-diagnostics.js";
@@ -126,13 +126,15 @@ export async function recheckDiscovery(run, input, options = {}) {
   run.transmissionManifest ??= [];
   const transmittedUnits = packets.flatMap((packet) => packet.sourceUnits);
   run.transmissionManifest.push({
+    id: stableId("transmission", { stage: "DISCOVERY_RECHECK", provider: profile.provider, packets: packets.map((packet) => packet.id), sequence: run.transmissionManifest.length }),
     stage: "DISCOVERY_RECHECK",
     provider: profile.provider,
     configuredModel: profile.model,
     packetIds: packets.map((packet) => packet.id),
     packetHash: packetHash(packets),
+    packetHashes: packets.map((packet) => sha256(packet.sourceUnits.map((unit) => ({ id: unit.id, sha256: unit.sha256 })))),
     sourceUnitIds: transmittedUnits.map((unit) => unit.id),
-    containsRawEvidence: transmittedUnits.some((unit) => unit.derivation?.rawContentIncluded !== false),
+    containsRawEvidence: transmittedUnits.some((unit) => unit.derivation?.rawContentIncluded === true),
     derivationContracts: [...new Set(transmittedUnits.map((unit) => unit.derivation?.contractVersion).filter(Boolean))],
     approvedAt: approval.approvedAt,
     transmittedAt: new Date().toISOString()

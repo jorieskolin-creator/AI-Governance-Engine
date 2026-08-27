@@ -1068,7 +1068,11 @@ async function runAssessment(event) {
     const currentRunResponse = await fetch(`/api/v2/runs/${encodeURIComponent(activeRunId)}`);
     const currentRun = await currentRunResponse.json();
     if (!currentRunResponse.ok) throw new Error(requestFailureMessage(currentRun));
-    if (currentRun.stage !== "INTAKE_CONFIRMED") {
+    if (currentRun.status === "RECOVERY_REQUIRES_REUPLOAD" || currentRun.recovery?.requiresReupload) {
+      throw new Error(currentRun.error || "Raw evidence is unavailable after recovery. Re-upload source material to create a new Intake draft.");
+    }
+    const postApproval = currentRun.status === "AWAITING_TRANSMISSION_APPROVAL" || ["QUEUED", "RUNNING", "COMPLETED"].includes(currentRun.status);
+    if (currentRun.stage !== "INTAKE_CONFIRMED" && !postApproval) {
       await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, {
         dossier,
         resolutions,
@@ -1076,8 +1080,12 @@ async function runAssessment(event) {
       });
     }
     setIntakeFlow("ASSESSMENT");
-    await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/execute`);
-    await waitForRun(activeRunId);
+    if (["QUEUED", "RUNNING"].includes(currentRun.status)) {
+      await waitForRun(activeRunId);
+    } else if (currentRun.status !== "COMPLETED") {
+      await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/execute`);
+      await waitForRun(activeRunId);
+    }
     const response = await fetch(`/api/v2/runs/${encodeURIComponent(activeRunId)}/result`);
     const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Cognitive result is unavailable");
     renderPackage(body);

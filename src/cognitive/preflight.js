@@ -13,6 +13,31 @@ import { createIntakeGapAnalysis } from "../intake/gap-analysis.js";
 
 const DEFAULT_PACKET_CHARS = 18_000;
 
+export function createExecutionPacketManifest(run) {
+  const payload = {
+    snapshotHash: run.approvedIntake.snapshotHash,
+    acquisitionManifestHash: run.sourceIngestion.manifestHash,
+    packets: (run.packets ?? []).map((packet) => ({ id: packet.id, hash: packet.hash }))
+  };
+  return { ...payload, manifestHash: sha256(payload) };
+}
+
+export function validateExecutionPacketManifest(run) {
+  const manifest = run.executionPacketManifest;
+  if (!manifest?.manifestHash) throw Object.assign(new Error("Confirmed execution packets are unbound"), { statusCode: 409 });
+  const payload = {
+    snapshotHash: manifest.snapshotHash,
+    acquisitionManifestHash: manifest.acquisitionManifestHash,
+    packets: manifest.packets
+  };
+  if (sha256(payload) !== manifest.manifestHash) throw Object.assign(new Error("Execution packet manifest failed its integrity check"), { statusCode: 409 });
+  if (manifest.snapshotHash !== run.approvedIntake?.snapshotHash) throw Object.assign(new Error("Execution packets are not bound to the approved Intake snapshot"), { statusCode: 409 });
+  if (manifest.acquisitionManifestHash !== run.sourceIngestion?.manifestHash) throw Object.assign(new Error("Execution packets are not bound to the current acquisition manifest"), { statusCode: 409 });
+  const current = (run.packets ?? []).map((packet) => ({ id: packet.id, hash: packet.hash }));
+  if (sha256(manifest.packets) !== sha256(current)) throw Object.assign(new Error("Execution packets no longer match the confirmed packet manifest"), { statusCode: 409 });
+  return manifest;
+}
+
 export function packetize(sourceUnits, maxChars = DEFAULT_PACKET_CHARS) {
   const packets = [];
   let units = [];
@@ -62,6 +87,7 @@ export function publicPreflightView(run) {
       approvedAt: run.approvedIntake.approval.confirmedAt,
       snapshotHash: run.approvedIntake.snapshotHash
     } : null,
+    executionPacketManifest: run.executionPacketManifest ?? null,
     citationIndex: run.packets.flatMap((packet) => packet.sourceUnits.map((unit) => ({ sourceUnitId: unit.id, path: unit.path, locator: unit.locator, sha256: unit.sha256 })))
   };
 }
@@ -228,6 +254,7 @@ export async function confirmPreflightDossier(run, input, options = {}) {
   run.dlpFindings = [...run.dlpFindings.filter((item) => !oldDossierUnitIds.has(item.sourceUnitId)), ...dossierSource.dlpFindings];
   run.localSourceUnits = [...sourceUnits, ...dossierSource.localSourceUnits];
   run.packets = packetize([...transmissionUnits, ...dossierSource.sourceUnits], options.maxPacketChars);
+  run.executionPacketManifest = createExecutionPacketManifest(run);
   run.status = "AWAITING_TRANSMISSION_APPROVAL";
   run.stage = "INTAKE_CONFIRMED";
   run.trace.push({ stage: "INTAKE_CONFIRMATION", status: "COMPLETED", at: confirmationTime, outputHash: run.approvedIntake.snapshotHash });

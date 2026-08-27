@@ -124,6 +124,8 @@ test("approved Intake checkpoints recover without raw evidence and retain user a
   assert.equal(recovered.approvedIntake.approval.authority, "USER_ONLY");
   assert.equal(Object.isFrozen(recovered.approvedIntake), true);
   assert.deepEqual(recovered.localSourceUnits, []);
+  assert.equal(recovered.executionPacketManifest.snapshotHash, run.approvedIntake.snapshotHash);
+  assert.equal(recovered.executionPacketManifest.manifestHash, run.executionPacketManifest.manifestHash);
 });
 
 test("Postgres run leases are exclusive and recovered in-progress work never auto-resumes", async () => {
@@ -164,6 +166,34 @@ test("Postgres checkpoints reject stale writers and the stale cache is discarded
   stale.stage = "STALE_CHECKPOINT";
   await assert.rejects(second.checkpoint(stale), /checkpoint was rejected/i);
   assert.equal(second.runs.has(run.id), false);
+});
+
+test("Postgres keeps the live Intake working set when a lease or checkpoint is rejected", async () => {
+  const pool = new FakePool();
+  const first = await new PostgresRunStore({ pool, instanceId: "worker-a" }).initialize();
+  const second = new PostgresRunStore({ pool, instanceId: "worker-b" });
+  const run = await createPreflight({ sources: [{ path: "case.md", mimeType: "text/markdown", content: "# Case" }] });
+  await first.create(run);
+  assert.ok(run.localSourceUnits.length > 0);
+  assert.equal(run.persistence.rawEvidenceAvailable, true);
+
+  await second.get(run.id);
+  assert.equal(await second.acquireLease(run.id), true);
+  assert.equal(await first.acquireLease(run.id), false);
+  assert.equal(first.runs.has(run.id), true);
+  assert.ok(first.runs.get(run.id).localSourceUnits.length > 0);
+  assert.equal(first.runs.get(run.id).persistence.rawEvidenceAvailable, true);
+  await second.releaseLease(run.id);
+
+  const live = first.runs.get(run.id);
+  const staleVersion = live.persistence.durableVersion;
+  live.stage = "LIVE_CHECKPOINT";
+  await first.checkpoint(live);
+  live.persistence.durableVersion = staleVersion;
+  live.stage = "STALE_LIVE_CHECKPOINT";
+  await assert.rejects(first.checkpoint(live), /checkpoint was rejected/i);
+  assert.equal(first.runs.has(run.id), true);
+  assert.ok(first.runs.get(run.id).localSourceUnits.length > 0);
 });
 
 test("Postgres leases reject wrong owners and can be reacquired after expiry", async () => {

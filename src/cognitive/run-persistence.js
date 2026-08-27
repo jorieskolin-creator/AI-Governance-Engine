@@ -13,6 +13,15 @@ function deepFreeze(value) {
   return Object.freeze(value);
 }
 
+function hasLiveWorkingSet(run) {
+  return run?.persistence?.rawEvidenceAvailable === true || Boolean(run?.localSourceUnits?.length);
+}
+
+function discardCacheUnlessLive(runs, id, extra) {
+  if (hasLiveWorkingSet(runs.get(id)) || hasLiveWorkingSet(extra)) return;
+  runs.delete(id);
+}
+
 function assertProviderPacketIsSafe(unit) {
   invariant(!unit.media?.data, `Durable orchestration cannot persist media bytes: ${unit.id}`);
   const derivedSafeSummary = unit.derivation?.rawContentIncluded === false;
@@ -166,7 +175,7 @@ export class PostgresRunStore {
       `UPDATE governance_runs SET state = $2::jsonb, status = $3, stage = $4, expires_at = $5, version = version + 1, updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL AND version = $6${leaseClause} RETURNING version`,
       parameters
     );
-    if (result.rowCount !== 1) this.runs.delete(run.id);
+    if (result.rowCount !== 1) discardCacheUnlessLive(this.runs, run.id, run);
     invariant(result.rowCount === 1, `Durable run checkpoint was rejected: ${run.id}`);
     run.persistence = { ...run.persistence, checkpointedAt: state.checkpointedAt, durableVersion: Number(result.rows[0].version) };
     this.runs.set(run.id, run);
@@ -184,7 +193,7 @@ export class PostgresRunStore {
       `UPDATE governance_runs SET lease_owner = $2, lease_expires_at = $3, updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL AND expires_at > $4${versionClause} AND (lease_owner IS NULL OR lease_expires_at <= $4 OR lease_owner = $2) RETURNING id`,
       parameters
     );
-    if (result.rowCount !== 1 && versionClause) this.runs.delete(id);
+    if (result.rowCount !== 1 && versionClause) discardCacheUnlessLive(this.runs, id);
     return result.rowCount === 1;
   }
 

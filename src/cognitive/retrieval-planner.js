@@ -1,5 +1,5 @@
 import { invariant } from "../contracts.js";
-import { sha256 } from "../core/hash.js";
+import { sha256, stableId } from "../core/hash.js";
 import { setAcquisitionGenAiStatus } from "../intake/acquisition-diagnostics.js";
 import { intakeField } from "../intake/field-registry.js";
 import { INTAKE_GAP_ANALYSIS_VERSION, validateIntakeGapAnalysis } from "../intake/gap-analysis.js";
@@ -193,10 +193,12 @@ export async function planIntakeRetrieval(run, input, options = {}) {
     const plan = validateIntakeRetrievalPlan({ ...payload, planHash: sha256(payload) }, run.intakeGapAnalysis);
     run.transmissionManifest ??= [];
     run.transmissionManifest.push({
+      id: stableId("transmission", { stage: "RETRIEVAL_PLANNING", contextHash, sequence: run.transmissionManifest.length }),
       stage: "RETRIEVAL_PLANNING",
       provider: profile.provider,
       configuredModel: profile.model,
       packetIds: [],
+      packetHashes: [],
       sourceUnitIds: [],
       contextHash,
       containsRawEvidence: false,

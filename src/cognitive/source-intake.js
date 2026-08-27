@@ -9,6 +9,7 @@ import { createTabularEvidenceUnit, TABULAR_EVIDENCE_SUMMARY_VERSION } from "../
 import { extractStructuredHtml } from "../intake/html-evidence.js";
 import { createLocalOcrSession, imageDimensionsForOcr, OCR_ENGINE, OCR_ENGINE_VERSION, OCR_LANGUAGE, rasterizePdfPageForOcr } from "../intake/ocr-evidence.js";
 import { createSemanticIntakeEvidenceUnit } from "../intake/semantic-intake-evidence.js";
+import { APPROVED_INTAKE_SNAPSHOT_VERSION } from "../intake/contracts.js";
 
 const MAX_SOURCE_BYTES = 15 * 1024 * 1024;
 const MAX_EXTRACTED_CHARACTERS = 5_000_000;
@@ -381,17 +382,23 @@ export async function parseAndScreenSources(sources, options = {}) {
       const tabular = ["CSV", "XLSX"].includes(source.format);
       const media = source.format === "IMAGE";
       const approvedIntake = source.path === "intended-use-dossier.json" && source.metadata?.kind === "DECLARATION";
+      if (approvedIntake) {
+        for (const unit of localUnits) {
+          unit.derivation = { contractVersion: APPROVED_INTAKE_SNAPSHOT_VERSION, rawContentIncluded: false };
+        }
+      }
       const egressUnits = media
         ? [createMediaEvidenceUnit({ sourceId, sourceHash, mimeType: source.mimeType, byteSize: bytes.length, ocrDiagnostics: extraction.ocrDiagnostics })]
         : tabular
           ? [createTabularEvidenceUnit({ sourceId, sourceHash, format: source.format, segments, findings: sourceFindings })]
-          : codeOrConfiguration
-            ? [createCodeEvidenceUnit({ sourceId, sourceHash, path: source.path, sourceKind, content: bytes.toString("utf8"), findings: sourceFindings })]
-            : approvedIntake ? localUnits
+          : approvedIntake
+            ? localUnits
+            : codeOrConfiguration
+              ? [createCodeEvidenceUnit({ sourceId, sourceHash, path: source.path, sourceKind, content: bytes.toString("utf8"), findings: sourceFindings })]
               : [createDocumentEvidenceUnit({ sourceId, sourceHash, format: source.format, sourceKind, segments, findings: sourceFindings })];
       const semanticUnit = !approvedIntake && !tabular ? createSemanticIntakeEvidenceUnit({ sourceId, sourceHash, path: source.path, sourceKind, localUnits }) : null;
       if (semanticUnit) egressUnits.push(semanticUnit);
-      const acquisitionLane = media ? "MEDIA_LOCAL_OCR_ANALYSIS" : extraction.ocrDiagnostics ? "DOCUMENT_LOCAL_OCR_ANALYSIS" : tabular ? "TABULAR_LOCAL_ANALYSIS" : codeOrConfiguration ? "CODE_CONFIGURATION_LOCAL_ANALYSIS" : approvedIntake ? "APPROVED_INTAKE" : "DOCUMENT_LOCAL_ANALYSIS";
+      const acquisitionLane = media ? "MEDIA_LOCAL_OCR_ANALYSIS" : extraction.ocrDiagnostics ? "DOCUMENT_LOCAL_OCR_ANALYSIS" : tabular ? "TABULAR_LOCAL_ANALYSIS" : approvedIntake ? "APPROVED_INTAKE" : codeOrConfiguration ? "CODE_CONFIGURATION_LOCAL_ANALYSIS" : "DOCUMENT_LOCAL_ANALYSIS";
       const localOnly = !approvedIntake;
       localSourceUnits.push(...localUnits);
       sourceUnits.push(...egressUnits);

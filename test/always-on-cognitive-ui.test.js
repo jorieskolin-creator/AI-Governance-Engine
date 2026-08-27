@@ -106,6 +106,8 @@ test("final Intake approval requires only solution identity and makes evidence g
   assert.doesNotMatch(app, /explanation\.required/);
   assert.doesNotMatch(app, /resolutionState = "CONFLICT_REQUIRES_RESOLUTION"/);
   assert.match(app, /currentRun\.stage !== "INTAKE_CONFIRMED"/);
+  assert.match(app, /\["QUEUED", "RUNNING"\]\.includes\(currentRun\.status\)/);
+  assert.match(app, /RECOVERY_REQUIRES_REUPLOAD/);
   assert.match(app, /Model readiness:/);
 });
 

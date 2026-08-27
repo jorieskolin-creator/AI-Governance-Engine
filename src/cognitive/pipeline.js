@@ -89,7 +89,7 @@ function profilesForPackets(policy, role, run, packets, options = {}) {
   return candidates.filter((profile, index) => index === 0 || transmittedPackets(run, profile.provider, primaryPackets).length === primaryPackets.length);
 }
 
-function recordTransmission(run, stageName, profile, packets, containsRawEvidence = true) {
+function recordTransmission(run, stageName, profile, packets) {
   const transmittedUnits = packets.flatMap((item) => item.sourceUnits);
   run.transmissionManifest.push({
     id: stableId("transmission", { stageName, profile: profile.id, packets: packets.map((item) => item.id), sequence: run.transmissionManifest.length }),
@@ -97,7 +97,7 @@ function recordTransmission(run, stageName, profile, packets, containsRawEvidenc
     packetIds: packets.map((item) => item.id), sourceUnitIds: transmittedUnits.map((unit) => unit.id),
     packetHashes: packets.map((item) => sha256(item.sourceUnits.map((unit) => ({ id: unit.id, sha256: unit.sha256 })))),
     approvedPacketHashes: packets.map((item) => item.approvedHash ?? item.hash),
-    containsRawEvidence: containsRawEvidence && transmittedUnits.some((unit) => unit.derivation?.rawContentIncluded !== false),
+    containsRawEvidence: transmittedUnits.some((unit) => unit.derivation?.rawContentIncluded === true),
     derivationContracts: unique(transmittedUnits.map((unit) => unit.derivation?.contractVersion)),
     transmittedAt: new Date().toISOString()
   });

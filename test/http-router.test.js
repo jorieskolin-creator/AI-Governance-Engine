@@ -83,7 +83,14 @@ test("HTTP workflow exposes readiness and fails closed before unconfigured provi
     assert.equal(packageSchema.body.$schema, "https://json-schema.org/draft/2020-12/schema");
     assert.equal(packageSchema.body.properties.schemaVersion.const, "2.6.0");
     assert.equal(packageSchema.body.properties.cognitive.properties.contractVersion.const, "3.1.0");
-    assert.equal(packageSchema.body["x-contract-coverage"], "TOP_LEVEL_AND_GOVERNANCE_INVARIANTS");
+    assert.equal(packageSchema.body["x-contract-coverage"], "NESTED_LEDGERS_AND_GOVERNANCE_INVARIANTS");
+    assert.ok(packageSchema.body.properties.cognitive.required.includes("transmissionManifest"));
+    const fallbackSchema = await request(baseUrl, "/api/v2/contracts/readiness-package/1.4.0");
+    assert.equal(fallbackSchema.status, 200);
+    assert.equal(fallbackSchema.body.properties.schemaVersion.const, "1.4.0");
+    assert.equal(fallbackSchema.body.properties.cognitive, undefined);
+    const unknownSchema = await request(baseUrl, "/api/v2/contracts/readiness-package/9.9.9");
+    assert.equal(unknownSchema.status, 404);
 
     const preflight = await request(baseUrl, "/api/v2/runs/preflight", {
       method: "POST",
@@ -120,6 +127,12 @@ test("HTTP workflow exposes readiness and fails closed before unconfigured provi
     });
     assert.equal(confirmed.status, 200);
     assert.equal(confirmed.body.stage, "INTAKE_CONFIRMED");
+    assert.ok(confirmed.body.approvedIntake.snapshotHash);
+    assert.equal(confirmed.body.executionPacketManifest.snapshotHash, confirmed.body.approvedIntake.snapshotHash);
+    assert.deepEqual(
+      confirmed.body.executionPacketManifest.packets.map((packet) => packet.id).sort(),
+      confirmed.body.packets.map((packet) => packet.id).sort()
+    );
 
     const execute = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(preflight.body.runId)}/execute`, { method: "POST" });
     assert.equal(execute.status, 503);

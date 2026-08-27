@@ -95,7 +95,7 @@ The browser calls the normal cognitive path automatically. Provider credentials 
 - `POST /api/v2/runs/{id}/restart` requeues an interrupted safe-summary run only after explicit acknowledgement that prior provider-call completion may be uncertain.
 - `GET /api/v2/runs/{id}` returns progress.
 - `GET /api/v2/runs/{id}/result` returns `ReadinessPackageV2` schema `2.6.0` after mandatory local structural and integrity validation.
-- `GET /api/v2/contracts/readiness-package/2.6.0` publishes its draft 2020-12 top-level integration schema, governance invariants, and closed privacy-safe source-ingestion and evidence-ledger shapes; the response identifies its coverage explicitly, while local runtime validation remains authoritative for package hashes and cross-ledger integrity.
+- `GET /api/v2/contracts/readiness-package/{1.4.0|2.6.0}` publishes the draft 2020-12 nested integration schema, closed privacy-safe ledgers, and cognitive required keys; unknown versions return 404. The response identifies coverage as `NESTED_LEDGERS_AND_GOVERNANCE_INVARIANTS`, while local runtime validation remains authoritative for package hashes and cross-ledger integrity. Hashed packages and published schemas are returned canonically so integrity hashes are not mutated in transit.
 - `DELETE /api/v2/runs/{id}` purges the run record and evidence held by the active run store.
 - `GET /api/v2/models` exposes the non-secret fixed policy without credentials.
 

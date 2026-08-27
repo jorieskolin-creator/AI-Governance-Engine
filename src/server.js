@@ -6,13 +6,13 @@ import { fileURLToPath } from "node:url";
 import { loadKnowledgeSnapshot, knowledgeManifestView } from "./knowledge/provider.js";
 import { SAMPLE_REQUEST } from "./sample.js";
 import { validateExecutionApproval } from "./cognitive/contracts.js";
-import { confirmPreflightDossier, createPreflight, publicDiscoveryView, publicPreflightView } from "./cognitive/preflight.js";
+import { confirmPreflightDossier, createPreflight, publicDiscoveryView, publicPreflightView, validateExecutionPacketManifest } from "./cognitive/preflight.js";
 import { executeCognitiveRun } from "./cognitive/pipeline.js";
 import { acquisitionAssistancePolicy, MODEL_POLICY_VIEW_VERSION, modelPolicy, modelPolicyReadiness, publicModelPolicy, publicModelRoleSlots, requiredGovernanceProviders } from "./cognitive/model-policy.js";
 import { createRunStore } from "./cognitive/run-persistence.js";
 import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
-import { readinessPackageJsonSchema } from "./readiness-package-contract.js";
-import { sanitizeRestrictedValue } from "../public/content-policy.js";
+import { READINESS_PACKAGE_VERSIONS, readinessPackageJsonSchema } from "./readiness-package-contract.js";
+import { publicJsonValue } from "../public/content-policy.js";
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./intake/field-registry.js";
 import { validateApprovedIntakeSnapshot } from "./intake/contracts.js";
 import { createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "./intake/acquired-facts.js";
@@ -74,7 +74,7 @@ function routeRunId(pathname) {
 }
 
 function sendJson(response, status, value) {
-  const body = JSON.stringify(sanitizeRestrictedValue(value));
+  const body = JSON.stringify(publicJsonValue(value));
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body), "Cache-Control": "no-store" });
   response.end(body);
 }
@@ -141,6 +141,8 @@ async function enqueueCognitiveRun(run, request) {
   if (run.status !== "AWAITING_TRANSMISSION_APPROVAL") throw Object.assign(new Error(`Run cannot execute from status ${run.status}`), { statusCode: 409 });
   if (run.stage !== "INTAKE_CONFIRMED" || !run.approvedIntake?.snapshotHash) throw Object.assign(new Error("A user-approved immutable Intake snapshot is required before execution"), { statusCode: 409 });
   try { validateApprovedIntakeSnapshot(run.approvedIntake, { acquisitionManifestHash: run.sourceIngestion.manifestHash }); }
+  catch (error) { throw Object.assign(error, { statusCode: 409 }); }
+  try { validateExecutionPacketManifest(run); }
   catch (error) { throw Object.assign(error, { statusCode: 409 }); }
   const blocking = run.dlpFindings.filter((item) => item.blocking);
   if (blocking.length) throw Object.assign(new Error("Preflight contains evidence that cannot be safely transmitted"), { statusCode: 400, blockingFindingIds: blocking.map((item) => item.id) });
@@ -267,7 +269,19 @@ function publicRunView(run) {
     runId: run.id, status: run.status, stage: run.stage, createdAt: run.createdAt, expiresAt: run.expiresAt,
     completedAt: run.completedAt ?? null, resultAvailable: Boolean(run.result), error: run.error, failureCode: run.failureCode ?? null, retryDisposition: run.retryDisposition ?? null,
     queueAttempt: run.queueAttempt ?? 0,
-    recovery: run.status === "INTERRUPTED" ? { restartEligible: !recoveredExecutionDataUnavailable(run), purpose: RECOVERY_RESTART_PURPOSE, requiresExplicitUserAcknowledgement: true } : null,
+    recovery: run.status === "INTERRUPTED"
+      ? { restartEligible: !recoveredExecutionDataUnavailable(run), purpose: RECOVERY_RESTART_PURPOSE, requiresExplicitUserAcknowledgement: true, requiresReupload: false }
+      : run.status === "RECOVERY_REQUIRES_REUPLOAD" || ["RAW_EVIDENCE_UNAVAILABLE_AFTER_RECOVERY", "RECOVERY_MEDIA_REUPLOAD_REQUIRED"].includes(run.stage)
+        ? { restartEligible: false, requiresReupload: true, requiresExplicitUserAcknowledgement: true }
+        : null,
+    approvedIntake: run.approvedIntake ? {
+      schemaVersion: run.approvedIntake.schemaVersion,
+      revision: run.approvedIntake.revision,
+      approvedAt: run.approvedIntake.approval?.confirmedAt ?? null,
+      snapshotHash: run.approvedIntake.snapshotHash
+    } : null,
+    packets: (run.packets ?? []).map((packet) => ({ id: packet.id, hash: packet.hash, transmissionState: packet.transmissionState })),
+    executionPacketManifest: run.executionPacketManifest ?? null,
     solutionProfile: run.solutionProfile,
     stepLedger: run.stepLedger ? {
       schemaVersion: run.stepLedger.schemaVersion,
@@ -363,8 +377,10 @@ const server = http.createServer(async (request, response) => {
       const policy = modelPolicy();
       return sendJson(response, 200, { schemaVersion: MODEL_POLICY_VIEW_VERSION, mode: "ALWAYS_ON", readiness: modelPolicyReadiness(policy), roleSlots: publicModelRoleSlots(policy), profiles: publicModelPolicy(policy) });
     }
-    if (request.method === "GET" && url.pathname === "/api/v2/contracts/readiness-package/2.6.0") {
-      return sendJson(response, 200, readinessPackageJsonSchema("2.6.0"));
+    const contractMatch = url.pathname.match(/^\/api\/v2\/contracts\/readiness-package\/([^/]+)$/);
+    if (request.method === "GET" && contractMatch) {
+      if (!READINESS_PACKAGE_VERSIONS.includes(contractMatch[1])) return sendJson(response, 404, { error: `ReadinessPackage schema ${contractMatch[1]} is not published` });
+      return sendJson(response, 200, readinessPackageJsonSchema(contractMatch[1]));
     }
     if (request.method === "POST" && url.pathname === "/api/v2/runs/preflight") {
       const run = await createPreflight(await readJson(request));

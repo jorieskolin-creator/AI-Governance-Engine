@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { confirmPreflightDossier, createPreflight, publicPreflightView } from "../src/cognitive/preflight.js";
+import { confirmPreflightDossier, createPreflight, publicPreflightView, validateExecutionPacketManifest } from "../src/cognitive/preflight.js";
 import { validateExecutionApproval } from "../src/cognitive/contracts.js";
 import { executeCognitiveRun } from "../src/cognitive/pipeline.js";
 import { modelPolicy as createModelPolicy } from "../src/cognitive/model-policy.js";
@@ -98,6 +98,17 @@ test("a supplied dossier still requires confirmation and produces an immutable e
   assert.equal(Object.isFrozen(run.approvedIntake), true);
   assert.notStrictEqual(run.approvedIntake.effectiveDossier, run.dossier);
   assert.equal(Object.hasOwn(run.approvedIntake.effectiveDossier.intakeAnswers, "SYSTEMIC_RISK_MODEL"), false);
+  const intakeUnits = run.packets.flatMap((packet) => packet.sourceUnits).filter((unit) => unit.path === "intended-use-dossier.json");
+  assert.ok(intakeUnits.length > 0);
+  assert.ok(intakeUnits.every((unit) => unit.derivation?.rawContentIncluded === false));
+  assert.equal(intakeUnits[0].derivation.contractVersion, "approved-intake-snapshot-1.3.0");
+  assert.equal(run.packets.flatMap((packet) => packet.sourceUnits).some((unit) => unit.derivation?.rawContentIncluded === true), false);
+  assert.equal(run.executionPacketManifest.snapshotHash, run.approvedIntake.snapshotHash);
+  assert.equal(run.executionPacketManifest.acquisitionManifestHash, run.sourceIngestion.manifestHash);
+  assert.deepEqual(run.executionPacketManifest.packets, run.packets.map((packet) => ({ id: packet.id, hash: packet.hash })));
+  assert.doesNotThrow(() => validateExecutionPacketManifest(run));
+  const view = publicPreflightView(run);
+  assert.equal(view.executionPacketManifest.manifestHash, run.executionPacketManifest.manifestHash);
   await assert.rejects(() => confirmPreflightDossier(run, { dossier: structuredClone(SAMPLE_REQUEST.dossier) }), /not awaiting intake confirmation/i);
 });
 

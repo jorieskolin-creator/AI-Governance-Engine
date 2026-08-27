@@ -27,6 +27,13 @@ export function sanitizeRestrictedValue(value) {
   return value;
 }
 
+export function publicJsonValue(value) {
+  if (value && typeof value === "object" && (typeof value.packageHash === "string" || (typeof value.$schema === "string" && typeof value["x-contract-coverage"] === "string"))) {
+    return value;
+  }
+  return sanitizeRestrictedValue(value);
+}
+
 export function restrictedTokenMatches(value) {
   if (typeof value !== "string") return [];
   return [...value.matchAll(/[\p{L}\p{N}_]+/gu)]

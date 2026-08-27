@@ -72,6 +72,8 @@ const KNOWLEDGE_SCHEMA = Object.freeze({
     releaseStatus: { type: "string", minLength: 1 },
     playbookStatus: { type: "string", minLength: 1 },
     playbookVersion: { type: ["string", "null"] },
+    instrumentStatus: { type: "string", minLength: 1 },
+    knowledgeBaseStatus: { type: "string", minLength: 1 },
     assessmentObjectsStatus: { type: "string", minLength: 1 },
     manifestHash: SHA256_SCHEMA,
     manifestUrl: { type: ["string", "null"] },
@@ -94,7 +96,8 @@ const KNOWLEDGE_SCHEMA = Object.freeze({
         controls: { type: "integer", minimum: 0 },
         antipatterns: { type: "integer", minimum: 0 },
         tactics: { type: "integer", minimum: 0 },
-        intakeQuestions: { type: "integer", minimum: 0 }
+        intakeQuestions: { type: "integer", minimum: 0 },
+        assessmentQuestions: { type: "integer", minimum: 0 }
       }
     }
   }

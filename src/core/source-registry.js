@@ -10,39 +10,39 @@ const SECRET_PATTERNS = [
 ];
 
 const SIGNAL_PATTERNS = [
-  { signal: "threat-model", path: /threat[-_ ]?model/i, text: /threat model|trust boundar|abuse case/i, controls: ["CTRL-D-01"], domains: ["D"] },
-  { signal: "prompt-injection", path: /security|test|eval/i, text: /prompt injection|indirect injection|instruction hijack/i, controls: ["CTRL-D-01", "CTRL-D-02"], domains: ["D"] },
-  { signal: "data-leakage", path: /security|test|eval/i, text: /data leakage|data exfiltration|sensitive output/i, controls: ["CTRL-D-01", "CTRL-D-02"], domains: ["D"] },
-  { signal: "evaluation", path: /test|spec|eval/i, text: /evaluation|benchmark|assert|expected|pass rate|accuracy|hallucination/i, controls: ["CTRL-A-03", "CTRL-D-02"], domains: ["A", "D"] },
-  { signal: "acceptance-threshold", path: /test|spec|eval|quality/i, text: /threshold|minimum pass|acceptance criteria|error rate|false positive/i, controls: ["CTRL-D-02"], domains: ["D"] },
-  { signal: "red-team", path: /red[-_ ]?team|pentest|security/i, text: /red team|penetration test|adversarial test|attack simulation/i, controls: ["CTRL-D-01", "CTRL-D-02"], domains: ["D"] },
-  { signal: "audit-log", path: /log|audit|telemetry|observ/i, text: /audit log|trace id|request id|structured log|telemetry/i, controls: ["CTRL-D-03", "CTRL-F-02"], domains: ["D", "F"] },
-  { signal: "rollback", path: /runbook|deploy|operation|readme/i, text: /rollback|roll back|previous version|revert deployment/i, controls: ["CTRL-D-03", "CTRL-F-03"], domains: ["D", "F"] },
-  { signal: "safe-shutdown", path: /runbook|operation|agent|security/i, text: /kill switch|safe shutdown|disable agent|emergency stop/i, controls: ["CTRL-C-03", "CTRL-D-03"], domains: ["C", "D"] },
-  { signal: "model-inventory", path: /package|requirements|model|config|readme/i, text: /openai|anthropic|gemini|azure openai|bedrock|vertex ai|hugging ?face|ollama/i, controls: ["CTRL-C-01"], domains: ["C"] },
-  { signal: "provider-review", path: /provider|vendor|terms|procurement/i, text: /data retention|subprocessor|provider terms|training data|service region/i, controls: ["CTRL-C-02", "CTRL-B-03"], domains: ["B", "C"] },
-  { signal: "tool-allowlist", path: /agent|tool|permission|security/i, text: /tool allowlist|allowed tools|denylist|least privilege|permission scope/i, controls: ["CTRL-C-03"], domains: ["C"] },
-  { signal: "human-approval", path: /agent|workflow|oversight|approval/i, text: /human approval|requires confirmation|manual review|approval gate/i, controls: ["CTRL-C-03", "CTRL-E-03"], domains: ["C", "E"] },
-  { signal: "rate-limit", path: /agent|security|config|middleware/i, text: /rate limit|budget limit|max iterations|max steps/i, controls: ["CTRL-C-03"], domains: ["C"] },
-  { signal: "data-inventory", path: /data|dataset|privacy|inventory/i, text: /data inventory|dataset register|data source|data classification/i, controls: ["CTRL-B-01"], domains: ["B"] },
-  { signal: "data-flow", path: /data[-_ ]?flow|architecture|privacy/i, text: /data flow|data destination|cross-border|processor|controller/i, controls: ["CTRL-B-01"], domains: ["B"] },
-  { signal: "retention", path: /privacy|retention|data/i, text: /retention|deletion period|delete after|ttl|data lifecycle/i, controls: ["CTRL-B-01"], domains: ["B"] },
-  { signal: "privacy-review", path: /privacy|dpia|legal/i, text: /privacy review|data protection|privacy impact|dpia/i, controls: ["CTRL-B-02"], domains: ["B"] },
-  { signal: "lawful-basis", path: /privacy|dpia|legal/i, text: /lawful basis|legal basis|legitimate interest|consent|contract necessity/i, controls: ["CTRL-B-02"], domains: ["B"] },
-  { signal: "dpia", path: /dpia|privacy/i, text: /data protection impact assessment|dpia/i, controls: ["CTRL-B-02"], domains: ["B"] },
-  { signal: "licence", path: /license|licence|package|dependency/i, text: /licen[cs]e|copyright|open source|dependency/i, controls: ["CTRL-B-03", "CTRL-C-01"], domains: ["B", "C"] },
-  { signal: "impact-assessment", path: /impact|fairness|governance/i, text: /impact assessment|affected persons|fundamental rights|harm assessment/i, controls: ["CTRL-E-01"], domains: ["E"] },
-  { signal: "fairness", path: /fairness|bias|eval|test/i, text: /fairness|bias|discrimination|subgroup|demographic/i, controls: ["CTRL-E-01", "CTRL-D-02"], domains: ["D", "E"] },
-  { signal: "ai-notice", path: /notice|transparency|ui|policy/i, text: /ai-generated|interacting with ai|ai system notice|machine-generated/i, controls: ["CTRL-E-02"], domains: ["E"] },
-  { signal: "explanation", path: /explain|transparency|ui|policy/i, text: /explanation|why this output|source citation|reason code/i, controls: ["CTRL-E-02"], domains: ["E"] },
-  { signal: "human-override", path: /oversight|approval|workflow|ui/i, text: /human override|reject output|manual correction|stop action/i, controls: ["CTRL-E-03"], domains: ["E"] },
-  { signal: "appeal", path: /appeal|contest|oversight|policy/i, text: /appeal|contest|correction request|complaint/i, controls: ["CTRL-E-03"], domains: ["E"] },
-  { signal: "raci", path: /raci|governance|owner|readme/i, text: /accountable|responsible|consulted|decision rights|system owner/i, controls: ["CTRL-F-01"], domains: ["F"] },
-  { signal: "risk-register", path: /risk|governance/i, text: /risk register|inherent risk|residual risk|risk owner|mitigation/i, controls: ["CTRL-F-02"], domains: ["F"] },
-  { signal: "monitoring-plan", path: /monitor|operation|runbook/i, text: /monitoring plan|alert threshold|model drift|quality drift|operational metric/i, controls: ["CTRL-F-03"], domains: ["F"] },
-  { signal: "incident-response", path: /incident|runbook|security/i, text: /incident response|severity level|escalation path|breach response/i, controls: ["CTRL-F-03"], domains: ["F"] },
-  { signal: "change-trigger", path: /change|governance|release/i, text: /material change|reassessment trigger|model change|purpose change|data change/i, controls: ["CTRL-F-03"], domains: ["F"] },
-  { signal: "retirement-plan", path: /retire|decommission|lifecycle/i, text: /retirement plan|decommission|contract termination|archive|data deletion/i, controls: ["CTRL-F-03"], domains: ["F"] }
+  { signal: "threat-model", path: /threat[-_ ]?model/i, text: /threat model|trust boundar|abuse case/i, controls: ["CTRL-D1", "CTRL-D3"], domains: ["D"] },
+  { signal: "prompt-injection", path: /security|test|eval/i, text: /prompt injection|indirect injection|instruction hijack/i, controls: ["CTRL-D3"], domains: ["D"] },
+  { signal: "data-leakage", path: /security|test|eval/i, text: /data leakage|data exfiltration|sensitive output/i, controls: ["CTRL-D3", "CTRL-B4"], domains: ["B", "D"] },
+  { signal: "evaluation", path: /test|spec|eval/i, text: /evaluation|benchmark|assert|expected|pass rate|accuracy|hallucination/i, controls: ["CTRL-A2", "CTRL-D2"], domains: ["A", "D"] },
+  { signal: "acceptance-threshold", path: /test|spec|eval|quality/i, text: /threshold|minimum pass|acceptance criteria|error rate|false positive/i, controls: ["CTRL-D2"], domains: ["D"] },
+  { signal: "red-team", path: /red[-_ ]?team|pentest|security/i, text: /red team|penetration test|adversarial test|attack simulation/i, controls: ["CTRL-D3"], domains: ["D"] },
+  { signal: "audit-log", path: /log|audit|telemetry|observ/i, text: /audit log|trace id|request id|structured log|telemetry/i, controls: ["CTRL-D4", "CTRL-F2"], domains: ["D", "F"] },
+  { signal: "rollback", path: /runbook|deploy|operation|readme/i, text: /rollback|roll back|previous version|revert deployment/i, controls: ["CTRL-D5", "CTRL-F5"], domains: ["D", "F"] },
+  { signal: "safe-shutdown", path: /runbook|operation|agent|security/i, text: /kill switch|safe shutdown|disable agent|emergency stop/i, controls: ["CTRL-C3", "CTRL-D5"], domains: ["C", "D"] },
+  { signal: "model-inventory", path: /package|requirements|model|config|readme/i, text: /openai|anthropic|gemini|azure openai|bedrock|vertex ai|hugging ?face|ollama/i, controls: ["CTRL-C1"], domains: ["C"] },
+  { signal: "provider-review", path: /provider|vendor|terms|procurement/i, text: /data retention|subprocessor|provider terms|training data|service region/i, controls: ["CTRL-C4", "CTRL-B5"], domains: ["B", "C"] },
+  { signal: "tool-allowlist", path: /agent|tool|permission|security/i, text: /tool allowlist|allowed tools|denylist|least privilege|permission scope/i, controls: ["CTRL-C3"], domains: ["C"] },
+  { signal: "human-approval", path: /agent|workflow|oversight|approval/i, text: /human approval|requires confirmation|manual review|approval gate/i, controls: ["CTRL-C3", "CTRL-E4"], domains: ["C", "E"] },
+  { signal: "rate-limit", path: /agent|security|config|middleware/i, text: /rate limit|budget limit|max iterations|max steps/i, controls: ["CTRL-C3"], domains: ["C"] },
+  { signal: "data-inventory", path: /data|dataset|privacy|inventory/i, text: /data inventory|dataset register|data source|data classification/i, controls: ["CTRL-B1"], domains: ["B"] },
+  { signal: "data-flow", path: /data[-_ ]?flow|architecture|privacy/i, text: /data flow|data destination|cross-border|processor|controller/i, controls: ["CTRL-B1"], domains: ["B"] },
+  { signal: "retention", path: /privacy|retention|data/i, text: /retention|deletion period|delete after|ttl|data lifecycle/i, controls: ["CTRL-B2"], domains: ["B"] },
+  { signal: "privacy-review", path: /privacy|dpia|legal/i, text: /privacy review|data protection|privacy impact|dpia/i, controls: ["CTRL-B3"], domains: ["B"] },
+  { signal: "lawful-basis", path: /privacy|dpia|legal/i, text: /lawful basis|legal basis|legitimate interest|consent|contract necessity/i, controls: ["CTRL-B3"], domains: ["B"] },
+  { signal: "dpia", path: /dpia|privacy/i, text: /data protection impact assessment|dpia/i, controls: ["CTRL-B3"], domains: ["B"] },
+  { signal: "licence", path: /license|licence|package|dependency/i, text: /licen[cs]e|copyright|open source|dependency/i, controls: ["CTRL-B5", "CTRL-C1"], domains: ["B", "C"] },
+  { signal: "impact-assessment", path: /impact|fairness|governance/i, text: /impact assessment|affected persons|fundamental rights|harm assessment/i, controls: ["CTRL-E1"], domains: ["E"] },
+  { signal: "fairness", path: /fairness|bias|eval|test/i, text: /fairness|bias|discrimination|subgroup|demographic/i, controls: ["CTRL-E2", "CTRL-D2"], domains: ["D", "E"] },
+  { signal: "ai-notice", path: /notice|transparency|ui|policy/i, text: /ai-generated|interacting with ai|ai system notice|machine-generated/i, controls: ["CTRL-E3"], domains: ["E"] },
+  { signal: "explanation", path: /explain|transparency|ui|policy/i, text: /explanation|why this output|source citation|reason code/i, controls: ["CTRL-E3"], domains: ["E"] },
+  { signal: "human-override", path: /oversight|approval|workflow|ui/i, text: /human override|reject output|manual correction|stop action/i, controls: ["CTRL-E4"], domains: ["E"] },
+  { signal: "appeal", path: /appeal|contest|oversight|policy/i, text: /appeal|contest|correction request|complaint/i, controls: ["CTRL-E5"], domains: ["E"] },
+  { signal: "raci", path: /raci|governance|owner|readme/i, text: /accountable|responsible|consulted|decision rights|system owner/i, controls: ["CTRL-F1"], domains: ["F"] },
+  { signal: "risk-register", path: /risk|governance/i, text: /risk register|inherent risk|residual risk|risk owner|mitigation/i, controls: ["CTRL-F3"], domains: ["F"] },
+  { signal: "monitoring-plan", path: /monitor|operation|runbook/i, text: /monitoring plan|alert threshold|model drift|quality drift|operational metric/i, controls: ["CTRL-F5"], domains: ["F"] },
+  { signal: "incident-response", path: /incident|runbook|security/i, text: /incident response|severity level|escalation path|breach response/i, controls: ["CTRL-F5"], domains: ["F"] },
+  { signal: "change-trigger", path: /change|governance|release/i, text: /material change|reassessment trigger|model change|purpose change|data change/i, controls: ["CTRL-F5"], domains: ["F"] },
+  { signal: "retirement-plan", path: /retire|decommission|lifecycle/i, text: /retirement plan|decommission|contract termination|archive|data deletion/i, controls: ["CTRL-F5"], domains: ["F"] }
 ];
 
 function excerpt(content, matchIndex) {
@@ -121,7 +121,7 @@ export function buildSourceRegistry(sources, now = new Date()) {
       const artifact = {
         id: stableId("evd", { sourceId, signal: "hardcoded-secret" }), sourceId, path: source.path, kind: "SCAN_RESULT", sha256: sourceHash,
         excerpt: "Potential secret material detected; value redacted.", signal: "hardcoded-secret", domainIds: ["D"],
-        controlIds: ["CTRL-D-01"], antiPatternIds: syntheticFixture ? [] : ["AP-D-01"], assuranceState: "TESTED",
+        controlIds: ["CTRL-D1"], antiPatternIds: syntheticFixture ? [] : ["AP-D1"], assuranceState: "TESTED",
         polarity: syntheticFixture ? "CANDIDATE_RISK" : "RISK", eligibleForAssurance: false,
         evidenceClass: syntheticFixture ? "TEST_FIXTURE_INDICATOR" : "AUTOMATED_INDICATOR",
         stale: false, capturedAt: now.toISOString(), metadata: { scanner: "built-in-secret-scan", artifactClass: sourceArtifactClass, syntheticFixture }
@@ -160,10 +160,10 @@ export function buildSourceRegistry(sources, now = new Date()) {
 export function dossierEvidence(dossier, now = new Date()) {
   const common = { sourceId: "dossier", path: "intended-use-dossier", kind: "DECLARATION", sha256: sha256(dossier), assuranceState: "DECLARED", eligibleForAssurance: true, evidenceClass: "DECLARED", stale: false, capturedAt: now.toISOString(), metadata: {} };
   const entries = [
-    { signal: "purpose", excerpt: dossier.intendedPurpose, domains: ["A"], controls: ["CTRL-A-01"] },
-    { signal: "value", excerpt: dossier.expectedValue, domains: ["A"], controls: ["CTRL-A-03"] },
-    { signal: "accountable-owner", excerpt: dossier.accountableOwner, domains: ["A", "F"], controls: ["CTRL-A-01", "CTRL-F-01"] },
-    { signal: "classification", excerpt: dossier.classification.prohibitedPractice === null && dossier.classification.highRiskCandidate === null ? "" : `Prohibited=${dossier.classification.prohibitedPractice}; highRiskCandidate=${dossier.classification.highRiskCandidate}`, domains: ["A"], controls: ["CTRL-A-02"] }
+    { signal: "purpose", excerpt: dossier.intendedPurpose, domains: ["A"], controls: ["CTRL-A1"] },
+    { signal: "value", excerpt: dossier.expectedValue, domains: ["A"], controls: ["CTRL-A2"] },
+    { signal: "accountable-owner", excerpt: dossier.accountableOwner, domains: ["A", "F"], controls: ["CTRL-A1", "CTRL-F1"] },
+    { signal: "classification", excerpt: dossier.classification.prohibitedPractice === null && dossier.classification.highRiskCandidate === null ? "" : `Prohibited=${dossier.classification.prohibitedPractice}; highRiskCandidate=${dossier.classification.highRiskCandidate}`, domains: ["A"], controls: ["CTRL-A4"] }
   ];
   const coreEvidence = entries.filter((entry) => typeof entry.excerpt === "string" && entry.excerpt.trim()).map((entry) => ({
     ...common, id: stableId("evd", { sourceId: "dossier", signal: entry.signal, excerpt: entry.excerpt }), excerpt: entry.excerpt, signal: entry.signal, domainIds: entry.domains,
@@ -193,13 +193,13 @@ export function dossierRiskEvidence(dossier, now = new Date()) {
   const risks = [];
   const push = (signal, excerpt, domainIds, controlIds, antiPatternIds) => risks.push({ ...base, id: stableId("evd", { sourceId: "dossier", signal, excerpt }), signal, excerpt, domainIds, controlIds, antiPatternIds });
   if ((dossier.data.personalData || dossier.data.specialCategoryData) && dossier.data.productionData) {
-    push("unapproved-sensitive-data", "The dossier declares use of production personal or special-category data.", ["B"], ["CTRL-B-01", "CTRL-B-02"], ["AP-B-01"]);
+    push("unapproved-sensitive-data", "The dossier declares use of production personal or special-category data.", ["B"], ["CTRL-B1", "CTRL-B3"], ["AP-B3"]);
   }
   if (productionAccessOnExperimentStage(dossier)) {
-    push("unsafe-experiment-boundary", "The dossier declares production access during qualification or development.", ["D"], ["CTRL-D-01"], ["AP-D-01"]);
+    push("unsafe-experiment-boundary", "The dossier declares production access during qualification or development.", ["A", "D"], ["CTRL-A5", "CTRL-D1"], ["AP-A5", "AP-D1"]);
   }
   if (dossier.agent.usesAgents && dossier.agent.canTakeActions && (!dossier.agent.humanOverride || dossier.agent.irreversibleActions)) {
-    push("excessive-agency", "The agent can take actions without an adequate reversible human-override boundary.", ["C", "E"], ["CTRL-C-03", "CTRL-E-03"], ["AP-C-02"]);
+    push("excessive-agency", "The agent can take actions without an adequate reversible human-override boundary.", ["C", "E"], ["CTRL-C3", "CTRL-E4"], ["AP-C3"]);
   }
   return risks;
 }

@@ -35,9 +35,9 @@ const solutionFixture = {
 };
 const claimFixture = {
   id: "claim-benchmark", claimType: "UNKNOWN", statement: "Security test results are not established by the supplied source.",
-  sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote: "security test results" }], controlIds: ["CTRL-D-02"], antiPatternIds: [], requirementIds: ["REQ-D-002"], findingDefinitionIds: [], assessmentObjectIds: [], domains: ["D"], severity: "HIGH", proposedAssuranceState: "UNKNOWN", proposedFindingState: null, limitations: ["No test result supplied."], extractor: { provider: "BENCHMARK" }
+  sourceUnitIds: [unit.id], evidenceQuotes: [{ sourceUnitId: unit.id, quote: "security test results" }], controlIds: ["CTRL-D3"], antiPatternIds: [], requirementIds: ["REQ-D3"], findingDefinitionIds: [], assessmentObjectIds: [], domains: ["D"], severity: "HIGH", proposedAssuranceState: "UNKNOWN", proposedFindingState: null, limitations: ["No test result supplied."], extractor: { provider: "BENCHMARK" }
 };
-const lockedFinding = { id: "finding-benchmark", claimId: claimFixture.id, findingType: "UNKNOWN", statement: claimFixture.statement, domains: ["D"], controlIds: ["CTRL-D-02"], antiPatternIds: [], requirementIds: ["REQ-D-002"], findingDefinitionIds: [], assessmentObjectIds: [], severity: "HIGH", strength: "SUPPORTED", sourceUnitIds: [unit.id], verificationIds: ["verification-benchmark"], limitations: claimFixture.limitations, lifecycleConsequence: "HUMAN_REVIEW_REQUIRED" };
+const lockedFinding = { id: "finding-benchmark", claimId: claimFixture.id, findingType: "UNKNOWN", statement: claimFixture.statement, domains: ["D"], controlIds: ["CTRL-D3"], antiPatternIds: [], requirementIds: ["REQ-D3"], findingDefinitionIds: [], assessmentObjectIds: [], severity: "HIGH", strength: "SUPPORTED", sourceUnitIds: [unit.id], verificationIds: ["verification-benchmark"], limitations: claimFixture.limitations, lifecycleConsequence: "HUMAN_REVIEW_REQUIRED" };
 const deterministicFixture = {
   recommendation: { outcome: "REMEDIATE_BEFORE_NEXT_STAGE", formalApproval: false, rationale: "Critical evidence is missing." },
   dimensions: { evidenceCoverage: 20, controlAssurance: 10, residualRisk: "HIGH", gateStatus: "CLEAR" },

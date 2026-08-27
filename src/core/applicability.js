@@ -19,7 +19,7 @@ function conditionApplies(condition, dossier) {
 
 export function evaluateApplicability(requirements, dossier, now = new Date()) {
   return requirements.map((requirement) => {
-    const euScopedRequirement = ["REQ-A-002", "REQ-B-002", "REQ-E-002"].includes(requirement.id);
+    const euScopedRequirement = requirement.applicability === "EU";
     const euInScope = jurisdictionScope(dossier.jurisdictions).euEea;
     const state = euScopedRequirement && !euInScope
       ? "NOT_APPLICABLE"
@@ -30,7 +30,7 @@ export function evaluateApplicability(requirements, dossier, now = new Date()) {
       state,
       reason: state === "NOT_APPLICABLE"
         ? euScopedRequirement && !euInScope
-          ? "No EU/EEA jurisdiction was declared for this EU-scoped bootstrap requirement."
+          ? "No EU/EEA jurisdiction was declared for this EU-scoped requirement."
           : `Declared solution context does not activate ${requirement.applicability}.`
         : state === "POTENTIALLY_APPLICABLE"
           ? `The context may activate ${requirement.applicability}; an authorized human must resolve applicability.`

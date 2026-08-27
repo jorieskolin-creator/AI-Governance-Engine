@@ -107,7 +107,7 @@ PDF native text is reconstructed into bounded headings and paragraphs before loc
 
 The approved Tactic Playbook in `knowledge-authoring/catalog/` is the runtime playbook: 119 `APPROVED` tactics with Primary object / mapping relationships. Local development loads those tactics directly. They retrieve only when a locked finding carries a mapped capability or anti-pattern ID such as `A1` / `AP-A1`.
 
-The unpublished Knowledge Base is the 30 capability / anti-pattern pairs. Until those objects are authored and compiled, findings cannot carry those IDs and the Playbook remains loaded but unactivated. Deterministic A–F assessment continues to use the local operational catalogue. Do not treat that catalogue as the published capability or anti-pattern Knowledge Base.
+The unpublished Knowledge Base is the evidence rules, atomic tests, finding definitions and normative clause mappings for those 30 pairs. The assessment instrument itself is loaded: analysis asks A1–F5 / AP-A1–AP-F5 and their 180 questions. The 18-control bootstrap catalogue (`CTRL-A-01` … `CTRL-F-03`) is retired as analysis work. Playbook tactics retrieve after locked findings carry those taxonomy IDs. Do not treat the instrument as a published Knowledge Base.
 
 Production startup requires `VERCEL_KB_MANIFEST_URL`; it does not silently fall back to the local snapshot. The loader verifies manifest and document hashes plus structural references. A production release is `APPROVED` only when the compiled capability and anti-pattern objects are present and every Playbook mapping resolves.
 

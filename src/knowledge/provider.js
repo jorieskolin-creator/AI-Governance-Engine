@@ -10,6 +10,26 @@ import { INTAKE_QUESTIONNAIRE } from "./intake-questionnaire.js";
 const DOCUMENT_TYPES = new Set(["normativeSources", "requirements", "controls", "antipatterns", "tactics", "intakeQuestionnaire"]);
 const RELEASE_STATUSES = new Set(["APPROVED", "FROZEN", "PILOT", "DRAFT", "RETIRED", "ASSESSMENT_OBJECTS_NOT_PUBLISHED", "UNSPECIFIED"]);
 
+function derivedInstrumentStatus(snapshot) {
+  if (snapshot.instrumentStatus) return snapshot.instrumentStatus;
+  const controls = snapshot.controls ?? [];
+  const antipatterns = snapshot.antipatterns ?? [];
+  const questions = [...controls, ...antipatterns].flatMap((item) => item.questions ?? []);
+  if (controls.length === 30 && antipatterns.length === 30 && questions.length === 180) return "LOADED";
+  return "NOT_LOADED";
+}
+
+function derivedKnowledgeBaseStatus(snapshot) {
+  if (snapshot.knowledgeBaseStatus) return snapshot.knowledgeBaseStatus;
+  const published = [...(snapshot.controls ?? []), ...(snapshot.antipatterns ?? [])].every((item) => {
+    const hasRules = Boolean(item.evidenceRules);
+    const hasFindings = Array.isArray(item.findingDefinitions) && item.findingDefinitions.length > 0;
+    const hasAtomic = (Array.isArray(item.atomicSubcriteria) && item.atomicSubcriteria.length > 0) || (Array.isArray(item.atomicTests) && item.atomicTests.length > 0);
+    return hasRules && hasFindings && hasAtomic;
+  });
+  return published ? "PUBLISHED" : "NOT_PUBLISHED";
+}
+
 function derivedPlaybookStatus(snapshot) {
   if (snapshot.playbookStatus) return snapshot.playbookStatus;
   const tactics = snapshot.tactics ?? [];
@@ -32,6 +52,8 @@ function localSnapshot() {
     releaseStatus: "ASSESSMENT_OBJECTS_NOT_PUBLISHED",
     playbookStatus: "APPROVED",
     playbookVersion: PLAYBOOK_VERSION,
+    instrumentStatus: "LOADED",
+    knowledgeBaseStatus: "NOT_PUBLISHED",
     assessmentObjectsStatus: "NOT_PUBLISHED",
     manifestUrl: null,
     normativeSources: [...NORMATIVE_SOURCES],
@@ -140,6 +162,8 @@ export function knowledgeManifestView(snapshot) {
     releaseStatus: snapshot.releaseStatus ?? "UNSPECIFIED",
     playbookStatus: derivedPlaybookStatus(withDiagnostics),
     playbookVersion: snapshot.playbookVersion ?? null,
+    instrumentStatus: derivedInstrumentStatus(withDiagnostics),
+    knowledgeBaseStatus: derivedKnowledgeBaseStatus(withDiagnostics),
     assessmentObjectsStatus: derivedAssessmentObjectsStatus(withDiagnostics),
     manifestHash: snapshot.manifestHash,
     manifestUrl,
@@ -155,7 +179,8 @@ export function knowledgeManifestView(snapshot) {
       controls: snapshot.controls.length,
       antipatterns: snapshot.antipatterns.length,
       tactics: snapshot.tactics.length,
-      intakeQuestions: snapshot.intakeQuestionnaire?.questions?.length ?? 0
+      intakeQuestions: snapshot.intakeQuestionnaire?.questions?.length ?? 0,
+      assessmentQuestions: [...snapshot.controls, ...snapshot.antipatterns].flatMap((item) => item.questions ?? []).length
     }
   };
 }

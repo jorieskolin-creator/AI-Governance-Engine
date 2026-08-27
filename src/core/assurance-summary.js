@@ -78,8 +78,12 @@ export function buildTransitionBoundary({ dossier, gates, domains, readiness, hu
     }
   }
   if (!conditions.length && status === "CURRENT_STAGE_ONLY") {
-    for (const gap of domains.flatMap((domain) => domain.gaps).filter((item) => HIGH.has(item.severity))) {
-      conditions.push(boundaryItem(gap.description, basis({ evidenceIds: gap.evidenceIds, controlIds: [gap.controlId], findingIds: [gap.id], ruleIds: ["RULE-BOUNDARY-HIGH-GAP"] })));
+    const highGaps = domains.flatMap((domain) => domain.gaps).filter((item) => HIGH.has(item.severity));
+    if (highGaps.length) {
+      conditions.push(boundaryItem(
+        `${highGaps.length} high-severity applicable control(s) lack acceptable evidence; silence is not treated as absence.`,
+        basis({ evidenceIds: highGaps.flatMap((item) => item.evidenceIds), controlIds: highGaps.map((item) => item.controlId), findingIds: highGaps.map((item) => item.id), ruleIds: ["RULE-BOUNDARY-HIGH-GAP"] })
+      ));
     }
   }
   const missingParameters = [
@@ -191,11 +195,18 @@ function narrativeItem(section, text, references = {}, supportStatus = "DETERMIN
 }
 
 function objectsUnpublished(knowledge) {
-  return knowledge?.assessmentObjectsStatus === "NOT_PUBLISHED" || knowledge?.releaseStatus === "ASSESSMENT_OBJECTS_NOT_PUBLISHED";
+  return knowledge?.assessmentObjectsStatus === "NOT_PUBLISHED" || knowledge?.releaseStatus === "ASSESSMENT_OBJECTS_NOT_PUBLISHED" || knowledge?.knowledgeBaseStatus === "NOT_PUBLISHED";
+}
+
+function instrumentLoaded(knowledge) {
+  return knowledge?.instrumentStatus === "LOADED" || (knowledge?.counts?.controls === 30 && knowledge?.counts?.antipatterns === 30);
 }
 
 function knowledgeLimitations(knowledge) {
   if (["APPROVED", "FROZEN"].includes(knowledge?.releaseStatus)) return [];
+  if (instrumentLoaded(knowledge) && objectsUnpublished(knowledge) && knowledge?.playbookStatus === "APPROVED") {
+    return ["The A–F assessment instrument is loaded (30 capabilities, 30 anti-patterns, 3 questions each). Knowledge Base evidence rules, atomic tests and finding definitions are not yet published. The approved Playbook is loaded; tactics retrieve after locked findings map to those objects."];
+  }
   if (objectsUnpublished(knowledge) && knowledge?.playbookStatus === "APPROVED") {
     return ["Capability and anti-pattern Knowledge Base objects are not yet published. The approved Playbook is loaded; tactics retrieve after locked findings map to those objects."];
   }
@@ -204,6 +215,9 @@ function knowledgeLimitations(knowledge) {
 
 function knowledgeNotice(knowledge) {
   if (["APPROVED", "FROZEN"].includes(knowledge?.releaseStatus)) return null;
+  if (instrumentLoaded(knowledge) && objectsUnpublished(knowledge) && knowledge?.playbookStatus === "APPROVED") {
+    return "Approved Playbook and A–F assessment instrument loaded (30 capabilities, 30 anti-patterns, 3 questions each). Knowledge Base evidence rules, atomic tests and finding definitions are not yet published.";
+  }
   if (objectsUnpublished(knowledge) && knowledge?.playbookStatus === "APPROVED") {
     return "Approved Playbook loaded. Capability and anti-pattern Knowledge Base objects are not yet published; tactics appear after locked findings map to those objects.";
   }
@@ -214,7 +228,14 @@ function actionAvailability({ actions, domains, locked, knowledge }) {
   if (actions.length) return { status: "APPROVED_ACTIONS_AVAILABLE", count: actions.length, message: `${actions.length} approved action pattern(s) are linked to findings.` };
   const hasGaps = domains.some((item) => item.gaps.length);
   if (!hasGaps) return { status: "NO_ACTION_REQUIRED", count: 0, message: "No playbook action is required for the declared transition." };
-  if (objectsUnpublished(knowledge)) {
+  if (instrumentLoaded(knowledge) && !locked.length) {
+    return {
+      status: "NO_APPROVED_TACTIC_AVAILABLE",
+      count: 0,
+      message: "No locked findings are available to retrieve Playbook tactics. The assessment instrument and approved Playbook are loaded; Knowledge Base evidence rules are not yet published."
+    };
+  }
+  if (objectsUnpublished(knowledge) && !instrumentLoaded(knowledge)) {
     return {
       status: "NO_APPROVED_TACTIC_AVAILABLE",
       count: 0,

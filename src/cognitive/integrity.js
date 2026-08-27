@@ -9,6 +9,32 @@ const array = (value) => Array.isArray(value) ? value : [];
 const unique = (values) => [...new Set(values.filter(Boolean))];
 const normalizeText = (value) => String(value ?? "").replace(/\s+/g, " ").trim();
 
+export function stampCanonicalObjectIds(claim, knowledge) {
+  const index = knowledgeAssessmentIndex(knowledge);
+  const extraAssessment = [];
+  const extraAntiPatterns = [];
+  const extraControls = [];
+  for (const id of array(claim.controlIds)) {
+    const control = index.controls.get(id);
+    if (control?.authoringObjectId) extraAssessment.push(control.authoringObjectId);
+  }
+  for (const id of array(claim.assessmentObjectIds)) {
+    const object = index.assessmentObjects.get(id);
+    if (!object?.parentId) continue;
+    const control = index.controls.get(object.parentId);
+    if (control?.authoringObjectId) {
+      extraAssessment.push(control.authoringObjectId);
+      extraControls.push(control.id);
+    }
+    if (index.antiPatterns.has(object.parentId)) extraAntiPatterns.push(object.parentId);
+  }
+  for (const id of array(claim.antiPatternIds)) extraAntiPatterns.push(id);
+  claim.assessmentObjectIds = unique([...array(claim.assessmentObjectIds), ...extraAssessment]);
+  claim.antiPatternIds = unique([...array(claim.antiPatternIds), ...extraAntiPatterns]);
+  claim.controlIds = unique([...array(claim.controlIds), ...extraControls]);
+  return claim;
+}
+
 export function evidenceLinksForClaim(claim, sourceUnits) {
   const unitMap = new Map(sourceUnits.map((unit) => [unit.id, unit]));
   return array(claim.evidenceQuotes).map((entry) => {
@@ -151,6 +177,7 @@ export function knowledgeAssessmentIndex(knowledge) {
   const assessmentObjects = new Map();
   for (const entry of [...knowledge.requirements, ...knowledge.controls, ...knowledge.antipatterns]) {
     if (entry.authoringObjectId) assessmentObjects.set(entry.authoringObjectId, { id: entry.authoringObjectId, parentId: entry.id, domain: entry.domain, title: entry.title });
+    if (antiPatterns.has(entry.id)) assessmentObjects.set(entry.id, { id: entry.id, parentId: entry.id, domain: entry.domain, title: entry.title });
     for (const nested of [...array(entry.questions), ...array(entry.atomicSubcriteria), ...array(entry.atomicTests)]) if (nested?.id) assessmentObjects.set(nested.id, { ...nested, parentId: entry.id, domain: entry.domain });
     for (const finding of array(entry.findingDefinitions)) if (finding?.id) findingDefinitions.set(finding.id, { ...finding, parentId: entry.id, domain: entry.domain });
   }
@@ -349,16 +376,23 @@ function coverageObjects(knowledge, dossier) {
   }
   for (const antiPattern of knowledge.antipatterns) {
     add("antipattern", antiPattern);
-    for (const object of array(antiPattern.atomicTests)) add("assessment", { ...object, domain: antiPattern.domain, lifecycleStages: antiPattern.lifecycleStages }, antiPattern.id);
+    for (const object of [...array(antiPattern.questions), ...array(antiPattern.atomicTests)]) add("assessment", { ...object, domain: antiPattern.domain, lifecycleStages: antiPattern.lifecycleStages }, antiPattern.id);
     for (const finding of array(antiPattern.findingDefinitions)) add("finding", { ...finding, domain: antiPattern.domain, lifecycleStages: antiPattern.lifecycleStages }, antiPattern.id);
   }
   return entries;
 }
 
 export function assessmentWorkItems(knowledge, dossier, domain) {
+  const index = knowledgeAssessmentIndex(knowledge);
   return coverageObjects(knowledge, dossier)
     .filter((item) => item.domain === domain && item.lifecycleApplicable && !item.humanInterpretationRequired)
-    .map(({ id, objectId, parentId, kind, domain: itemDomain, title }) => ({ id: objectId, objectId, parentId, kind, domain: itemDomain, title }));
+    .map(({ objectId, parentId, kind, domain: itemDomain, title }) => {
+      const nested = index.assessmentObjects.get(objectId);
+      const item = { id: objectId, objectId, parentId, kind, domain: itemDomain, title };
+      if (nested?.question) item.question = nested.question;
+      if (nested?.dimension) item.dimension = nested.dimension;
+      return item;
+    });
 }
 
 export function buildAssessmentCoverageMatrix(knowledge, dossier, claims, domainResults) {

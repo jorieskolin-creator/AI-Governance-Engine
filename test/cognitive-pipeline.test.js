@@ -50,7 +50,7 @@ function jsonBetween(prompt, start, end) {
 function mockTransport({ schemaName, prompt, profile }) {
   const unitId = firstUnitId(prompt);
   const domain = domainFromSchema(schemaName);
-  const controlByDomain = { A: "CTRL-A-01", B: "CTRL-B-01", C: "CTRL-C-01", D: "CTRL-D-01", E: "CTRL-E-01", F: "CTRL-F-01" };
+  const controlByDomain = { A: "CTRL-A1", B: "CTRL-B1", C: "CTRL-C1", D: "CTRL-D1", E: "CTRL-E1", F: "CTRL-F1" };
   let value;
   if (schemaName === "solution_model") {
     const quote = prompt.match(new RegExp(`SOURCE_UNIT ${unitId}\\n[^\\n]*\\n([^\\n]+)`))?.[1] ?? "[missing quote]";
@@ -201,7 +201,7 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   const providers = ALL_PROVIDERS;
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
   const policy = modelPolicy(ALL_CREDENTIALS);
-  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: mockTransport });
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 120 }), transport: mockTransport });
   const checkpoints = [];
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }), onCheckpoint: async (checkpoint) => checkpoints.push(checkpoint) });
   assert.strictEqual(validateReadinessPackage(result), result);
@@ -216,7 +216,8 @@ test("v2 accepts only verified claims into the deterministic readiness package",
   assert.equal(result.recommendation.formalApproval, false);
   assert.equal(result.cognitive.coverage.complete, true);
   assert.ok(result.coverageMatrix.entries.some((item) => item.evidenceStatus === "NO_EVIDENCE_FOUND"));
-  assert.equal(result.cognitive.lockedFindings.length, 6);
+  assert.ok(result.cognitive.lockedFindings.length >= 6);
+  assert.equal(new Set(result.cognitive.lockedFindings.flatMap((item) => item.domains)).size, 6);
   assert.ok(result.cognitive.verificationRecords.every((item) => item.status === "SUPPORTED"));
   assert.ok(result.evidence.filter((item) => item.signal === "verified-control-evidence").every((item) => item.assuranceState === "DECLARED"));
   assert.ok(result.cognitive.modelExecutionTrace.every((item) => !JSON.stringify(item).includes("test")));
@@ -230,7 +231,7 @@ test("a durable checkpoint failure stops execution before the next provider call
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
   const policy = modelPolicy(ALL_CREDENTIALS);
   let providerCalls = 0;
-  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: async (request) => { providerCalls += 1; return mockTransport(request); } });
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 120 }), transport: async (request) => { providerCalls += 1; return mockTransport(request); } });
   await assert.rejects(executeCognitiveRun(run, {
     policy,
     client,
@@ -279,7 +280,7 @@ test("single-provider approval fails closed for cross-provider verification", as
   const run = await createPreflight(preflightInput([{ path: "governance/purpose.md", mimeType: "text/markdown", content: "Purpose and owner are documented." }]));
   run.approval = validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] })) }, run);
   const policy = modelPolicy(MOONSHOT_CREDENTIALS);
-  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: mockTransport });
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 120 }), transport: mockTransport });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
   assert.equal(result.cognitive.coverage.complete, false);
   assert.ok(result.hardGates.some((item) => item.code === "COGNITIVE_ASSESSMENT_INCOMPLETE"));
@@ -296,11 +297,11 @@ test("a fabricated evidence quote is rejected before model verification", async 
     if (domainFromSchema(args.schemaName)) result.value.claims[0].evidenceQuotes[0].quote = "This quote does not exist in the source.";
     return result;
   };
-  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: badQuoteTransport });
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 120 }), transport: badQuoteTransport });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
   assert.ok(result.cognitive.verificationRecords.some((item) => item.verifierProvider === "LOCAL" && item.status === "UNSUPPORTED"));
   assert.equal(result.cognitive.lockedFindings.length, 0);
-  assert.equal(result.cognitive.unresolvedClaims.length, 6);
+  assert.ok(result.cognitive.unresolvedClaims.length >= 6);
   assert.equal(result.evidence.filter((item) => item.signal === "verified-control-evidence").length, 0);
 });
 
@@ -318,7 +319,7 @@ test("unsupported synthesis is quarantined and cannot alter deterministic author
     }
     return result;
   };
-  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 40 }), transport: adversarialSynthesis });
+  const client = new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 120 }), transport: adversarialSynthesis });
   const result = await executeCognitiveRun(run, { policy, client, budget: client.budget, knowledge: await loadKnowledgeSnapshot({ production: false }) });
   assert.equal(result.recommendation.formalApproval, false);
   assert.ok(["REPORT_WITH_LIMITATIONS", "REPORT_WITHHELD"].includes(result.publicationGate.status));

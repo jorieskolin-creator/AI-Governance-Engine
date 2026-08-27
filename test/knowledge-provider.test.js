@@ -123,12 +123,21 @@ test("complete hash-pinned Vercel snapshot is accepted", async (t) => {
   for (const type of types) assert.equal(snapshot[type].length, 1);
 });
 
-test("local snapshot loads the approved Playbook and leaves assessment objects unpublished", async () => {
+test("local snapshot loads the assessment instrument and approved Playbook, with Knowledge Base unpublished", async () => {
   const snapshot = await loadKnowledgeSnapshot({ production: false, manifestUrl: "" });
   assert.equal(snapshot.source, "LOCAL_BOOTSTRAP");
   assert.equal(snapshot.releaseStatus, "ASSESSMENT_OBJECTS_NOT_PUBLISHED");
   assert.equal(snapshot.playbookStatus, "APPROVED");
+  assert.equal(snapshot.instrumentStatus, "LOADED");
+  assert.equal(snapshot.knowledgeBaseStatus, "NOT_PUBLISHED");
   assert.equal(snapshot.assessmentObjectsStatus, "NOT_PUBLISHED");
+  assert.equal(snapshot.controls.length, 30);
+  assert.equal(snapshot.antipatterns.length, 30);
+  assert.equal(snapshot.requirements.length, 30);
+  assert.ok(snapshot.controls.every((item) => item.authoringObjectId && item.questions?.length === 3 && item.id === `CTRL-${item.authoringObjectId}`));
+  assert.ok(snapshot.antipatterns.every((item) => item.id.startsWith("AP-") && item.questions?.length === 3));
+  assert.equal(snapshot.controls.flatMap((item) => item.questions).length, 90);
+  assert.equal(snapshot.antipatterns.flatMap((item) => item.questions).length, 90);
   assert.equal(snapshot.tactics.length, 119);
   assert.ok(snapshot.tactics.every((item) => item.status === "APPROVED" && item.id.startsWith("TAC-")));
   assert.ok(snapshot.tactics.some((item) => item.id === "TAC-PURPOSE-A1-01"));
@@ -136,10 +145,17 @@ test("local snapshot loads the approved Playbook and leaves assessment objects u
   assert.equal(snapshot.diagnostics.errorCount, 0);
   assert.ok(snapshot.diagnostics.issues.some((item) => item.code === "ASSESSMENT_OBJECTS_NOT_PUBLISHED"));
   assert.equal(snapshot.diagnostics.issues.some((item) => item.code === "KNOWLEDGE_NOT_APPROVED"), false);
+  assert.equal(snapshot.controls.some((item) => item.id === "CTRL-A-01"), false);
+  assert.equal(snapshot.antipatterns.some((item) => item.id === "AP-A-01"), false);
   const view = knowledgeManifestView(snapshot);
   assert.equal(view.playbookStatus, "APPROVED");
+  assert.equal(view.instrumentStatus, "LOADED");
+  assert.equal(view.knowledgeBaseStatus, "NOT_PUBLISHED");
   assert.equal(view.assessmentObjectsStatus, "NOT_PUBLISHED");
   assert.equal(view.counts.tactics, 119);
+  assert.equal(view.counts.controls, 30);
+  assert.equal(view.counts.antipatterns, 30);
+  assert.equal(view.counts.assessmentQuestions, 180);
 });
 
 test("approved catalog tactics retrieve from locked findings on published object IDs", () => {
@@ -157,7 +173,7 @@ test("approved catalog tactics retrieve from locked findings on published object
   assert.ok(actions.some((item) => item.tacticId === "TAC-PURPOSE-A1-01"));
 });
 
-test("bootstrap control and anti-pattern IDs do not retrieve approved Playbook tactics", () => {
+test("legacy bootstrap IDs do not retrieve approved Playbook tactics", () => {
   const finding = {
     id: "finding-bootstrap",
     statement: "Purpose is undefined.",

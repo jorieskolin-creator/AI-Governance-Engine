@@ -15,7 +15,7 @@ import {
 import {
   applySolutionFactVerification, buildAssessmentCoverageMatrix, consolidateClaims, createAdjudicatedClaim,
   evaluatePublicationGate, evidenceLinksForClaim, lockAdjudicatedClaim, assessmentWorkItems,
-  normalizeSolutionCandidates, validateClaimMappings, validateFactCheckCompleteness
+  normalizeSolutionCandidates, stampCanonicalObjectIds, validateClaimMappings, validateFactCheckCompleteness
 } from "./integrity.js";
 import { completeCognitiveStep, createCognitiveStepLedger, startCognitiveStep } from "./orchestration.js";
 import { rethrowFatal } from "./failure-policy.js";
@@ -33,9 +33,9 @@ function batches(values, size = ASSESSMENT_WORK_ITEM_BATCH_SIZE) {
 function knowledgeForWorkItems(knowledge, domain, workItems) {
   const parents = new Set(workItems.flatMap((item) => [item.objectId, item.parentId]).filter(Boolean));
   return {
-    controls: knowledge.controls.filter((item) => item.domain === domain && parents.has(item.id)),
-    requirements: knowledge.requirements.filter((item) => item.domain === domain && parents.has(item.id)),
-    antiPatterns: knowledge.antipatterns.filter((item) => item.domain === domain && parents.has(item.id))
+    controls: knowledge.controls.filter((item) => item.domain === domain && (parents.has(item.id) || parents.has(item.authoringObjectId))),
+    requirements: knowledge.requirements.filter((item) => item.domain === domain && (parents.has(item.id) || parents.has(item.authoringObjectId))),
+    antiPatterns: knowledge.antipatterns.filter((item) => item.domain === domain && (parents.has(item.id) || parents.has(item.pairedObjectId)))
   };
 }
 
@@ -222,7 +222,7 @@ function localScannerArtifacts(run, now) {
     registryFindings: findings.map((item) => ({ code: "SECRET_CANDIDATE", severity: "CRITICAL", evidenceId: stableId("evd", { dlp: item.id }), message: "Potential secret candidate detected and redacted during preflight" })),
     evidence: findings.map((item) => ({
       id: stableId("evd", { dlp: item.id }), sourceId: item.sourceUnitId, path: "preflight-redaction", kind: "SCAN_RESULT", sha256: sha256(item),
-      excerpt: "Potential secret material detected; value redacted.", signal: "hardcoded-secret", domainIds: ["D"], controlIds: ["CTRL-D-01"], antiPatternIds: ["AP-D-01"],
+      excerpt: "Potential secret material detected; value redacted.", signal: "hardcoded-secret", domainIds: ["D"], controlIds: ["CTRL-D1"], antiPatternIds: ["AP-D1"],
       assuranceState: "TESTED", polarity: "RISK", stale: false, capturedAt: now.toISOString(), metadata: { scanner: "local-preflight-dlp" }
     }))
   };
@@ -402,6 +402,7 @@ export async function executeCognitiveRun(run, options = {}) {
       for (const candidate of output.value.claims) {
         try {
           const claim = createGovernanceClaim(candidate, { provider: output.profile.provider, model: output.profile.model, profileId: output.profile.id, domain });
+          stampCanonicalObjectIds(claim, knowledge);
           const mapping = validateClaimMappings(claim, knowledge); if (!mapping.valid) throw new Error(mapping.issues.join("; "));
           created.push(claim);
         } catch (error) { run.trace.push({ stage: `DOMAIN_${domain}`, status: "CLAIM_REJECTED", at: new Date().toISOString(), error: error.message }); }

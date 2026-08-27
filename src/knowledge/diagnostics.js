@@ -42,13 +42,24 @@ export function evaluateKnowledgeSnapshot(snapshot) {
   }).map((item) => item.id);
   const productionRelease = ["APPROVED", "FROZEN"].includes(snapshot.releaseStatus);
   const playbookApproved = snapshot.playbookStatus === "APPROVED" || (snapshot.tactics ?? []).some((item) => item.status === "APPROVED");
-  const objectsUnpublished = snapshot.assessmentObjectsStatus === "NOT_PUBLISHED" || snapshot.releaseStatus === "ASSESSMENT_OBJECTS_NOT_PUBLISHED";
+  const objectsUnpublished = snapshot.assessmentObjectsStatus === "NOT_PUBLISHED" || snapshot.releaseStatus === "ASSESSMENT_OBJECTS_NOT_PUBLISHED" || snapshot.knowledgeBaseStatus === "NOT_PUBLISHED";
+  const kbPublished = [...(snapshot.controls ?? []), ...(snapshot.antipatterns ?? [])].every((item) => {
+    const hasRules = Boolean(item.evidenceRules);
+    const hasFindings = Array.isArray(item.findingDefinitions) && item.findingDefinitions.length > 0;
+    const hasAtomic = (Array.isArray(item.atomicSubcriteria) && item.atomicSubcriteria.length > 0) || (Array.isArray(item.atomicTests) && item.atomicTests.length > 0);
+    return hasRules && hasFindings && hasAtomic;
+  }) && (snapshot.controls ?? []).length > 0;
+  const instrumentLoaded = (snapshot.controls ?? []).length === 30 && (snapshot.antipatterns ?? []).length === 30
+    && [...(snapshot.controls ?? []), ...(snapshot.antipatterns ?? [])].every((item) => Array.isArray(item.questions) && item.questions.length === 3);
   if (unmappedTactics.length) {
     if (productionRelease) add("ERROR", "TACTIC_WITHOUT_PRIMARY_OBJECT_MAPPING", "Tactics must map to assessment objects present in the active capability and anti-pattern collections.", unmappedTactics);
     else if (objectsUnpublished || playbookApproved) add("WARNING", "ASSESSMENT_OBJECTS_NOT_PUBLISHED", "Approved Playbook tactics are loaded; capability and anti-pattern Knowledge Base objects are not yet published. Tactics appear after locked findings map to those objects.", unmappedTactics);
     else add("WARNING", "TACTIC_WITHOUT_PRIMARY_OBJECT_MAPPING", "Tactics must map to assessment objects present in the active capability and anti-pattern collections.", unmappedTactics);
   }
-  if (!productionRelease && !(objectsUnpublished && playbookApproved)) add("WARNING", "KNOWLEDGE_NOT_APPROVED", `Knowledge release status is ${snapshot.releaseStatus ?? "UNSPECIFIED"}; it is not an approved production mapping.`);
+  if (!kbPublished && (instrumentLoaded || objectsUnpublished || playbookApproved) && !unmappedTactics.length) {
+    add("WARNING", "ASSESSMENT_OBJECTS_NOT_PUBLISHED", "Assessment instrument is loaded (30 capabilities, 30 anti-patterns, 3 questions each). Knowledge Base evidence rules, atomic tests and finding definitions are not yet published.", [...knownAssessmentObjects].sort());
+  }
+  if (!productionRelease && !(objectsUnpublished && playbookApproved) && !instrumentLoaded) add("WARNING", "KNOWLEDGE_NOT_APPROVED", `Knowledge release status is ${snapshot.releaseStatus ?? "UNSPECIFIED"}; it is not an approved production mapping.`);
   const questionnaire = snapshot.intakeQuestionnaire;
   if (!questionnaire || !Array.isArray(questionnaire.questions) || !questionnaire.questions.length) add("ERROR", "INTAKE_QUESTIONNAIRE_MISSING", "The versioned assessment-intake questionnaire is missing.");
   else {

@@ -323,7 +323,7 @@ test("lexical indicators do not independently establish implemented assurance", 
   const input = sampleRequest();
   input.sources = [{ path: "security/notes.md", content: "threat model prompt injection data leakage red team penetration test" }];
   const result = await assessSolution(input);
-  const control = result.domains.flatMap((domain) => domain.controls).find((item) => item.controlId === "CTRL-D-01");
+  const control = result.domains.flatMap((domain) => domain.controls).find((item) => item.controlId === "CTRL-D3");
   assert.notEqual(control.state, "IMPLEMENTED");
   assert.ok(result.evidence.filter((item) => item.sourceId !== "dossier").every((item) => item.eligibleForAssurance === false || item.signal === "hardcoded-secret"));
 });

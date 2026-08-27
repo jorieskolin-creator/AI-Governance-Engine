@@ -42,7 +42,7 @@ export function evaluateHardGates({ dossier, registryFindings, controlAssessment
       code: "SECRET_CANDIDATE", outcome: "BLOCK", title: "Potential secret requires verification",
       basisStatus: "DETECTED_CANDIDATE",
       rationale: "A deterministic scanner detected a credential-shaped value. Progression fails safe until Security verifies whether it is real or a synthetic fixture.",
-      evidenceIds: secretEvidence.map((item) => item.evidenceId), authorities: ["SECURITY"], controlIds: ["CTRL-D-01"],
+      evidenceIds: secretEvidence.map((item) => item.evidenceId), authorities: ["SECURITY"], controlIds: ["CTRL-D1"],
       clearanceCriteria: ["Classify the candidate as a verified secret or documented synthetic fixture", "If verified, remove the value and rotate or revoke the affected credential", "Supply a passed follow-up secret scan"],
       requiredEvidenceKinds: ["SCAN_RESULT", "HUMAN_REVIEW"]
     });
@@ -52,7 +52,7 @@ export function evaluateHardGates({ dossier, registryFindings, controlAssessment
       code: "UNSAFE_EXPERIMENT_BOUNDARY", outcome: "BLOCK", title: "Declared production access conflicts with the experiment boundary",
       basisStatus: "DECLARED",
       rationale: "Qualification and development must not have uncontrolled production access.",
-      evidenceIds: evidence.filter((item) => item.signal === "unsafe-experiment-boundary").map((item) => item.id), authorities: ["SECURITY"], controlIds: ["CTRL-D-01"],
+      evidenceIds: evidence.filter((item) => item.signal === "unsafe-experiment-boundary").map((item) => item.id), authorities: ["SECURITY"], controlIds: ["CTRL-A5", "CTRL-D1"],
       clearanceCriteria: ["Remove production routes and credentials from the experiment", "Demonstrate isolation with a passed boundary test"],
       requiredEvidenceKinds: ["CONFIGURATION", "TEST", "HUMAN_REVIEW"]
     });
@@ -62,27 +62,27 @@ export function evaluateHardGates({ dossier, registryFindings, controlAssessment
       code: "IRREVERSIBLE_AUTONOMY", outcome: "BLOCK", title: "Declared irreversible agent actions lack human override",
       basisStatus: "DECLARED",
       rationale: "Prompt instructions are not an adequate authorization control for irreversible actions.",
-      evidenceIds: evidence.filter((item) => item.signal === "excessive-agency").map((item) => item.id), authorities: ["SECURITY", "GOVERNANCE"], controlIds: ["CTRL-C-03", "CTRL-E-03"],
+      evidenceIds: evidence.filter((item) => item.signal === "excessive-agency").map((item) => item.id), authorities: ["SECURITY", "GOVERNANCE"], controlIds: ["CTRL-C3", "CTRL-E4"],
       clearanceCriteria: ["Require attributable human confirmation before irreversible actions", "Pass negative authorization and kill-switch tests"],
       requiredEvidenceKinds: ["CONFIGURATION", "TEST", "HUMAN_REVIEW"]
     });
   }
-  if ((dossier.data.personalData || dossier.data.specialCategoryData) && !["HUMAN_VALIDATED", "FORMALLY_APPROVED"].includes(control("CTRL-B-02")?.state)) {
+  if ((dossier.data.personalData || dossier.data.specialCategoryData) && !["HUMAN_VALIDATED", "FORMALLY_APPROVED"].includes(control("CTRL-B3")?.state)) {
     add({
       code: "PRIVACY_REVIEW_REQUIRED", outcome: dossier.data.productionData ? "BLOCK" : "REVIEW", title: "Declared personal-data use lacks human validation",
       basisStatus: "DECLARED",
       rationale: "Code and declarations cannot establish a lawful basis or complete a DPIA decision.",
-      evidenceIds: control("CTRL-B-02")?.evidenceIds ?? [], authorities: ["PRIVACY"], controlIds: ["CTRL-B-02"], requirementIds: ["REQ-B-002"],
+      evidenceIds: control("CTRL-B3")?.evidenceIds ?? [], authorities: ["PRIVACY"], controlIds: ["CTRL-B3"], requirementIds: ["REQ-B3"],
       clearanceCriteria: ["Record the applicable processing basis and purpose", "Complete the required DPIA screen and Privacy review"],
       requiredEvidenceKinds: ["DOCUMENT", "HUMAN_REVIEW"]
     });
   }
-  if (dossier.classification.highRiskCandidate && !["HUMAN_VALIDATED", "FORMALLY_APPROVED"].includes(control("CTRL-A-02")?.state)) {
+  if (dossier.classification.highRiskCandidate && !["HUMAN_VALIDATED", "FORMALLY_APPROVED"].includes(control("CTRL-A4")?.state)) {
     add({
       code: "HIGH_RISK_CLASSIFICATION_REVIEW", outcome: "REVIEW", title: "Declared high-risk candidate requires classification review",
       basisStatus: "DECLARED",
       rationale: "The engine preserves this as a Legal decision rather than making a binding classification.",
-      evidenceIds: control("CTRL-A-02")?.evidenceIds ?? [], authorities: ["LEGAL", "GOVERNANCE"], controlIds: ["CTRL-A-02"], requirementIds: ["REQ-A-002"],
+      evidenceIds: control("CTRL-A4")?.evidenceIds ?? [], authorities: ["LEGAL", "GOVERNANCE"], controlIds: ["CTRL-A4"], requirementIds: ["REQ-A4"],
       clearanceCriteria: ["Record provider/deployer roles and the case-specific classification", "Resolve every material classification uncertainty through authorized review"],
       requiredEvidenceKinds: ["DOCUMENT", "HUMAN_REVIEW"]
     });

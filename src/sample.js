@@ -31,37 +31,37 @@ export const SAMPLE_REQUEST = {
       path: "governance/intended-purpose-review.md",
       kind: "HUMAN_REVIEW",
       content: "The system owner has validated the intended purpose, employee audience, success metric, excluded uses, and escalation boundary.",
-      metadata: { humanActorId: "governance-reviewer-01", authority: "GOVERNANCE", controlIds: ["CTRL-A-01", "CTRL-F-01"], domainIds: ["A", "F"] }
+      metadata: { humanActorId: "governance-reviewer-01", authority: "GOVERNANCE", controlIds: ["CTRL-A1", "CTRL-F1"], domainIds: ["A", "F"] }
     },
     {
       path: "architecture/model-inventory.json",
       kind: "CONFIGURATION",
       content: "{\"provider\":\"Azure OpenAI\",\"modelVersion\":\"pinned-deployment\",\"tools\":[],\"dataRetention\":\"disabled by enterprise terms\"}",
-      metadata: { controlIds: ["CTRL-C-01"], domainIds: ["C"] }
+      metadata: { controlIds: ["CTRL-C1"], domainIds: ["C"] }
     },
     {
       path: "security/threat-model.md",
       kind: "HUMAN_REVIEW",
       content: "Threat model covers trust boundaries, indirect prompt injection, sensitive output, retrieval poisoning, authorization, audit logs, and safe shutdown.",
-      metadata: { humanActorId: "security-reviewer-01", authority: "SECURITY", controlIds: ["CTRL-D-01"], domainIds: ["D"] }
+      metadata: { humanActorId: "security-reviewer-01", authority: "SECURITY", controlIds: ["CTRL-D3"], domainIds: ["D"] }
     },
     {
       path: "test/security-evaluation.test.js",
       kind: "TEST",
       content: "// Evaluation acceptance threshold: 100% block rate for prompt injection and data leakage cases. assertPromptInjectionBlocked(); assertSensitiveOutputRedacted();",
-      metadata: { controlIds: ["CTRL-D-02"], domainIds: ["D"], testedAbsenceOf: ["AP-D-02"] }
+      metadata: { controlIds: ["CTRL-D3"], domainIds: ["D"], testedAbsenceOf: ["AP-D3"] }
     },
     {
       path: "governance/oversight-review.md",
       kind: "HUMAN_REVIEW",
       content: "A human can reject output, correct answers, escalate to the source owner, and disable the assistant. Employee appeal and correction requests are logged.",
-      metadata: { humanActorId: "governance-reviewer-02", authority: "GOVERNANCE", controlIds: ["CTRL-E-03"], domainIds: ["E"] }
+      metadata: { humanActorId: "governance-reviewer-02", authority: "GOVERNANCE", controlIds: ["CTRL-E4", "CTRL-E5"], domainIds: ["E"] }
     },
     {
       path: "privacy/data-inventory.md",
       kind: "HUMAN_REVIEW",
       content: "Dataset register contains only approved process documents. Data flow, access, retention, deletion, confidentiality and licence ownership are reviewed. No personal data is intended.",
-      metadata: { humanActorId: "privacy-reviewer-01", authority: "PRIVACY", controlIds: ["CTRL-B-01", "CTRL-B-03"], domainIds: ["B"] }
+      metadata: { humanActorId: "privacy-reviewer-01", authority: "PRIVACY", controlIds: ["CTRL-B1", "CTRL-B5"], domainIds: ["B"] }
     }
   ]
 };

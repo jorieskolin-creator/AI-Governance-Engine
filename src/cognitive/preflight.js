@@ -122,10 +122,12 @@ export function publicDiscoveryView(run) {
 }
 
 export async function confirmPreflightDossier(run, input, options = {}) {
-  if (!run || run.status !== "AWAITING_INTAKE_CONFIRMATION") throw new Error("Run is not awaiting intake confirmation");
-  if (run.stage === "INTAKE_AI_VERIFICATION_IN_PROGRESS") throw new Error("Intake cannot be confirmed while AI verification is in progress");
-  if (!(run.sourceIngestion?.parsedCount > 0)) throw new Error("At least one parsed evidence source is required before analysis");
-  const submittedDossier = validateDossier(input?.dossier);
+  if (!run || run.status !== "AWAITING_INTAKE_CONFIRMATION") throw Object.assign(new Error("Run is not awaiting intake confirmation"), { statusCode: 409 });
+  if (run.stage === "INTAKE_AI_VERIFICATION_IN_PROGRESS") throw Object.assign(new Error("Intake cannot be confirmed while AI verification is in progress"), { statusCode: 409 });
+  if (!(run.sourceIngestion?.parsedCount > 0)) throw Object.assign(new Error("At least one parsed evidence source is required before analysis"), { statusCode: 409 });
+  let submittedDossier;
+  try { submittedDossier = validateDossier(input?.dossier); }
+  catch (error) { throw Object.assign(error, { statusCode: 422 }); }
   const sourceProfile = run.solutionProfile;
   const candidatePackage = validateIntakeCandidatePackage(run.intakeCandidates);
   const acceptedAcquiredCandidate = (fieldId) => {
@@ -201,16 +203,19 @@ export async function confirmPreflightDossier(run, input, options = {}) {
   const dossier = { ...submittedDossier, intakeAnswers };
   const solutionProfile = discoverSolutionProfile(sourceUnits, dossier, confirmations, { trustedIntakeProvenance: true });
   const effectiveDossier = { ...dossier, intakeAnswers: activeIntakeAnswers(dossier.intakeAnswers) };
-  const approvedIntake = createApprovedIntakeSnapshot({
-    run,
-    dossier,
-    effectiveDossier,
-    solutionProfile,
-    sourceProfile,
-    resolutions: input?.resolutions,
-    approval: input?.approval,
-    priorRevisionRef: input?.priorRevisionRef
-  });
+  let approvedIntake;
+  try {
+    approvedIntake = createApprovedIntakeSnapshot({
+      run,
+      dossier,
+      effectiveDossier,
+      solutionProfile,
+      sourceProfile,
+      resolutions: input?.resolutions,
+      approval: input?.approval,
+      priorRevisionRef: input?.priorRevisionRef
+    });
+  } catch (error) { throw Object.assign(error, { statusCode: 422 }); }
   const dossierSource = await parseAndScreenSources([{
     path: "intended-use-dossier.json", mimeType: "application/json", format: "TEXT", encoding: "utf8",
     content: JSON.stringify(effectiveDossier), metadata: { kind: "DECLARATION" }

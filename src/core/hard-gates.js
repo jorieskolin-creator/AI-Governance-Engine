@@ -1,4 +1,5 @@
 import { stableId } from "./hash.js";
+import { productionAccessOnExperimentStage } from "../contracts.js";
 
 function gate({ code, outcome, title, rationale, targetStage, basisStatus = "DETERMINISTIC_RULE", evidenceIds = [], authorities = [], clearanceCriteria = [], requiredEvidenceKinds = [], controlIds = [], requirementIds = [] }) {
   const normalized = {
@@ -46,7 +47,7 @@ export function evaluateHardGates({ dossier, registryFindings, controlAssessment
       requiredEvidenceKinds: ["SCAN_RESULT", "HUMAN_REVIEW"]
     });
   }
-  if (dossier.exposure.productionAccess && ["QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT"].includes(dossier.currentStage)) {
+  if (productionAccessOnExperimentStage(dossier)) {
     add({
       code: "UNSAFE_EXPERIMENT_BOUNDARY", outcome: "BLOCK", title: "Declared production access conflicts with the experiment boundary",
       basisStatus: "DECLARED",

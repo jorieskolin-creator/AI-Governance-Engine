@@ -20,6 +20,19 @@ export const LIFECYCLE_STAGES = Object.freeze([
   "RETIREMENT"
 ]);
 
+export function lifecycleApplies(stages, dossier) {
+  if (!Array.isArray(stages) || stages.length === 0) return true;
+  const known = [dossier?.currentStage, dossier?.targetStage].filter((stage) => stage && stage !== "UNKNOWN");
+  return known.length === 0 || known.some((stage) => stages.includes(stage));
+}
+
+export function productionAccessOnExperimentStage(dossier) {
+  return Boolean(dossier?.exposure?.productionAccess) && (
+    dossier.currentStage === "UNKNOWN"
+    || ["QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT"].includes(dossier.currentStage)
+  );
+}
+
 export const ASSURANCE_STATES = Object.freeze([
   "UNKNOWN",
   "DECLARED",
@@ -180,9 +193,9 @@ export function validateDossier(input) {
   const declaredTargetStage = input.targetStage ?? "UNKNOWN";
   invariant(declaredCurrentStage === "UNKNOWN" || LIFECYCLE_STAGES.includes(declaredCurrentStage), "dossier.currentStage is invalid");
   invariant(declaredTargetStage === "UNKNOWN" || LIFECYCLE_STAGES.includes(declaredTargetStage), "dossier.targetStage is invalid");
-  const currentStage = declaredCurrentStage === "UNKNOWN" ? "QUALIFICATION_AND_REGISTRATION" : declaredCurrentStage;
-  const targetStage = declaredTargetStage === "UNKNOWN" ? "DESIGN_AND_DEVELOPMENT" : declaredTargetStage;
-  if (declaredCurrentStage !== "UNKNOWN" && declaredTargetStage !== "UNKNOWN") invariant(LIFECYCLE_STAGES.indexOf(targetStage) >= LIFECYCLE_STAGES.indexOf(currentStage), "targetStage cannot precede currentStage");
+  const currentStage = declaredCurrentStage;
+  const targetStage = declaredTargetStage;
+  if (currentStage !== "UNKNOWN" && targetStage !== "UNKNOWN") invariant(LIFECYCLE_STAGES.indexOf(targetStage) >= LIFECYCLE_STAGES.indexOf(currentStage), "targetStage cannot precede currentStage");
   invariant(input.jurisdictions === undefined || Array.isArray(input.jurisdictions), "dossier.jurisdictions must be an array");
   invariant(input.roles === undefined || Array.isArray(input.roles), "dossier.roles must be an array");
   invariant(input.users === undefined || Array.isArray(input.users), "dossier.users must be an array");

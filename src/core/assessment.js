@@ -1,4 +1,4 @@
-import { ASSURANCE_STATES, DOMAINS, STATE_WEIGHT } from "../contracts.js";
+import { ASSURANCE_STATES, DOMAINS, STATE_WEIGHT, lifecycleApplies } from "../contracts.js";
 import { stableId } from "./hash.js";
 
 const stateRank = Object.fromEntries(ASSURANCE_STATES.map((state, index) => [state, index]));
@@ -20,7 +20,7 @@ function controlApplicability(control, appMap) {
 }
 
 function controlInScope(control, dossier) {
-  return control.lifecycleStages.includes(dossier.currentStage) || control.lifecycleStages.includes(dossier.targetStage);
+  return lifecycleApplies(control.lifecycleStages, dossier);
 }
 
 export function assessControls(controls, applicability, evidence, dossier, antiPatterns) {

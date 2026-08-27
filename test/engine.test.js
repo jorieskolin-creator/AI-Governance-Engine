@@ -153,6 +153,21 @@ test("irreversible agent action without override blocks progression", async () =
   assert.equal(result.recommendation.outcome, "BLOCKED_IN_CURRENT_FORM");
 });
 
+test("unknown lifecycle stays unknown, keeps later-stage controls in scope, and treats production access as an experiment-boundary risk", async () => {
+  const result = await assessSolution(request({
+    dossier: {
+      currentStage: "UNKNOWN",
+      targetStage: "UNKNOWN",
+      exposure: { currentUserAccess: "INTERNAL_ONLY", intendedUserAccess: "INTERNAL_ONLY", externalUsers: false, productionAccess: true, consequentialDecisions: false }
+    }
+  }));
+  assert.equal(result.solution.currentStage, "UNKNOWN");
+  assert.equal(result.solution.targetStage, "UNKNOWN");
+  assert.ok(control(result, "CTRL-D-02"));
+  assert.ok(control(result, "CTRL-F-03"));
+  assert.ok(result.hardGates.some((item) => item.code === "UNSAFE_EXPERIMENT_BOUNDARY" && item.outcome === "BLOCK"));
+});
+
 test("identical verified inputs produce identical deterministic gates and dimensions", async () => {
   const first = await assessSolution(request());
   const second = await assessSolution(request());

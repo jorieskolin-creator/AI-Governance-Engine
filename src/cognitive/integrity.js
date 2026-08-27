@@ -1,4 +1,4 @@
-import { DOMAINS, LIFECYCLE_STAGES, STATE_WEIGHT } from "../contracts.js";
+import { DOMAINS, LIFECYCLE_STAGES, STATE_WEIGHT, lifecycleApplies } from "../contracts.js";
 import { sha256, stableId } from "../core/hash.js";
 
 const STATE_RANK = Object.fromEntries(Object.keys(STATE_WEIGHT).map((state, index) => [state, index]));
@@ -329,8 +329,7 @@ export function validAbsenceTest(test) {
 }
 
 function inLifecycle(entry, dossier) {
-  const stages = array(entry.lifecycleStages);
-  return !stages.length || stages.includes(dossier.currentStage) || stages.includes(dossier.targetStage);
+  return lifecycleApplies(array(entry.lifecycleStages), dossier);
 }
 
 function coverageObjects(knowledge, dossier) {

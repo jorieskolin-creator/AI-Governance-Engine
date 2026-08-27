@@ -443,7 +443,7 @@ function intakeResolutions(dossier) {
     let resolutionState;
     if (answer?.answerState === "NOT_APPLICABLE") resolutionState = "USER_SELECTED_NOT_APPLICABLE";
     else if (value === null) resolutionState = "USER_SELECTED_UNKNOWN";
-    else if (answer?.answerState === "HUMAN_REVIEW_REQUIRED" || (fact?.status === "CONFLICTING" || fact?.supportStatus === "CONFLICTING") && sameIntakeValue(priorFieldValue(field), value)) resolutionState = "CONFLICT_REQUIRES_RESOLUTION";
+    else if ((fact?.status === "CONFLICTING" || fact?.supportStatus === "CONFLICTING") && sameIntakeValue(priorFieldValue(field), value)) resolutionState = "USER_EDITED";
     else if (acquiredCandidate && sameIntakeValue(acquiredCandidate.sanitizedCandidate, value)) resolutionState = "USER_ACCEPTED_ACQUIRED_CANDIDATE";
     else if (proposal && proposalMatchesValue(proposal.value, value)) resolutionState = "USER_ACCEPTED_PROPOSAL";
     else if (sameIntakeValue(priorFieldValue(field), value)) resolutionState = "USER_CONFIRMED";
@@ -1021,8 +1021,17 @@ async function postJson(path, body = undefined) {
     body: body === undefined ? undefined : JSON.stringify(body)
   });
   const value = await response.json();
-  if (!response.ok) throw new Error(`${value.detail || value.error || "Cognitive assessment failed"}${value.failureCode ? ` (${label(value.failureCode)})` : ""}`);
+  if (!response.ok) throw new Error(requestFailureMessage(value));
   return value;
+}
+
+function requestFailureMessage(value) {
+  const message = value.detail || value.error || "Cognitive assessment failed";
+  const code = value.failureCode ? ` (${label(value.failureCode)})` : "";
+  const readiness = value.readiness ?? (value.failureCode === "MODEL_ROUTE_UNAVAILABLE" ? modelReadiness : null);
+  if (!readiness || readiness.status === "READY") return `${message}${code}`;
+  const issues = (readiness.issueCodes ?? []).map(label).join(", ");
+  return `${message}${code} Model readiness: ${label(readiness.status)}${issues ? ` (${issues})` : ""}.`;
 }
 
 async function waitForRun(runId) {
@@ -1056,11 +1065,16 @@ async function runAssessment(event) {
     if (!await requestIntakeApproval(resolutions)) return;
     $("progress").classList.remove("hidden");
     setProgress("Preparing AI analysis", "Local screening is complete. Redacted evidence will be analysed by the Engine’s configured providers.");
-    await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, {
-      dossier,
-      resolutions,
-      approval: { confirmed: true, actorRef: "INTERACTIVE_USER" }
-    });
+    const currentRunResponse = await fetch(`/api/v2/runs/${encodeURIComponent(activeRunId)}`);
+    const currentRun = await currentRunResponse.json();
+    if (!currentRunResponse.ok) throw new Error(requestFailureMessage(currentRun));
+    if (currentRun.stage !== "INTAKE_CONFIRMED") {
+      await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, {
+        dossier,
+        resolutions,
+        approval: { confirmed: true, actorRef: "INTERACTIVE_USER" }
+      });
+    }
     setIntakeFlow("ASSESSMENT");
     await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/execute`);
     await waitForRun(activeRunId);

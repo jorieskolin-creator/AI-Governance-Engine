@@ -498,6 +498,9 @@ const server = http.createServer(async (request, response) => {
         await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
         logOperational("INFO", "intake_final_approval_completed", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage });
         return sendJson(response, 200, publicPreflightView(run));
+      } catch (error) {
+        error.statusCode ??= 422;
+        throw error;
       } finally { await runStore.releaseLease(run.id); }
     }
     const executeMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/execute$/);
@@ -545,11 +548,13 @@ const server = http.createServer(async (request, response) => {
     sendJson(response, 404, { error: "Not found" });
   } catch (error) {
     const status = error.statusCode ?? 500;
-    logOperational("ERROR", "request_failed_safely", { requestId, method: request.method ?? "UNKNOWN", route, statusCode: status, runId, failureCode: error.failureCode ?? safeFailureCode(error) });
+    const failureCode = error.failureCode ?? (status === 500 || status === 503 ? safeFailureCode(error) : undefined);
+    logOperational("ERROR", "request_failed_safely", { requestId, method: request.method ?? "UNKNOWN", route, statusCode: status, runId, failureCode });
     sendJson(response, status, {
       error: status === 500 ? "Assessment failed safely" : error.message,
-      failureCode: error.failureCode ?? (status === 500 ? safeFailureCode(error) : undefined),
-      detail: process.env.NODE_ENV === "production" ? undefined : error.message
+      failureCode,
+      detail: process.env.NODE_ENV === "production" ? undefined : error.message,
+      readiness: failureCode === "MODEL_ROUTE_UNAVAILABLE" ? modelPolicyReadiness(modelPolicy()) : undefined
     });
   }
 });

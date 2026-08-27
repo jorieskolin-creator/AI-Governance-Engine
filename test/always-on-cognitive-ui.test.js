@@ -104,6 +104,9 @@ test("final Intake approval requires only solution identity and makes evidence g
   assert.match(app, /Analysis will treat them as evidence limitations/);
   assert.match(app, /All applicable Intake fields are filled/);
   assert.doesNotMatch(app, /explanation\.required/);
+  assert.doesNotMatch(app, /resolutionState = "CONFLICT_REQUIRES_RESOLUTION"/);
+  assert.match(app, /currentRun\.stage !== "INTAKE_CONFIRMED"/);
+  assert.match(app, /Model readiness:/);
 });
 
 test("local re-read is hidden once Intake proposals have been requested", () => {

@@ -118,7 +118,7 @@ export function createIntakeResolutionDraft(dossier, profile) {
     let resolutionState;
     if (state === "NOT_APPLICABLE") resolutionState = "USER_SELECTED_NOT_APPLICABLE";
     else if (value === null) resolutionState = "USER_SELECTED_UNKNOWN";
-    else if (state === "HUMAN_REVIEW_REQUIRED" || prior?.status === "CONFLICTING" && equalValues(priorValue(profile, field), value)) resolutionState = "CONFLICT_REQUIRES_RESOLUTION";
+    else if (prior?.status === "CONFLICTING" || prior?.supportStatus === "CONFLICTING") resolutionState = "USER_EDITED";
     else if (equalValues(priorValue(profile, field), value)) resolutionState = "USER_CONFIRMED";
     else resolutionState = "USER_EDITED";
     return [field.id, {

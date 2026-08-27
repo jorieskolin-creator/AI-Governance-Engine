@@ -1,4 +1,4 @@
-import { classifyArtifact, HUMAN_AUTHORITIES } from "../contracts.js";
+import { classifyArtifact, HUMAN_AUTHORITIES, productionAccessOnExperimentStage } from "../contracts.js";
 import { sha256, stableId } from "./hash.js";
 import { activeIntakeAnswers, INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
 
@@ -195,7 +195,7 @@ export function dossierRiskEvidence(dossier, now = new Date()) {
   if ((dossier.data.personalData || dossier.data.specialCategoryData) && dossier.data.productionData) {
     push("unapproved-sensitive-data", "The dossier declares use of production personal or special-category data.", ["B"], ["CTRL-B-01", "CTRL-B-02"], ["AP-B-01"]);
   }
-  if (dossier.exposure.productionAccess && ["QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT"].includes(dossier.currentStage)) {
+  if (productionAccessOnExperimentStage(dossier)) {
     push("unsafe-experiment-boundary", "The dossier declares production access during qualification or development.", ["D"], ["CTRL-D-01"], ["AP-D-01"]);
   }
   if (dossier.agent.usesAgents && dossier.agent.canTakeActions && (!dossier.agent.humanOverride || dossier.agent.irreversibleActions)) {

@@ -124,9 +124,62 @@ test("HTTP workflow exposes readiness and fails closed before unconfigured provi
     const execute = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(preflight.body.runId)}/execute`, { method: "POST" });
     assert.equal(execute.status, 503);
     assert.equal(execute.body.failureCode, "MODEL_ROUTE_UNAVAILABLE");
+    assert.notEqual(execute.body.error, "Assessment failed safely");
+    assert.match(execute.body.error, /credential/i);
+    assert.equal(execute.body.readiness?.status, "CONFIGURATION_REQUIRED");
+    assert.ok(execute.body.readiness?.issueCodes.includes("MODEL_CREDENTIALS_MISSING"));
+    const retryExecute = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(preflight.body.runId)}/execute`, { method: "POST" });
+    assert.equal(retryExecute.status, 503);
+    assert.equal(retryExecute.body.failureCode, "MODEL_ROUTE_UNAVAILABLE");
     const unchanged = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(preflight.body.runId)}`);
     assert.equal(unchanged.body.status, "AWAITING_TRANSMISSION_APPROVAL");
     assert.equal(unchanged.body.stage, "INTAKE_CONFIRMED");
+
+    const browserPreflight = await request(baseUrl, "/api/v2/runs/preflight", {
+      method: "POST",
+      body: JSON.stringify({ sources: [{ path: "docs/browser-case.md", mimeType: "text/markdown", content: "# Browser Case" }] })
+    });
+    assert.equal(browserPreflight.status, 201);
+    const missingResolutions = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(browserPreflight.body.runId)}/confirm`, {
+      method: "POST",
+      body: JSON.stringify({
+        dossier: { name: "Browser Case", accountableOwner: "HTTP test owner", currentStage: "UNKNOWN", targetStage: "UNKNOWN" },
+        approval: { confirmed: true, actorRef: "HTTP_TEST_USER" }
+      })
+    });
+    assert.equal(missingResolutions.status, 422);
+    assert.match(missingResolutions.body.error, /field resolutions are required/i);
+    assert.notEqual(missingResolutions.body.error, "Assessment failed safely");
+
+    const browserDossier = {
+      name: "Browser Case",
+      accountableOwner: "HTTP test owner",
+      intendedPurpose: "",
+      expectedValue: "",
+      currentStage: "UNKNOWN",
+      targetStage: "UNKNOWN",
+      jurisdictions: [],
+      roles: [],
+      users: [],
+      data: { categories: [] },
+      exposure: { currentUserAccess: "UNKNOWN", intendedUserAccess: "UNKNOWN", productionAccess: null, consequentialDecisions: null },
+      agent: { usesAgents: null, canTakeActions: null, irreversibleActions: null, humanOverride: null },
+      classification: { prohibitedPractice: null, highRiskCandidate: null },
+      intakeAnswers: {},
+      operatingBoundary: { allowedUses: [], excludedUses: [], environment: "UNKNOWN", userScope: "", dataScope: "", integrationScope: "", permissionScope: "", autonomyScope: "", monitoringOwner: "", expiresAt: null }
+    };
+    const browserConfirm = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(browserPreflight.body.runId)}/confirm`, {
+      method: "POST",
+      body: JSON.stringify({
+        dossier: browserDossier,
+        resolutions: createIntakeResolutionDraft(browserDossier, browserPreflight.body.solutionProfile),
+        approval: { confirmed: true, actorRef: "HTTP_TEST_USER" }
+      })
+    });
+    assert.equal(browserConfirm.status, 200);
+    assert.equal(browserConfirm.body.stage, "INTAKE_CONFIRMED");
+    assert.equal(browserConfirm.body.solutionProfile.fields.currentStage.status, "UNKNOWN");
+    assert.equal(browserConfirm.body.solutionProfile.fields.currentStage.value, "UNKNOWN");
   } finally {
     child.kill("SIGTERM");
     if (child.exitCode === null) await once(child, "exit");

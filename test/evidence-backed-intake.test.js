@@ -17,10 +17,10 @@ function completeAnswers() {
   }]));
 }
 
-test("unknown lifecycle input is preserved as unknown while a safe provisional stage is used", () => {
+test("unknown lifecycle input stays unknown until the user picks a stage", () => {
   const dossier = validateDossier({ currentStage: "UNKNOWN", targetStage: "UNKNOWN", intakeAnswers: {} });
-  assert.equal(dossier.currentStage, "QUALIFICATION_AND_REGISTRATION");
-  assert.equal(dossier.targetStage, "DESIGN_AND_DEVELOPMENT");
+  assert.equal(dossier.currentStage, "UNKNOWN");
+  assert.equal(dossier.targetStage, "UNKNOWN");
   assert.equal(dossier.lifecycleDeclaration.provisional, true);
   const profile = discoverSolutionProfile([], dossier);
   assert.equal(profile.fields.currentStage.status, "UNKNOWN");

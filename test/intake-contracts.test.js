@@ -8,6 +8,32 @@ import { createIntakeResolutionDraft, validateApprovedIntakeSnapshot } from "../
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "../src/intake/field-registry.js";
 import { INTAKE_QUESTIONNAIRE } from "../src/knowledge/intake-questionnaire.js";
 
+function browserShapedDossier({ name, accountableOwner }) {
+  return {
+    name,
+    accountableOwner,
+    intendedPurpose: "",
+    expectedValue: "",
+    currentStage: "UNKNOWN",
+    targetStage: "UNKNOWN",
+    jurisdictions: [],
+    roles: [],
+    users: [],
+    data: { categories: [] },
+    exposure: { currentUserAccess: "UNKNOWN", intendedUserAccess: "UNKNOWN", productionAccess: null, consequentialDecisions: null },
+    agent: { usesAgents: null, canTakeActions: null, irreversibleActions: null, humanOverride: null },
+    classification: { prohibitedPractice: null, highRiskCandidate: null },
+    intakeAnswers: Object.fromEntries(INTAKE_QUESTIONNAIRE.questions.map((question) => [question.id, {
+      answerState: "UNKNOWN", values: [], origin: "SELF_DECLARED", supportStatus: "NOT_CHECKED"
+    }])),
+    operatingBoundary: {
+      allowedUses: [], excludedUses: [], environment: "UNKNOWN",
+      userScope: "", dataScope: "", integrationScope: "", permissionScope: "", autonomyScope: "",
+      monitoringOwner: "", expiresAt: null
+    }
+  };
+}
+
 const source = (content = "# Intake case") => [{ path: "case.md", mimeType: "text/markdown", encoding: "utf8", content }];
 
 function approvalInput(run, dossier) {
@@ -51,7 +77,11 @@ test("approval requires an explicit final resolution for every applicable field 
   const originalProfileHash = run.solutionProfile.hash;
   await assert.rejects(
     () => confirmPreflightDossier(run, { dossier: validateDossier(run.solutionProfile.suggestedDossier), approval: { confirmed: true, actorRef: "TEST_USER" } }),
-    /field resolutions are required/i
+    (error) => {
+      assert.match(error.message, /field resolutions are required/i);
+      assert.equal(error.statusCode, 422);
+      return true;
+    }
   );
   assert.equal(run.status, "AWAITING_INTAKE_CONFIRMATION");
   assert.equal(run.solutionProfile.hash, originalProfileHash);
@@ -201,4 +231,38 @@ test("accepted, edited and declined GenAI proposals remain distinct user decisio
   const { snapshotHash: ignored, ...payload } = tampered;
   tampered.snapshotHash = sha256(payload);
   assert.throws(() => validateApprovedIntakeSnapshot(tampered), /proposal candidate reference is invalid/i);
+});
+
+test("Accept records a conflicting identity value as edited and does not emit a blocking conflict state", () => {
+  const dossier = browserShapedDossier({ name: "Conflict Case", accountableOwner: "Product Team" });
+  const profile = {
+    fields: {
+      name: { value: "Conflict Case", status: "CANDIDATE", sourceUnitIds: ["unit-name"] },
+      accountableOwner: { value: "Product Team", status: "CONFLICTING", supportStatus: "CONFLICTING", sourceUnitIds: ["unit-a", "unit-b"], limitations: ["Two owner strings were observed."] }
+    },
+    assessmentIntakeFacts: {}
+  };
+  const resolutions = createIntakeResolutionDraft(dossier, profile);
+  assert.equal(resolutions.accountableOwner.resolutionState, "USER_EDITED");
+  assert.equal(resolutions.currentStage.resolutionState, "USER_SELECTED_UNKNOWN");
+  assert.ok(Object.values(resolutions).every((decision) => decision.resolutionState !== "CONFLICT_REQUIRES_RESOLUTION"));
+});
+
+test("a browser-shaped Approve payload with unknown stages confirms Intake without a prior validateDossier", async () => {
+  const run = await createPreflight({ sources: source("Browser shaped case") });
+  const dossier = browserShapedDossier({ name: "Browser Case", accountableOwner: "Case Owner" });
+  const resolutions = createIntakeResolutionDraft(dossier, run.solutionProfile);
+  assert.equal(resolutions.currentStage.resolutionState, "USER_SELECTED_UNKNOWN");
+  assert.equal(resolutions.targetStage.resolutionState, "USER_SELECTED_UNKNOWN");
+  assert.equal(resolutions.name.resolutionState, "USER_EDITED");
+  await confirmPreflightDossier(run, { dossier, resolutions, approval: { confirmed: true, actorRef: "INTERACTIVE_USER" } });
+  assert.equal(run.stage, "INTAKE_CONFIRMED");
+  assert.equal(run.status, "AWAITING_TRANSMISSION_APPROVAL");
+  assert.equal(run.approvedIntake.effectiveDossier.currentStage, "UNKNOWN");
+  assert.equal(run.approvedIntake.effectiveDossier.targetStage, "UNKNOWN");
+  const currentStage = run.approvedIntake.fields.find((field) => field.fieldId === "currentStage");
+  assert.deepEqual({ value: currentStage.value, valueState: currentStage.valueState, resolutionState: currentStage.resolutionState }, {
+    value: null, valueState: "UNKNOWN", resolutionState: "USER_SELECTED_UNKNOWN"
+  });
+  assert.equal(validateApprovedIntakeSnapshot(run.approvedIntake), run.approvedIntake);
 });

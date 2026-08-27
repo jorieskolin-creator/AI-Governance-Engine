@@ -1,0 +1,17 @@
+{
+  "name": "AI Governance Engine",
+  "install": "pnpm install --frozen-lockfile",
+  "terminals": [
+    {
+      "name": "dashboard",
+      "command": "NODE_ENV=development pnpm start",
+      "description": "AI Governance Engine dashboard and API server (http://localhost:4174). Uses the process-local run store when DATABASE_URL is unset. Provider credentials are optional and only needed for the cognitive pipeline."
+    }
+  ],
+  "ports": [
+    {
+      "name": "dashboard",
+      "port": 4174
+    }
+  ]
+}

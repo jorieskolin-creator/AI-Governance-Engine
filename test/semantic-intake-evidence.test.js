@@ -94,3 +94,37 @@ test("REASONER proposals can synthesize supported missing Intake wording but can
   assert.doesNotMatch(transmittedPrompt, /This conversational assistant is designed for/);
   assert.equal(run.transmissionManifest[0].containsRawEvidence, false);
 });
+
+test("governance architecture prose yields controlled semantic observations without raw names or quotes", async () => {
+  const privateMarker = "Private Cedar Review Codename";
+  const run = await createPreflight({ sources: [{
+    path: "docs/governance-overview.md",
+    mimeType: "text/markdown",
+    content: `${privateMarker} is a bounded internal assistant and document-review assistant for governance teams and internal employees. It helps prepare review material and supports governance reviews of approved internal content. Human-reviewed output is required before publication. The service runs in an isolated sandbox during a controlled pilot. Autonomous external communication is excluded. Consequential employment decisions are out of scope. Tool execution is permitted only with oversight.`
+  }] });
+  const semanticUnits = run.packets.flatMap((packet) => packet.sourceUnits).filter((unit) => unit.evidenceKind === "SEMANTIC_INTAKE_SUMMARY");
+  assert.equal(semanticUnits.length, 1);
+  const summary = validateSemanticIntakeEvidence(JSON.parse(semanticUnits[0].content));
+  const conceptIds = summary.observations.map((item) => item.conceptId);
+  for (const expected of [
+    "INTERNAL_ASSISTANT",
+    "DOCUMENT_REVIEW_ASSISTANT",
+    "GOVERNANCE_REVIEWER",
+    "INTERNAL_EMPLOYEE",
+    "GOVERNANCE_REVIEW_SUPPORT",
+    "APPROVED_INTERNAL_CONTENT",
+    "HUMAN_REVIEWED_OUTPUT",
+    "ISOLATED_SANDBOX",
+    "CONTROLLED_PILOT",
+    "AUTONOMOUS_EXTERNAL_COMMUNICATION",
+    "CONSEQUENTIAL_EMPLOYMENT_DECISIONS",
+    "TOOL_OR_AGENT_EXECUTION"
+  ]) {
+    assert.ok(conceptIds.includes(expected), expected);
+  }
+  assert.ok(summary.observations.some((item) => item.conceptId === "INTERNAL_ASSISTANT" && item.applicableIntakeFields.includes("intendedPurpose")));
+  assert.ok(summary.observations.some((item) => item.conceptId === "GOVERNANCE_REVIEWER" && item.applicableIntakeFields.includes("users")));
+  assert.doesNotMatch(JSON.stringify(run.packets), new RegExp(privateMarker));
+  assert.doesNotMatch(semanticUnits[0].content, /bounded internal assistant|governance teams|approved internal content|isolated sandbox/i);
+  assert.doesNotMatch(semanticUnits[0].content, /alignment|contradiction|mismatch|finding|readiness|risk/i);
+});

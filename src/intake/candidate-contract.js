@@ -1,7 +1,7 @@
 import { invariant } from "../contracts.js";
 import { sha256, stableId, stableStringify } from "../core/hash.js";
 import { INTAKE_FIELD_REGISTRY } from "./field-registry.js";
-import { INTAKE_EXTRACTION_STRATEGIES, INTAKE_SEARCH_REGISTRY, intakeSearchField } from "./search-registry.js";
+import { htmlArchitectureTitleName, INTAKE_EXTRACTION_STRATEGIES, INTAKE_SEARCH_REGISTRY, intakeSearchField } from "./search-registry.js";
 
 export const INTAKE_CANDIDATE_PACKAGE_VERSION = "intake-candidate-package-1.0.0";
 
@@ -67,7 +67,7 @@ function extractionMethod(field, unit) {
   const path = unit.path?.toLowerCase() ?? "";
   const rule = intakeSearchField(field.id);
   if (unit.ocr) return "LOCAL_OCR";
-  if (field.id === "name" && /^html:title(?:;lines:\d+-\d+)?$/.test(locator) && /^.{2,140}?\s*(?:[-—|:]\s*)(?:current\s+)?(?:architecture|system design|solution design)\s*$/i.test(unit.content)) return "HTML_ARCHITECTURE_TITLE";
+  if (field.id === "name" && /^html:title(?:;lines:\d+-\d+)?$/.test(locator) && htmlArchitectureTitleName(unit.content)) return "HTML_ARCHITECTURE_TITLE";
   if (field.id === "name" && /^page:1;heading:1(?:;lines:\d+-\d+)?$/.test(locator) && unit.format === "PDF") return "PDF_DOCUMENT_TITLE";
   if (field.id === "intendedPurpose" && /^page:1;paragraph:1(?:;lines:\d+-\d+)?$/.test(locator) && unit.format === "PDF" && /(?:purpose|intended[-_ ]?use|overview|solution[-_ ]?brief)/i.test(path)) return "PDF_PURPOSE_LEDE";
   if (field.id === "name" && /(?:^|\/)(?:package\.json|pyproject\.toml|cargo\.toml|go\.mod|composer\.json)$/.test(path)) return "MANIFEST_PROPERTY";

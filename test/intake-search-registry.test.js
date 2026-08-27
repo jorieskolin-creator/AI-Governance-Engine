@@ -4,10 +4,10 @@ import PDFDocument from "pdfkit";
 import { createPreflight } from "../src/cognitive/preflight.js";
 import { discoverSolutionProfile } from "../src/core/solution-profile.js";
 import { INTAKE_FIELD_REGISTRY } from "../src/intake/field-registry.js";
-import { INTAKE_SEARCH_REGISTRY, intakeSearchField } from "../src/intake/search-registry.js";
+import { INTAKE_SEARCH_REGISTRY, htmlArchitectureTitleName, intakeSearchField } from "../src/intake/search-registry.js";
 
 test("the versioned deterministic search registry covers every canonical Intake field", () => {
-  assert.equal(INTAKE_SEARCH_REGISTRY.version, "intake-search-registry-1.2.0");
+  assert.equal(INTAKE_SEARCH_REGISTRY.version, "intake-search-registry-1.3.0");
   assert.equal(INTAKE_SEARCH_REGISTRY.fieldRegistryVersion, INTAKE_FIELD_REGISTRY.version);
   assert.equal(INTAKE_SEARCH_REGISTRY.fieldRegistryHash, INTAKE_FIELD_REGISTRY.hash);
   assert.match(INTAKE_SEARCH_REGISTRY.hash, /^[a-f0-9]{64}$/);
@@ -26,6 +26,8 @@ test("the versioned deterministic search registry covers every canonical Intake 
   assert.ok(intakeSearchField("intendedPurpose").extractionStrategies.includes("PDF_PURPOSE_LEDE"));
   assert.equal(intakeSearchField("roles").labels.includes("roles"), false);
   assert.equal(intakeSearchField("intakeAnswers.REGULATORY_ROLES").labels.includes("roles"), false);
+  assert.ok(intakeSearchField("intendedPurpose").labels.includes("intended use"));
+  assert.ok(intakeSearchField("accountableOwner").labels.includes("owner"));
   assert.match(INTAKE_SEARCH_REGISTRY.conflictPolicy, /never silently resolves a conflict/i);
 });
 
@@ -114,3 +116,38 @@ test("HTML titles can identify a candidate without confusing operational model r
   assert.equal(name.sourceRefs[0].extractionMethod, "HTML_ARCHITECTURE_TITLE");
   assert.equal(run.intakeCandidates.candidates.find((candidate) => candidate.fieldId === "roles").sanitizedCandidate, null);
 });
+
+test("HTML architecture titles recover a name from structured reports and reject generic captured names", () => {
+  assert.equal(htmlArchitectureTitleName("Cedar Review Assistant — Architecture Overview"), "Cedar Review Assistant");
+  assert.equal(htmlArchitectureTitleName("Cedar Review Assistant | Current Architecture"), "Cedar Review Assistant");
+  assert.equal(htmlArchitectureTitleName("Synthetic Service Overview"), null);
+  assert.equal(htmlArchitectureTitleName("Current — Architecture"), null);
+  assert.equal(htmlArchitectureTitleName("The System — Current Architecture"), null);
+});
+
+test("structured HTML reports recover architecture titles, definition-list owner and intended-use labels", async () => {
+  const run = await createPreflight({ sources: [{
+    path: "reports/review-summary.html",
+    mimeType: "text/html",
+    encoding: "utf8",
+    content: `<html><head><title>Cedar Review Assistant — Architecture Overview</title></head>
+      <body>
+        <dl>
+          <dt>Owner</dt><dd>Oversight Board</dd>
+          <dt>Intended use</dt><dd>Support bounded internal governance reviews</dd>
+        </dl>
+      </body></html>`
+  }] });
+
+  assert.equal(run.solutionProfile.suggestedDossier.name, "Cedar Review Assistant");
+  assert.equal(run.solutionProfile.suggestedDossier.accountableOwner, "Oversight Board");
+  assert.equal(run.solutionProfile.suggestedDossier.intendedPurpose, "Support bounded internal governance reviews");
+  const name = run.intakeCandidates.candidates.find((candidate) => candidate.fieldId === "name");
+  const owner = run.intakeCandidates.candidates.find((candidate) => candidate.fieldId === "accountableOwner");
+  const purpose = run.intakeCandidates.candidates.find((candidate) => candidate.fieldId === "intendedPurpose");
+  assert.equal(name.sourceRefs[0].extractionMethod, "HTML_ARCHITECTURE_TITLE");
+  assert.equal(owner.sourceRefs[0].extractionMethod, "LABELLED_VALUE");
+  assert.equal(purpose.sourceRefs[0].extractionMethod, "LABELLED_VALUE");
+  assert.doesNotMatch(JSON.stringify(run.packets), /Cedar Review Assistant|Oversight Board|bounded internal governance reviews/);
+});
+

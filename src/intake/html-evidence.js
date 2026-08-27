@@ -28,6 +28,8 @@ export function extractStructuredHtml(html) {
   const captures = [];
   const sectionStack = [];
   const tableStack = [];
+  const pendingDts = [];
+  let lastDefinitionTerm = null;
   let ignoredDepth = 0;
   let sectionCount = 0;
   let headingCount = 0;
@@ -36,6 +38,7 @@ export function extractStructuredHtml(html) {
   let blockCount = 0;
   let textCount = 0;
   let tableCount = 0;
+  let definitionCount = 0;
   let embeddedJsonCount = 0;
   let embeddedJsonBlockCount = 0;
   let extractedCharacters = 0;
@@ -58,6 +61,10 @@ export function extractStructuredHtml(html) {
     if (tag === "p") return `${section};paragraph:${++paragraphCount}`;
     if (tag === "li") return `${section};list-item:${++listItemCount}`;
     return `${section};block:${++blockCount}:${tag}`;
+  };
+  const flushDefinitionTerms = () => {
+    pendingDts.length = 0;
+    lastDefinitionTerm = null;
   };
   const closeScript = () => {
     if (!activeScript) return;
@@ -122,8 +129,23 @@ export function extractStructuredHtml(html) {
       if (CAPTURE_TAGS.has(name)) {
         const capture = captures.pop();
         if (capture?.tag === name) {
-          if (["th", "td"].includes(name) && activeRow) activeRow.cells.push(cleanText(capture.text));
-          else emit(capture.locator, capture.text, { preserveWhitespace: name === "pre" });
+          if (name === "dt") {
+            const term = cleanText(capture.text);
+            if (term) pendingDts.push(term);
+          } else if (name === "dd") {
+            const value = cleanText(capture.text);
+            const term = pendingDts.shift() ?? lastDefinitionTerm;
+            if (term && value) {
+              lastDefinitionTerm = term;
+              emit(`html:section:${currentSection()};definition:${++definitionCount}`, `${term}: ${value}`);
+            } else if (value) {
+              emit(capture.locator, capture.text);
+            }
+          } else if (["th", "td"].includes(name) && activeRow) {
+            activeRow.cells.push(cleanText(capture.text));
+          } else {
+            emit(capture.locator, capture.text, { preserveWhitespace: name === "pre" });
+          }
         }
       }
       if (name === "tr" && activeRow) {
@@ -132,10 +154,15 @@ export function extractStructuredHtml(html) {
         activeRow = null;
       }
       if (name === "table") tableStack.pop();
-      if (SECTION_TAGS.has(name)) sectionStack.pop();
+      if (name === "dl") flushDefinitionTerms();
+      if (SECTION_TAGS.has(name)) {
+        flushDefinitionTerms();
+        sectionStack.pop();
+      }
     },
     onerror(error) { throw error; }
   }, { decodeEntities: true, lowerCaseTags: true, lowerCaseAttributeNames: true, recognizeSelfClosing: true });
   parser.end(html);
+  flushDefinitionTerms();
   return { segments, limitationCodes: [...limitationCodes] };
 }

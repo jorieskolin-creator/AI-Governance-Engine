@@ -4,7 +4,7 @@ import { extractStructuredHtml } from "../src/intake/html-evidence.js";
 import { parseAndScreenSources } from "../src/cognitive/source-intake.js";
 
 test("HTML extraction is inert and preserves semantic structure with stable local locators", () => {
-  const html = `<!doctype html><html><head><title>Evidence &amp; Context</title><style>.hidden{display:none}</style></head><body>
+  const html = `<!doctype html><html><head><title>Evidence & Context</title><style>.hidden{display:none}</style></head><body>
     <main><section><h1>System boundary</h1><p>Visible <strong>purpose</strong> text.</p>
     <ul><li>First item</li><li>Second item</li></ul>
     <table><caption>Owners</caption><tr><th>Role</th><th>Team</th></tr><tr><td>Reviewer</td><td>Synthetic Team</td></tr></table></section></main>
@@ -51,4 +51,31 @@ test("invalid or excessive embedded JSON fails visibly without executing or abor
   assert.equal(result.segments[0].text, "Visible heading");
   assert.ok(result.limitationCodes.includes("EMBEDDED_JSON_PARSE_FAILED"));
   assert.ok(result.limitationCodes.includes("EMBEDDED_JSON_LIMIT_EXCEEDED"));
+});
+
+test("HTML definition lists become labelled pairs and leftover terms are not emitted as values", () => {
+  const result = extractStructuredHtml(`<!doctype html><html><body>
+    <section>
+      <dl>
+        <dt>Owner</dt><dd>Oversight Board</dd>
+        <dt>Intended purpose</dt><dd>Support bounded internal reviews</dd>
+        <dt>Orphan term</dt>
+      </dl>
+      <p>Visible after definitions.</p>
+    </section>
+  </body></html>`);
+  const definitions = result.segments.filter((segment) => /;definition:\d+$/.test(segment.locator));
+  assert.deepEqual(definitions.map((segment) => segment.text), [
+    "Owner: Oversight Board",
+    "Intended purpose: Support bounded internal reviews"
+  ]);
+  assert.ok(result.segments.some((segment) => /paragraph:1$/.test(segment.locator) && segment.text === "Visible after definitions."));
+  assert.equal(result.segments.some((segment) => segment.text === "Orphan term" || /;block:\d+:dt$/.test(segment.locator)), false);
+  assert.match(definitions[0].locator, /^html:section:\d+;definition:1$/);
+});
+
+test("unpaired definition values remain visible without inventing a label", () => {
+  const result = extractStructuredHtml("<dl><dd>Standalone definition value</dd></dl>");
+  assert.equal(result.segments.some((segment) => /;definition:/.test(segment.locator)), false);
+  assert.ok(result.segments.some((segment) => /;block:\d+:dd$/.test(segment.locator) && segment.text === "Standalone definition value"));
 });

@@ -1,7 +1,7 @@
 import { invariant, LIFECYCLE_STAGES } from "../contracts.js";
 import { sha256, stableId } from "./hash.js";
 import { activeIntakeQuestionIds, INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
-import { classifyIntakeSearchEvidence, INTAKE_SEARCH_REGISTRY, intakeSearchField } from "../intake/search-registry.js";
+import { classifyIntakeSearchEvidence, htmlArchitectureTitleName, INTAKE_SEARCH_REGISTRY, intakeSearchField } from "../intake/search-registry.js";
 
 export const SOLUTION_FACT_CLASSES = Object.freeze(["OBSERVED", "INFERRED", "SELF_DECLARED"]);
 export const SOLUTION_FACT_STATUSES = Object.freeze(["CANDIDATE", "CONFIRMED", "CONFLICTING", "UNKNOWN"]);
@@ -224,9 +224,9 @@ function searchEntries(sources, fieldId, searchOverrides) {
     }
   }
   if (strategies.has("HTML_ARCHITECTURE_TITLE")) {
-    for (const source of eligible.filter((item) => item.format === "HTML" && item.searchEvidenceType === "ARCHITECTURE_DOCUMENT" && /^html:title(?:;lines:\d+-\d+)?$/.test(item.locator ?? ""))) {
-      const match = source.content.match(/^(.{2,140}?)\s*(?:[-—|:]\s*)(?:current\s+)?(?:architecture|system design|solution design)\s*$/i);
-      if (match) add(match[1].trim(), source);
+    for (const source of eligible.filter((item) => item.format === "HTML" && /^html:title(?:;lines:\d+-\d+)?$/.test(item.locator ?? ""))) {
+      const name = htmlArchitectureTitleName(source.content);
+      if (name) add(name, source);
     }
   }
   if (strategies.has("PDF_DOCUMENT_TITLE")) {

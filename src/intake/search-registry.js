@@ -3,7 +3,7 @@ import { sha256 } from "../core/hash.js";
 import { INTAKE_QUESTIONNAIRE } from "../knowledge/intake-questionnaire.js";
 import { INTAKE_FIELD_REGISTRY } from "./field-registry.js";
 
-export const INTAKE_SEARCH_REGISTRY_VERSION = "intake-search-registry-1.2.0";
+export const INTAKE_SEARCH_REGISTRY_VERSION = "intake-search-registry-1.3.0";
 
 export const INTAKE_SEARCH_EVIDENCE_TYPES = Object.freeze([
   "CANONICAL_DECLARATION",
@@ -41,10 +41,21 @@ const DOCUMENT_EVIDENCE = Object.freeze([
 ]);
 const STRUCTURED_DOCUMENT_EVIDENCE = Object.freeze(["CANONICAL_DECLARATION", "ARCHITECTURE_DOCUMENT", "STRUCTURED_REPORT", "README", "DOCUMENTATION"]);
 
+const HTML_ARCHITECTURE_TITLE_PATTERN = /^(.{2,140}?)\s*(?:[-—–|:]\s*)(?:current\s+)?(?:architecture|system design|solution design)(?:\s+overview)?\s*$/i;
+const GENERIC_ARCHITECTURE_TITLE_NAME = /^(?:the\s+)?(?:current|system|solution|architecture|overview|report|document|service|application|app|platform|product|engine)s?$/i;
+
+export function htmlArchitectureTitleName(text) {
+  const match = String(text ?? "").trim().match(HTML_ARCHITECTURE_TITLE_PATTERN);
+  if (!match) return null;
+  const name = match[1].replace(/\s+/g, " ").trim();
+  if (name.length < 2 || GENERIC_ARCHITECTURE_TITLE_NAME.test(name)) return null;
+  return name;
+}
+
 const definitions = [
   ["name", ["solution name", "system name", "product name"], ["name"], ["MANIFEST_PROPERTY", "README_TITLE", "HTML_ARCHITECTURE_TITLE", "PDF_DOCUMENT_TITLE", "LABELLED_VALUE", "HEADING_VALUE", "STRUCTURED_PROPERTY"], ["CANONICAL_DECLARATION", "PROJECT_MANIFEST", "README", "ARCHITECTURE_DOCUMENT", "STRUCTURED_REPORT", "DOCUMENTATION"]],
-  ["accountableOwner", ["accountable owner", "system owner", "solution owner", "product owner"], ["accountable", "owner"], ["LABELLED_VALUE", "HEADING_VALUE", "TABLE_KEY_VALUE", "STRUCTURED_PROPERTY"], ["CANONICAL_DECLARATION", "OWNERSHIP_RACI", "ARCHITECTURE_DOCUMENT", "STRUCTURED_REPORT", "README", "DOCUMENTATION"]],
-  ["intendedPurpose", ["intended purpose", "purpose", "mission"], [], ["PDF_PURPOSE_LEDE", "LABELLED_VALUE", "HEADING_VALUE", "STRUCTURED_PROPERTY"], STRUCTURED_DOCUMENT_EVIDENCE],
+  ["accountableOwner", ["accountable owner", "system owner", "solution owner", "product owner", "owner"], ["accountable", "owner"], ["LABELLED_VALUE", "HEADING_VALUE", "TABLE_KEY_VALUE", "STRUCTURED_PROPERTY"], ["CANONICAL_DECLARATION", "OWNERSHIP_RACI", "ARCHITECTURE_DOCUMENT", "STRUCTURED_REPORT", "README", "DOCUMENTATION"]],
+  ["intendedPurpose", ["intended purpose", "intended use", "purpose", "mission"], [], ["PDF_PURPOSE_LEDE", "LABELLED_VALUE", "HEADING_VALUE", "STRUCTURED_PROPERTY"], STRUCTURED_DOCUMENT_EVIDENCE],
   ["expectedValue", ["expected value", "business value", "expected outcome", "outcome", "value hypothesis"], [], ["LABELLED_VALUE", "HEADING_VALUE", "STRUCTURED_PROPERTY"], STRUCTURED_DOCUMENT_EVIDENCE],
   ["currentStage", ["current lifecycle stage", "current stage", "lifecycle stage"], [], ["LABELLED_ENUM", "HEADING_VALUE", "STRUCTURED_PROPERTY"], DOCUMENT_EVIDENCE],
   ["targetStage", ["target lifecycle stage", "target stage", "requested stage"], [], ["LABELLED_ENUM", "HEADING_VALUE", "STRUCTURED_PROPERTY"], DOCUMENT_EVIDENCE],

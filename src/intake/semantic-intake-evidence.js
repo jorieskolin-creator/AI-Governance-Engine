@@ -39,7 +39,19 @@ const RULES = Object.freeze([
   ["SECURITY_MECHANISM", "PROMPT_INJECTION_GUARDRAIL", ["operatingBoundary.permissionScope"], [/\bprompt injection (?:guardrail|protection|filter|defen[cs]e)\b/i, /\b(?:guard|filter|block)[^\n]{0,80}\bprompt injection\b/i]],
   ["DEPLOYMENT_INSTRUCTION", "LOCAL_RUN_INSTRUCTIONS", [], [/\blocal (?:development|run|setup)\b/i, /\bnpm run (?:dev|start)\b/i]],
   ["DEPLOYMENT_INSTRUCTION", "PRODUCTION_BUILD_INSTRUCTIONS", [], [/\bproduction build\b/i, /\bnpm run build\b/i]],
-  ["DEPLOYMENT_INSTRUCTION", "HOSTED_DEPLOYMENT_INSTRUCTIONS", [], [/\bdeploy(?:ment|ing)? (?:to|on) (?:vercel|railway)\b/i]]
+  ["DEPLOYMENT_INSTRUCTION", "HOSTED_DEPLOYMENT_INSTRUCTIONS", [], [/\bdeploy(?:ment|ing)? (?:to|on) (?:vercel|railway)\b/i]],
+  ["SOLUTION_KIND", "INTERNAL_ASSISTANT", ["intendedPurpose", "expectedValue"], [/\binternal (?:assistant|copilot|chatbot)\b/i, /\bbounded internal assistant\b/i]],
+  ["SOLUTION_KIND", "DOCUMENT_REVIEW_ASSISTANT", ["intendedPurpose", "expectedValue", "operatingBoundary.allowedUses"], [/\bdocument[- ]review (?:assistant|tool|system|support)\b/i]],
+  ["INTENDED_AUDIENCE", "INTERNAL_EMPLOYEE", ["users", "operatingBoundary.userScope"], [/\binternal employees?\b/i, /\bemployee[- ]only\b/i]],
+  ["INTENDED_AUDIENCE", "GOVERNANCE_REVIEWER", ["users", "operatingBoundary.userScope"], [/\bgovernance (?:reviewers?|teams?|officers?|analysts?)\b/i]],
+  ["ALLOWED_USE", "GOVERNANCE_REVIEW_SUPPORT", ["operatingBoundary.allowedUses", "expectedValue", "intendedPurpose"], [/\bgovernance reviews?\b/i, /\bprepare review material\b/i]],
+  ["EXCLUDED_USE", "AUTONOMOUS_EXTERNAL_COMMUNICATION", ["operatingBoundary.excludedUses", "operatingBoundary.autonomyScope"], [/\bautonomous (?:external )?communications?\b/i]],
+  ["DECISION_CONTEXT", "CONSEQUENTIAL_EMPLOYMENT_DECISIONS", ["exposure.consequentialDecisions"], [/\bconsequential (?:employment|hiring) decisions?\b/i]],
+  ["DATA_INPUT", "APPROVED_INTERNAL_CONTENT", ["operatingBoundary.dataScope"], [/\bapproved internal (?:content|documents?|material)\b/i]],
+  ["OVERSIGHT", "HUMAN_REVIEWED_OUTPUT", ["agent.humanOverride", "operatingBoundary.autonomyScope"], [/\bhuman[- ]reviewed (?:output|content|responses?)\b/i, /\bhuman (?:review|oversight) before (?:output|publication|release)\b/i]],
+  ["OPERATING_ENVIRONMENT", "ISOLATED_SANDBOX", ["operatingBoundary.environment"], [/\bisolated sandbox\b/i]],
+  ["OPERATING_ENVIRONMENT", "CONTROLLED_PILOT", ["operatingBoundary.environment", "exposure.intendedUserAccess"], [/\bcontrolled (?:external )?pilot\b/i]],
+  ["AGENT_CAPABILITY", "TOOL_OR_AGENT_EXECUTION", ["agent.usesAgents", "agent.canTakeActions", "operatingBoundary.autonomyScope"], [/\b(?:tool|agent) execution\b/i, /\bagentic (?:tools?|actions?|execution)\b/i]]
 ]);
 
 const CONCEPTS = new Map(RULES.map(([type, id]) => [`${type}:${id}`, { type, id }]));

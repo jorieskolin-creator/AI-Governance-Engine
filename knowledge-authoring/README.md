@@ -8,6 +8,18 @@ Stable ID forms are `A1` / `AP-A1`, `A1-Q1` / `AP-A1-Q1`, `A1-SC-001` / `AP-A1-A
 
 The bundled A1 pair and source register are structurally complete `DRAFT` examples. The canonical catalog contains all 119 user-approved Playbook tactic definitions. Production compilation still requires all 60 approved assessment objects and the approved source register.
 
+## Human-readable document sample
+
+`docs/kb-human-readable-document-sample.pdf` is the annotated sample for category authors. It follows the A1 / AP-A1 publication outline (package identity, numbered sections 1–12, paired anti-pattern, Engine translation) and maps each human heading to schema `2.1.0` fields and to the compiled runtime keys the Engine actually loads.
+
+The sample is generated from `example/A1_v1.0.json` and `example/AP-A1_v1.0.json`. Canonical JSON remains authoritative; the Engine never reads the PDF. Publication-only prose (runtime decision boundary, extra finding table columns, evidence class/acceptance narrative) is labelled so it is not mistaken for a schema object.
+
+Regenerate after schema or example changes:
+
+```bash
+pnpm kb:sample-doc
+```
+
 ## One category cycle
 
 1. Copy the complete `example/A1_v1.0.json` and `example/AP-A1_v1.0.json` pair.
@@ -47,3 +59,5 @@ Use `--compat` only when migrating legacy authoring JSON: it maps legacy lifecyc
 8. Verify `/health`, `/api/knowledge`, `/api/knowledge/diagnostics`, then run representative assessments.
 
 Human PDFs may be stored in the same Blob store, but they are intentionally absent from the runtime manifest.
+
+See [Human-readable Knowledge Base document sample](../docs/kb-human-readable-document-sample.pdf) for the section outline, schema field names and compiled Engine JSON.

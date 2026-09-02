@@ -16,6 +16,7 @@
     "kb:validate": "node scripts/knowledge-authoring.js validate",
     "kb:compile": "node scripts/knowledge-authoring.js compile",
     "kb:render": "node scripts/knowledge-authoring.js render",
+    "kb:sample-doc": "node scripts/knowledge-authoring.js sample-doc",
     "kb:manifest": "node scripts/knowledge-authoring.js manifest",
     "kb:verify-runtime": "node scripts/verify-knowledge-manifest.js"
   },

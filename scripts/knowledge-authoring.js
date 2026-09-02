@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import { loadAuthoringWorkspace, validateAuthoringWorkspace, compileRuntimeCollections, createRuntimeManifest } from "../src/knowledge/authoring.js";
 import { renderCategoryPairPdf, renderTacticPlaybookPdf } from "../src/knowledge/authoring-pdf.js";
+import { renderHumanDocumentSamplePdf } from "../src/knowledge/human-document-sample-pdf.js";
 
 const [command, ...args] = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -36,10 +37,16 @@ try {
     for (const capability of workspace.capabilities.map((item) => item.document)) await renderCategoryPairPdf(capability, antipatterns.get(`AP-${capability.id}`), path.join(output, `${capability.id}_AP-${capability.id}_Knowledge_Base_${capability.version}.pdf`));
     for (const catalog of workspace.tacticCatalogs.map((item) => item.document)) await renderTacticPlaybookPdf(catalog, path.join(output, `Governance_Tactic_Playbook_${catalog.version}.pdf`));
     console.log(`Rendered ${workspace.capabilities.length} category PDF(s) and ${workspace.tacticCatalogs.length} tactic playbook PDF(s) to ${output}`);
+  } else if (command === "sample-doc") {
+    const capability = JSON.parse(await readFile(path.resolve(directory, "example/A1_v1.0.json"), "utf8"));
+    const antipattern = JSON.parse(await readFile(path.resolve(directory, "example/AP-A1_v1.0.json"), "utf8"));
+    const sampleFile = path.resolve(value("--out", path.join("docs", "kb-human-readable-document-sample.pdf")));
+    await renderHumanDocumentSamplePdf(capability, antipattern, sampleFile);
+    console.log(`Wrote annotated human-readable document sample to ${sampleFile}`);
   } else if (command === "manifest") {
     const urlFile = value("--urls"); if (!urlFile) throw new Error("--urls is required");
     const urls = JSON.parse(await readFile(path.resolve(urlFile), "utf8"));
     const manifest = await createRuntimeManifest(directory, urls, { version: value("--version"), releaseStatus: value("--release-status") });
     console.log(JSON.stringify(manifest, null, 2));
-  } else throw new Error("Usage: knowledge-authoring.js validate|compile|render|manifest --input <directory> [--out <directory>] [--compat] [--allow-unapproved-objects]");
+  } else throw new Error("Usage: knowledge-authoring.js validate|compile|render|sample-doc|manifest --input <directory> [--out <directory>] [--compat] [--allow-unapproved-objects]");
 } catch (error) { console.error(error.message); process.exitCode = 1; }

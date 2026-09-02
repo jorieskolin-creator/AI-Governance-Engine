@@ -53,6 +53,8 @@ Rich capability, anti-pattern and tactic JSON must not be uploaded as direct run
 5. Compile the approved authoring package into six runtime collections: five governance collections plus the versioned assessment-intake questionnaire.
 6. Upload those exact files and generate the runtime manifest last from their immutable URLs and byte hashes.
 
+Category authors should start from [kb-human-readable-document-sample.pdf](kb-human-readable-document-sample.pdf). That sample shows the human PDF outline, the schema `2.1.0` field names, and the compiled JSON keys the Engine loads. The Engine does not read the PDF.
+
 The compiler preserves rich authoring metadata as additive fields while emitting the existing runtime keys. Lifecycle-specific assurance targets are retained separately in `minimumTechnicalAssuranceByLifecycle` and `requiredHumanAssuranceByLifecycle`; `targetStateByLifecycle` remains the combined backward-compatible gate target. The Engine selects the target for the requested transition and falls back to `targetState` for older collections.
 
 Authoring schema `2.1.0` is machine-validated before cross-document validation. Candidate tactics are retrieved only when a locked finding's assessed capability or anti-pattern matches an approved Playbook `Primary object / mapping`. Signal, domain, keyword and similarity matches are not mapping authority. The assessment package records the exact locked finding, assessment object and selected tactic; selection remains advisory and cannot close a finding or authorize progression.

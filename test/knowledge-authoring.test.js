@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadAuthoringWorkspace, validateAuthoringWorkspace, compileRuntimeCollections, createRuntimeManifest } from "../src/knowledge/authoring.js";
 import { renderCategoryPairPdf, renderTacticPlaybookPdf } from "../src/knowledge/authoring-pdf.js";
+import { compiledControlSample, renderHumanDocumentSamplePdf } from "../src/knowledge/human-document-sample-pdf.js";
 import { assessControls } from "../src/core/assessment.js";
 
 const authoring = path.resolve("knowledge-authoring");
@@ -87,6 +88,17 @@ test("manifest is generated last from exact compiled hashes and immutable URLs",
   await assert.rejects(() => createRuntimeManifest(output, urls), /changed after validation/);
 });
 
+async function extractPdfText(file) {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const document = await pdfjs.getDocument({ data: new Uint8Array(await readFile(file)), isEvalSupported: false, useWorkerFetch: false }).promise;
+  const pages = [];
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    const page = await document.getPage(pageNumber);
+    pages.push((await page.getTextContent()).items.map((item) => item.str).join(" "));
+  }
+  return pages.join("\n");
+}
+
 test("generated PDFs are canonical views with PDF signatures", async () => {
   const workspace = await loadAuthoringWorkspace(authoring);
   const output = await mkdtemp(path.join(tmpdir(), "kb-pdf-"));
@@ -96,6 +108,36 @@ test("generated PDFs are canonical views with PDF signatures", async () => {
   await renderTacticPlaybookPdf(workspace.tacticCatalogs[0].document, tacticsFile);
   assert.equal((await readFile(pairFile)).subarray(0, 4).toString(), "%PDF");
   assert.equal((await readFile(tacticsFile)).subarray(0, 4).toString(), "%PDF");
+});
+
+test("human-readable document sample maps schema 2.1.0 sections to Engine JSON", async () => {
+  const workspace = await loadAuthoringWorkspace(authoring);
+  const capability = workspace.capabilities[0].document;
+  const antipattern = workspace.antipatterns[0].document;
+  const output = await mkdtemp(path.join(tmpdir(), "kb-sample-pdf-"));
+  const sampleFile = path.join(output, "sample.pdf");
+  await renderHumanDocumentSamplePdf(capability, antipattern, sampleFile);
+  const bytes = await readFile(sampleFile);
+  assert.equal(bytes.subarray(0, 4).toString(), "%PDF");
+  const text = await extractPdfText(sampleFile);
+  for (const token of [
+    "schema 2.1.0",
+    "atomic_subcriteria",
+    "atomic_tests",
+    "absence_test_contract",
+    "CTRL-A1",
+    "REQ-A1",
+    "FND-A1-001",
+    "FND-AP-A1-001",
+    "targetStateByLifecycle",
+    "Canonical JSON is authoritative",
+    "Do not send the PDF to the Engine"
+  ]) assert.match(text, new RegExp(token.replaceAll(" ", "\\s+")));
+  const compiled = compiledControlSample(capability);
+  assert.equal(compiled.id, "CTRL-A1");
+  assert.equal(compiled.authoringObjectId, "A1");
+  assert.deepEqual(compiled.questions.map((item) => item.id), ["A1-Q1", "A1-Q2", "A1-Q3"]);
+  assert.equal(compiled.targetStateByLifecycle.DEPLOYMENT, "FORMALLY_APPROVED");
 });
 
 test("control assessment selects lifecycle-specific assurance target", () => {

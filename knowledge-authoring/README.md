@@ -20,6 +20,8 @@ Regenerate after schema or example changes:
 pnpm kb:sample-doc
 ```
 
+`--out` is a directory, matching the other authoring commands. The default writes `docs/kb-human-readable-document-sample.pdf`. `pnpm kb:sample-doc -- --out /tmp/generated` writes that filename inside the directory.
+
 ## One category cycle
 
 1. Copy the complete `example/A1_v1.0.json` and `example/AP-A1_v1.0.json` pair.

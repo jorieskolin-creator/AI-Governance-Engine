@@ -40,7 +40,9 @@ try {
   } else if (command === "sample-doc") {
     const capability = JSON.parse(await readFile(path.resolve(directory, "example/A1_v1.0.json"), "utf8"));
     const antipattern = JSON.parse(await readFile(path.resolve(directory, "example/AP-A1_v1.0.json"), "utf8"));
-    const sampleFile = path.resolve(value("--out", path.join("docs", "kb-human-readable-document-sample.pdf")));
+    const sampleDirectory = args.includes("--out") ? output : path.resolve("docs");
+    await mkdir(sampleDirectory, { recursive: true });
+    const sampleFile = path.join(sampleDirectory, "kb-human-readable-document-sample.pdf");
     await renderHumanDocumentSamplePdf(capability, antipattern, sampleFile);
     console.log(`Wrote annotated human-readable document sample to ${sampleFile}`);
   } else if (command === "manifest") {

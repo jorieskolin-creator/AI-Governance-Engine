@@ -103,7 +103,7 @@ const DOCUMENT_SECTIONS = [
   { human: "1. Governance ownership and boundary", schema: "title, canonical_definition, governance_purpose, applicability, runtime_applicability, runtime_authority, runtime_severity, runtime_signals, lifecycle_stages", engine: "requirements.interpretation / governancePurpose; controls.severity, signals, lifecycleStages, applicability", kind: "ENGINE" },
   { human: "2. Primary questions", schema: "primary_questions[3] with fixed dimensions Q1-Q3", engine: "controls.questions. Coverage matrix enumerates each question ID", kind: "ENGINE" },
   { human: "3. Atomic assessment logic", schema: "atomic_subcriteria (capability) or atomic_tests (anti-pattern)", engine: "controls.atomicSubcriteria or antipatterns.atomicTests. Finding lock and coverage use these IDs", kind: "ENGINE" },
-  { human: "4. Evidence requirements", schema: "required_evidence[] {id, title, description, minimum_technical_assurance, required_human_assurance}", engine: "controls.requiredEvidence / antipattern requiredEvidence. Evidence class, acceptance conditions and limitations in a Word/PDF are publication-only unless encoded here", kind: "ENGINE" },
+  { human: "4. Evidence requirements", schema: "required_evidence[] {id, title, description, minimum_technical_assurance, required_human_assurance}", engine: "controls.requiredEvidence only. Anti-pattern required_evidence stays on the authoring object; atomic_tests keep required_evidence_ids, but the compiler does not emit antipatterns.requiredEvidence", kind: "MIXED" },
   { human: "5. Evidence discipline", schema: "evidence_rules.sufficiency, evidence_ceiling, false_positive_guards, prohibited_inferences", engine: "controls.evidenceRules plus flattened falsePositiveGuards and prohibitedInferences", kind: "ENGINE" },
   { human: "6. Findings and gate effects", schema: "finding_definitions[], hard_gate_effect, human_decision_authority", engine: "findingDefinitions on REQ/CTRL/AP objects; hardGateEffect. Locked findings must cite a published finding ID", kind: "ENGINE" },
   { human: "7. Tested-absence contract", schema: "absence_test_contract (anti-pattern only)", engine: "antipatterns.absenceTestContract. TESTED_ABSENT is not inferred from silence", kind: "ENGINE" },
@@ -251,8 +251,8 @@ function header(doc, title, subtitle) {
 
 function paintRunningHeader(doc, pageIndex, pageCount, capability, antipattern) {
   if (pageIndex === 0) return;
-  doc.save();
   doc.switchToPage(pageIndex);
+  doc.save();
   doc.fillColor(COLORS.muted).font("Helvetica").fontSize(7.5)
     .text("AI GOVERNANCE ENGINE / KNOWLEDGE BASE SAMPLE", 48, 28, { width: 320, lineBreak: false })
     .text(`${capability.id} / ${antipattern.id}  |  schema ${SCHEMA_VERSION}`, 48, 28, { width: contentWidth(doc), align: "right", lineBreak: false });
@@ -519,6 +519,7 @@ function renderAntipattern(doc, antipattern) {
   callout(doc, "SCHEMA", "Compile note", "Anti-pattern primary_questions are required by schema 2.1.0. The current compiler copies capability questions onto controls.questions; anti-pattern questions remain on the authoring object and should still be written because they are the human and cognitive assessment prompts for AP objects.");
 
   heading(doc, "4–5. Evidence and discipline", 2);
+  callout(doc, "SCHEMA", "Compile note", "Anti-pattern required_evidence is required by schema 2.1.0 so atomic_tests can cite IDs. The compiler does not emit antipatterns.requiredEvidence. Encode Engine-enforceable anti-pattern evidence limits in atomic_tests, evidence_rules and absence_test_contract.");
   for (const item of array(antipattern.required_evidence)) {
     heading(doc, `${item.id} — ${item.title}`, 2);
     body(doc, item.description);
@@ -611,7 +612,7 @@ function renderEngineTranslation(doc, capability, antipattern) {
     ["Signals", "runtime_signals", "controls.signals / antipatterns.signals"],
     ["Questions", "primary_questions", "controls.questions; coverage matrix"],
     ["Atomic logic", "atomic_subcriteria / atomic_tests", "controls.atomicSubcriteria / antipatterns.atomicTests"],
-    ["Evidence items", "required_evidence", "controls.requiredEvidence"],
+    ["Evidence items", "required_evidence", "controls.requiredEvidence; anti-pattern records are authoring-only"],
     ["Discipline", "evidence_rules", "controls.evidenceRules and flattened guards"],
     ["Findings", "finding_definitions", "findingDefinitions; claim lock IDs"],
     ["Hard gate", "hard_gate_effect", "controls.hardGateEffect / antipatterns.hardGateEffect"],

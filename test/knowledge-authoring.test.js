@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -131,13 +132,23 @@ test("human-readable document sample maps schema 2.1.0 sections to Engine JSON",
     "FND-AP-A1-001",
     "targetStateByLifecycle",
     "Canonical JSON is authoritative",
-    "Do not send the PDF to the Engine"
+    "Do not send the PDF to the Engine",
+    "does not emit antipatterns.requiredEvidence"
   ]) assert.match(text, new RegExp(token.replaceAll(" ", "\\s+")));
+  assert.doesNotMatch(text, /controls\.requiredEvidence \/ antipattern requiredEvidence/);
   const compiled = compiledControlSample(capability);
   assert.equal(compiled.id, "CTRL-A1");
   assert.equal(compiled.authoringObjectId, "A1");
   assert.deepEqual(compiled.questions.map((item) => item.id), ["A1-Q1", "A1-Q2", "A1-Q3"]);
   assert.equal(compiled.targetStateByLifecycle.DEPLOYMENT, "FORMALLY_APPROVED");
+});
+
+test("sample-doc --out is a directory for the generated PDF filename", async () => {
+  const output = await mkdtemp(path.join(tmpdir(), "kb-sample-doc-out-"));
+  const result = spawnSync(process.execPath, ["scripts/knowledge-authoring.js", "sample-doc", "--out", output], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const sampleFile = path.join(output, "kb-human-readable-document-sample.pdf");
+  assert.equal((await readFile(sampleFile)).subarray(0, 4).toString(), "%PDF");
 });
 
 test("control assessment selects lifecycle-specific assurance target", () => {

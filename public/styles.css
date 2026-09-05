@@ -24,7 +24,7 @@ html { scroll-behavior: smooth; }
 body { margin: 0; background: var(--cream); color: var(--ink); }
 .app-header { min-height: 76px; display: flex; align-items: center; gap: 14px; padding: 12px 4vw; border-bottom: 1px solid var(--line); background: rgba(255, 254, 249, .94); position: sticky; top: 0; z-index: 10; backdrop-filter: blur(16px); }
 .app-header h1 { font-size: 1.05rem; margin: 2px 0 0; }
-.brand-mark { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px; background: var(--forest); color: var(--lime); font-weight: 900; font-size: 1.35rem; }
+.brand-mark { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px; background: var(--forest); color: var(--lime); font-weight: 900; font-size: .95rem; letter-spacing: .02em; }
 .eyebrow, .report-eyebrow { margin: 0; color: var(--muted); text-transform: uppercase; font-size: .67rem; font-weight: 850; letter-spacing: .15em; }
 .eyebrow.accent { color: var(--forest-2); }
 .knowledge-pill { margin-left: auto; border: 1px solid var(--line); background: var(--paper); color: var(--muted); border-radius: 999px; padding: 8px 12px; font-size: .72rem; }
@@ -135,6 +135,7 @@ input[aria-invalid="true"] { border-color: #a83232; box-shadow: 0 0 0 3px rgba(1
 .approval-dialog h2 { margin: 6px 0 10px; }
 .approval-dialog p:not(.eyebrow) { color: var(--muted); line-height: 1.55; }
 .approval-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.write-access-error { min-height: 1.2em; margin: 8px 0 0; color: var(--red-ink); font-size: .8rem; font-weight: 700; }
 button { border: 0; border-radius: 10px; padding: 11px 16px; font-weight: 800; cursor: pointer; transition: .18s ease; }
 button:hover:not(:disabled) { transform: translateY(-1px); }
 button:disabled { opacity: .45; cursor: not-allowed; }

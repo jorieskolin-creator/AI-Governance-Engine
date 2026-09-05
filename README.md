@@ -1,4 +1,4 @@
-# AI Governance Engine
+# Solution Assurance Engine
 
 Evidence-gated readiness assessment for AI solutions. The engine accepts an intended-use dossier, source material and supporting evidence, then produces a structured package that distinguishes supported, unknown, contradictory and blocking conditions.
 
@@ -29,7 +29,7 @@ Every normal assessment uses cognitive contract `3.1.0`: independently verified 
 
 ## Authority and evidence flow
 
-The cognitive contract is `3.1.0`. It is the only implemented cognitive pipeline; there is no separate shadow or compatibility implementation. It is the normal browser assessment path; users never enter credentials or select providers.
+The cognitive contract is `3.1.0`. It is the only implemented cognitive pipeline; there is no separate shadow or compatibility implementation. It is the normal browser assessment path; users never enter provider credentials or select models. When `ADMIN_SECRET` is set, a shared write password is required before uploads, intake edits or analysis.
 
 ```text
 raw source (local only)

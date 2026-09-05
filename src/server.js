@@ -22,6 +22,7 @@ import { COGNITIVE_PROVIDERS } from "./cognitive/provider-adapters.js";
 import { executeLocalReread, LOCAL_REREAD_PURPOSE } from "./intake/local-reread.js";
 import { createCognitiveStepLedger, prepareInterruptedRunRestart, recoveredExecutionDataUnavailable, RECOVERY_RESTART_PURPOSE, releaseLocalEvidenceForCognitiveExecution } from "./cognitive/orchestration.js";
 import { cancellationError, classifyCognitiveFailure } from "./cognitive/failure-policy.js";
+import { allowUnlockAttempt, authorizeWriteAccess, configuredAdminSecret, createSessionToken, requestIsSecure, secretsMatch, sessionCookieHeader, writeAccessMode } from "./access-control.js";
 
 const port = Number(process.env.PORT ?? 4174);
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
@@ -323,12 +324,36 @@ const server = http.createServer(async (request, response) => {
   });
   if (request.headers.origin === allowedOrigin) {
     response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+    response.setHeader("Access-Control-Allow-Credentials", "true");
     response.setHeader("Vary", "Origin");
   }
   try {
     if (request.method === "OPTIONS" && request.headers.origin === allowedOrigin) {
-      response.writeHead(204, { "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Max-Age": "600" });
+      response.writeHead(204, { "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Allow-Credentials": "true", "Access-Control-Max-Age": "600" });
       return response.end();
+    }
+    if (request.method === "GET" && url.pathname === "/api/v2/session") {
+      const decision = authorizeWriteAccess(request);
+      return sendJson(response, 200, { writeAccess: writeAccessMode(), unlocked: decision.ok });
+    }
+    if (request.method === "POST" && url.pathname === "/api/v2/session") {
+      const payload = await readJson(request);
+      const secret = configuredAdminSecret();
+      if (!secret) return sendJson(response, 200, { writeAccess: "OPEN", unlocked: true });
+      const caller = request.socket?.remoteAddress ?? "unknown";
+      if (!allowUnlockAttempt(caller)) {
+        throw Object.assign(new Error("Too many password attempts. Try again later."), { statusCode: 429, failureCode: "WRITE_ACCESS_RATE_LIMITED" });
+      }
+      if (!secretsMatch(payload.secret, secret)) {
+        throw Object.assign(new Error("The password is incorrect."), { statusCode: 401, failureCode: "WRITE_ACCESS_DENIED" });
+      }
+      response.setHeader("Set-Cookie", sessionCookieHeader(createSessionToken(secret), { secure: requestIsSecure(request) }));
+      return sendJson(response, 200, { writeAccess: "REQUIRED", unlocked: true });
+    }
+    const mutating = request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS";
+    if (mutating) {
+      const decision = authorizeWriteAccess(request);
+      if (!decision.ok) throw Object.assign(new Error(decision.message), { statusCode: decision.status, failureCode: decision.code });
     }
     if (request.method === "GET" && url.pathname === "/health") {
       const policy = modelPolicy();
@@ -342,7 +367,8 @@ const server = http.createServer(async (request, response) => {
       buildRevision,
       discoveryRecheckAvailable: true,
       retrievalPlannerAvailable: true,
-      localRereadAvailable: true
+      localRereadAvailable: true,
+      writeAccess: writeAccessMode()
     });
     if (request.method === "GET" && url.pathname === "/api/knowledge") return sendJson(response, 200, knowledgeManifestView(knowledge));
     if (request.method === "GET" && url.pathname === "/api/intake-questionnaire") return sendJson(response, 200, { ...knowledge.intakeQuestionnaire, source: knowledge.intakeQuestionnaireSource ?? "BUNDLED" });

@@ -28,6 +28,10 @@ const editedAcquiredCandidateByField = new Map();
 const declinedAcquiredCandidateByField = new Map();
 const intakeControlBaseline = new Map();
 let INTAKE_CONTROL_FIELDS = Object.freeze({});
+let writeAccess = "OPEN";
+let writeUnlocked = false;
+let writeUnlockInFlight = null;
+let resumingGuardedClick = false;
 
 const $ = (id) => document.getElementById(id);
 const label = (value) => String(value ?? "").replaceAll("_", " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -43,6 +47,78 @@ const el = (tag, className, text) => {
 };
 const badge = (text, tone = text) => el("span", `badge ${tone}`, label(text));
 const INTAKE_FLOW_STEPS = ["UPLOAD", "DETERMINISTIC", "AI_VERIFICATION", "USER_RESOLUTION", "ASSESSMENT"];
+
+function isGuardedWriteTarget(target) {
+  if (!(target instanceof Element)) return false;
+  if (target.closest("#write-access-dialog, #knowledge-diagnostics, #results, #progress, #error, #view-switch, .summary-toolbar")) return false;
+  const control = target.closest("input, textarea, select, button, label.upload-box");
+  if (!control) return false;
+  return Boolean(control.closest("#source-intake, #assessment-input, #intake-approval-dialog"));
+}
+
+async function promptWriteAccess() {
+  if (writeAccess !== "REQUIRED" || writeUnlocked) return true;
+  if (writeUnlockInFlight) return writeUnlockInFlight;
+  writeUnlockInFlight = (async () => {
+    const dialog = $("write-access-dialog");
+    const secret = $("write-access-secret");
+    const error = $("write-access-error");
+    secret.value = "";
+    error.textContent = "";
+    if (!dialog.open) dialog.showModal();
+    secret.focus();
+    return await new Promise((resolve) => {
+      const form = $("write-access-form");
+      const cancel = $("write-access-cancel");
+      const onSubmit = async (event) => {
+        event.preventDefault();
+        error.textContent = "";
+        try {
+          const response = await fetch("/api/v2/session", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ secret: secret.value })
+          });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || "The password is incorrect.");
+          writeUnlocked = true;
+          cleanup();
+          dialog.close();
+          resolve(true);
+        } catch (err) {
+          error.textContent = err.message;
+          secret.focus();
+          secret.select();
+        }
+      };
+      const finish = (allowed) => {
+        cleanup();
+        if (dialog.open) dialog.close();
+        resolve(allowed);
+      };
+      const onCancel = () => finish(false);
+      const onDialogCancel = (event) => {
+        event.preventDefault();
+        onCancel();
+      };
+      function cleanup() {
+        form.removeEventListener("submit", onSubmit);
+        cancel.removeEventListener("click", onCancel);
+        dialog.removeEventListener("cancel", onDialogCancel);
+      }
+      form.addEventListener("submit", onSubmit);
+      cancel.addEventListener("click", onCancel);
+      dialog.addEventListener("cancel", onDialogCancel);
+    });
+  })().finally(() => { writeUnlockInFlight = null; });
+  return writeUnlockInFlight;
+}
+
+async function ensureWriteAccess() {
+  if (writeAccess !== "REQUIRED" || writeUnlocked) return true;
+  return promptWriteAccess();
+}
 
 function setIntakeFlow(activeStep, { limitedSteps = [] } = {}) {
   const activeIndex = activeStep === null ? INTAKE_FLOW_STEPS.length : INTAKE_FLOW_STEPS.indexOf(activeStep);
@@ -1015,12 +1091,17 @@ function progressText(run) {
   }[run.stage] ?? "Processing the evidence-gated assessment.";
 }
 
-async function postJson(path, body = undefined) {
+async function postJson(path, body = undefined, retried = false) {
   const response = await fetch(path, {
-    method: "POST", headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    method: "POST",
+    credentials: "same-origin",
+    headers: body === undefined ? {} : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body)
   });
   const value = await response.json();
+  if (!retried && response.status === 401 && value.failureCode === "WRITE_ACCESS_REQUIRED" && await ensureWriteAccess()) {
+    return postJson(path, body, true);
+  }
   if (!response.ok) throw new Error(requestFailureMessage(value));
   return value;
 }
@@ -1141,10 +1222,13 @@ Promise.all([
     if (!response.ok) throw new Error("Intake field registry is unavailable");
     return response.json();
   }),
-  fetch("/api/v2/models").then((response) => response.ok ? response.json() : { profiles: [] }).catch(() => ({ profiles: [] }))
-]).then(([kb, config, diagnostics, questionnaire, registry, models]) => {
+  fetch("/api/v2/models").then((response) => response.ok ? response.json() : { profiles: [] }).catch(() => ({ profiles: [] })),
+  fetch("/api/v2/session").then((response) => response.ok ? response.json() : { writeAccess: "OPEN", unlocked: true }).catch(() => ({ writeAccess: "OPEN", unlocked: true }))
+]).then(([kb, config, diagnostics, questionnaire, registry, models, session]) => {
   renderKnowledgeDiagnostics(kb, diagnostics);
   summaryEnabled = config.assuranceSummaryEnabled !== false;
+  writeAccess = session.writeAccess === "REQUIRED" || config.writeAccess === "REQUIRED" ? "REQUIRED" : "OPEN";
+  writeUnlocked = writeAccess === "OPEN" || session.unlocked === true;
   intakeQuestionnaire = questionnaire;
   intakeFieldRegistry = registry;
   modelReadiness = models.readiness ?? modelReadiness;
@@ -1176,3 +1260,28 @@ $("summary-tab").addEventListener("click", () => selectView("summary")); $("work
 $("print-button").addEventListener("click", printReport); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);
 $("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; previewSelectedSources(); });
 $("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; previewSelectedSources(); });
+document.addEventListener("click", async (event) => {
+  if (writeAccess !== "REQUIRED" || writeUnlocked || resumingGuardedClick) return;
+  if (!isGuardedWriteTarget(event.target)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const resume = event.target.closest("input, textarea, select, button, label.upload-box");
+  if (await ensureWriteAccess() && resume) {
+    resumingGuardedClick = true;
+    resume.click();
+    resumingGuardedClick = false;
+  }
+}, true);
+document.addEventListener("focusin", async (event) => {
+  if (writeAccess !== "REQUIRED" || writeUnlocked) return;
+  if (event.target.matches?.('input[type="file"]')) return;
+  if (!isGuardedWriteTarget(event.target)) return;
+  event.target.blur();
+  if (await ensureWriteAccess()) event.target.focus();
+}, true);
+document.addEventListener("keydown", async (event) => {
+  if (writeAccess !== "REQUIRED" || writeUnlocked) return;
+  if (!isGuardedWriteTarget(event.target)) return;
+  event.preventDefault();
+  await ensureWriteAccess();
+}, true);

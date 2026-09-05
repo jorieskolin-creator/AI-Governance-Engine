@@ -244,3 +244,68 @@ test("production HTTP process starts on local unpublished knowledge when the man
   }
   assert.equal(stderr, "");
 });
+
+test("ADMIN_SECRET keeps the dashboard readable and requires a password before writes", async () => {
+  const port = await availablePort();
+  const baseUrl = new URL(`http://127.0.0.1:${port}`);
+  const child = spawn(process.execPath, ["src/server.js"], {
+    cwd: repositoryRoot,
+    env: {
+      PATH: process.env.PATH,
+      PORT: String(port),
+      NODE_ENV: "production",
+      ALLOWED_ORIGIN: baseUrl.origin,
+      COGNITIVE_QUEUE_POLL_MS: "60000",
+      ADMIN_SECRET: "test-admin-secret"
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk.toString().slice(0, 2000); });
+  try {
+    const health = await waitUntilHealthy(baseUrl, child);
+    assert.equal(health.body.status, "ok");
+    const page = await fetch(new URL("/", baseUrl), { signal: AbortSignal.timeout(5000) });
+    assert.equal(page.status, 200);
+    const html = await page.text();
+    assert.match(html, /Solution Assurance Engine/);
+    assert.match(html, /id="write-access-dialog"/);
+    assert.doesNotMatch(html, /AI Governance Engine/);
+    const config = await request(baseUrl, "/api/config");
+    assert.equal(config.status, 200);
+    assert.equal(config.body.writeAccess, "REQUIRED");
+    const knowledge = await request(baseUrl, "/api/knowledge");
+    assert.equal(knowledge.status, 200);
+    const blocked = await request(baseUrl, "/api/v2/runs/preflight", {
+      method: "POST",
+      body: JSON.stringify({ sources: [{ path: "docs/note.md", mimeType: "text/markdown", content: "# Guarded write" }] })
+    });
+    assert.equal(blocked.status, 401);
+    assert.equal(blocked.body.failureCode, "WRITE_ACCESS_REQUIRED");
+    const denied = await request(baseUrl, "/api/v2/session", { method: "POST", body: JSON.stringify({ secret: "wrong-password" }) });
+    assert.equal(denied.status, 401);
+    assert.equal(denied.body.failureCode, "WRITE_ACCESS_DENIED");
+    const unlocked = await fetch(new URL("/api/v2/session", baseUrl), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secret: "test-admin-secret" }),
+      signal: AbortSignal.timeout(5000)
+    });
+    assert.equal(unlocked.status, 200);
+    const setCookie = unlocked.headers.getSetCookie?.() ?? [];
+    const cookie = setCookie.find((item) => item.startsWith("sae_session=")) ?? unlocked.headers.get("set-cookie");
+    assert.match(String(cookie), /sae_session=/);
+    const cookieHeader = String(cookie).split(";")[0];
+    const allowed = await request(baseUrl, "/api/v2/runs/preflight", {
+      method: "POST",
+      headers: { Cookie: cookieHeader },
+      body: JSON.stringify({ sources: [{ path: "docs/note.md", mimeType: "text/markdown", content: "# Guarded write" }] })
+    });
+    assert.equal(allowed.status, 201);
+    assert.equal(allowed.body.stage, "DETERMINISTIC_DISCOVERY_COMPLETED");
+  } finally {
+    child.kill("SIGTERM");
+    if (child.exitCode === null) await once(child, "exit");
+  }
+  assert.equal(stderr, "");
+});

@@ -99,14 +99,18 @@ function validateManifest(manifest) {
   }
 }
 
-export async function loadKnowledgeSnapshot(options = {}) {
-  const manifestUrl = options.manifestUrl ?? process.env.VERCEL_KB_MANIFEST_URL;
-  const token = options.token ?? process.env.BLOB_READ_WRITE_TOKEN;
-  const production = options.production ?? process.env.NODE_ENV === "production";
-  if (!manifestUrl) {
-    if (production) throw new Error("VERCEL_KB_MANIFEST_URL is required in production");
-    return localSnapshot();
+function configuredManifestUrl(options) {
+  if (Object.hasOwn(options, "manifestUrl")) {
+    return typeof options.manifestUrl === "string" ? options.manifestUrl.trim() : "";
   }
+  if (process.env.NODE_TEST_CONTEXT) return "";
+  return String(process.env.VERCEL_KB_MANIFEST_URL ?? "").trim();
+}
+
+export async function loadKnowledgeSnapshot(options = {}) {
+  const manifestUrl = configuredManifestUrl(options);
+  const token = options.token ?? process.env.BLOB_READ_WRITE_TOKEN;
+  if (!manifestUrl) return localSnapshot();
 
   const manifestBytes = await fetchBytes(manifestUrl, token);
   const manifest = decodeJson(manifestBytes, manifestUrl);

@@ -2,7 +2,7 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "RAILPACK",
-    "buildCommand": "pnpm run check"
+    "buildCommand": "VERCEL_KB_MANIFEST_URL= BLOB_READ_WRITE_TOKEN= pnpm run check"
   },
   "deploy": {
     "startCommand": "NODE_ENV=production pnpm start",

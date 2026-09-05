@@ -207,3 +207,40 @@ test("HTTP workflow exposes readiness and fails closed before unconfigured provi
   assert.ok(logs.every((record) => record.timestamp && record.level && record.buildRevision));
   assert.doesNotMatch(stdout, /Router Integration Case|current-architecture\.html|fallback provider routing/);
 });
+
+test("production HTTP process starts on local unpublished knowledge when the manifest URL is unset", async () => {
+  const port = await availablePort();
+  const baseUrl = new URL(`http://127.0.0.1:${port}`);
+  const child = spawn(process.execPath, ["src/server.js"], {
+    cwd: repositoryRoot,
+    env: {
+      PATH: process.env.PATH,
+      PORT: String(port),
+      NODE_ENV: "production",
+      ALLOWED_ORIGIN: baseUrl.origin,
+      COGNITIVE_QUEUE_POLL_MS: "60000"
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk.toString().slice(0, 2000); });
+  try {
+    const health = await waitUntilHealthy(baseUrl, child);
+    assert.equal(health.body.status, "ok");
+    assert.equal(health.body.knowledge.source, "LOCAL_BOOTSTRAP");
+    assert.equal(health.body.knowledge.releaseStatus, "ASSESSMENT_OBJECTS_NOT_PUBLISHED");
+    assert.equal(health.body.knowledge.instrumentStatus, "LOADED");
+    assert.equal(health.body.knowledge.knowledgeBaseStatus, "NOT_PUBLISHED");
+    assert.equal(health.body.knowledge.counts.assessmentQuestions, 180);
+    assert.equal(health.body.knowledge.counts.tactics, 119);
+    assert.equal(health.body.cognitiveReadiness.status, "CONFIGURATION_REQUIRED");
+    const knowledge = await request(baseUrl, "/api/knowledge");
+    assert.equal(knowledge.status, 200);
+    assert.equal(knowledge.body.source, "LOCAL_BOOTSTRAP");
+    assert.equal(knowledge.body.diagnostics.status, "WARN");
+  } finally {
+    child.kill("SIGTERM");
+    if (child.exitCode === null) await once(child, "exit");
+  }
+  assert.equal(stderr, "");
+});

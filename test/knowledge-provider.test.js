@@ -32,8 +32,33 @@ function installRemoteFetch(t, manifest, bodies = {}) {
   };
 }
 
-test("production fails closed without a Vercel knowledge manifest", async () => {
-  await assert.rejects(() => loadKnowledgeSnapshot({ production: true, manifestUrl: "" }), /VERCEL_KB_MANIFEST_URL is required/);
+test("production uses the local unpublished snapshot when no manifest URL is configured", async () => {
+  const snapshot = await loadKnowledgeSnapshot({ production: true, manifestUrl: "" });
+  assert.equal(snapshot.source, "LOCAL_BOOTSTRAP");
+  assert.equal(snapshot.releaseStatus, "ASSESSMENT_OBJECTS_NOT_PUBLISHED");
+  assert.equal(snapshot.instrumentStatus, "LOADED");
+  assert.equal(snapshot.knowledgeBaseStatus, "NOT_PUBLISHED");
+  assert.equal(snapshot.diagnostics.status, "WARN");
+});
+
+test("the test runner ignores VERCEL_KB_MANIFEST_URL unless a test passes manifestUrl", async () => {
+  const previous = process.env.VERCEL_KB_MANIFEST_URL;
+  process.env.VERCEL_KB_MANIFEST_URL = "https://blob.example/must-not-be-fetched.json";
+  const originalFetch = globalThis.fetch;
+  let fetched = false;
+  globalThis.fetch = async () => {
+    fetched = true;
+    return new Response("unexpected live knowledge fetch", { status: 500 });
+  };
+  try {
+    const snapshot = await loadKnowledgeSnapshot({ production: true });
+    assert.equal(snapshot.source, "LOCAL_BOOTSTRAP");
+    assert.equal(fetched, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previous === undefined) delete process.env.VERCEL_KB_MANIFEST_URL;
+    else process.env.VERCEL_KB_MANIFEST_URL = previous;
+  }
 });
 
 test("knowledge diagnostics identifies broken cross-document references", () => {

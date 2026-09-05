@@ -25,7 +25,7 @@ The summary renderer does not calculate readiness. Live HTML and printable PDF u
 
 For `ReadinessPackageV2` 2.6.0 and cognitive contract 3.1.0, raw sources remain local and provider-eligible packets contain only deterministic summaries and approved Intake. Image pixels are never accepted by the provider client; the multimodal ledger step is explicitly skipped under the local-media-summary policy. Candidate solution and intake facts are independently verified before they enter shared context. Candidate claims pass local citation validation, independent semantic verification, bounded rescan/adjudication and a deterministic finding lock. Unsupported claims remain in the unresolved ledger. Item-level fact-checking can trigger one bounded claim re-adjudication or one wording repair, and every repair is checked again. A separate publication gate can withhold generated narrative without changing lifecycle readiness. The deterministic fallback package remains available as schema 1.4.0.
 
-The AI Governance Engine is a standalone evidence-processing service. It reuses the useful shape of the FinOps Engine—parallel domain assessment, evidence verification, hard gates, controlled synthesis, traceability, and targeted action selection—without importing any FinOps domain model.
+The Solution Assurance Engine is a standalone evidence-processing service. It reuses the useful shape of the FinOps Engine—parallel domain assessment, evidence verification, hard gates, controlled synthesis, traceability, and targeted action selection—without importing any FinOps domain model.
 
 ```mermaid
 flowchart LR

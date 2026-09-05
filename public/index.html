@@ -4,13 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Evidence-gated AI solution readiness assessment" />
-    <title>AI Governance Engine</title>
-    <link rel="stylesheet" href="/styles.css?v=evidence-intake-1.4.0" />
+    <title>Solution Assurance Engine</title>
+    <link rel="stylesheet" href="/styles.css?v=write-access-1.0.0" />
   </head>
   <body>
     <header class="app-header">
-      <div class="brand-mark">AI</div>
-      <div><p class="eyebrow">Assurance systems</p><h1>AI Governance Engine</h1></div>
+      <div class="brand-mark">SA</div>
+      <div><p class="eyebrow">Assurance systems</p><h1>Solution Assurance Engine</h1></div>
       <div id="knowledge-status" class="knowledge-pill">Loading knowledge...</div>
     </header>
 
@@ -113,6 +113,20 @@
         </form>
       </dialog>
 
+      <dialog id="write-access-dialog" class="approval-dialog" aria-labelledby="write-access-title" aria-describedby="write-access-message">
+        <form id="write-access-form">
+          <p class="eyebrow">Shared access</p>
+          <h2 id="write-access-title">Password required to continue</h2>
+          <p id="write-access-message">The dashboard is readable without a password. Adding material, editing intake, or starting analysis requires the shared access password.</p>
+          <label>Password<input id="write-access-secret" type="password" name="password" autocomplete="current-password" /></label>
+          <p id="write-access-error" class="write-access-error" role="alert"></p>
+          <div class="approval-dialog-actions">
+            <button id="write-access-cancel" class="secondary-button" type="button">Cancel</button>
+            <button class="primary-button" type="submit">Continue</button>
+          </div>
+        </form>
+      </dialog>
+
       <section id="progress" class="panel progress-panel hidden" aria-live="polite"><div class="spinner"></div><div><strong id="progress-title">Building the evidence package</strong><p id="progress-detail">Registering sources, resolving applicability, verifying controls and applying hard gates.</p></div></section>
 
       <section id="results" class="hidden" aria-live="polite">
@@ -134,7 +148,7 @@
 
       <section id="error" class="error-panel hidden" aria-live="assertive"></section>
     </main>
-    <footer>AI Governance Engine - Readiness recommendation, not formal approval</footer>
-    <script type="module" src="/app.js?v=evidence-intake-1.5.0"></script>
+    <footer>Solution Assurance Engine - Readiness recommendation, not formal approval</footer>
+    <script type="module" src="/app.js?v=write-access-1.0.0"></script>
   </body>
 </html>

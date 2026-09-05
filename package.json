@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.34.5",
-  "description": "Evidence-gated AI solution readiness engine",
+  "description": "Evidence-gated Solution Assurance Engine",
   "engines": {
     "node": ">=20.16.0"
   },

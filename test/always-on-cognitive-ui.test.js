@@ -132,6 +132,19 @@ test("the Railway deployment always enforces production policy", () => {
   assert.match(railway.deploy.startCommand, /(?:^|\s)NODE_ENV=production(?:\s|$)/);
 });
 
+test("the dashboard opens without a password and write actions require ADMIN_SECRET", () => {
+  assert.match(index, /<title>Solution Assurance Engine<\/title>/);
+  assert.match(index, /<h1>Solution Assurance Engine<\/h1>/);
+  assert.doesNotMatch(index, /AI Governance Engine/);
+  assert.match(index, /id="write-access-dialog"/);
+  assert.match(app, /\/api\/v2\/session/);
+  assert.match(app, /WRITE_ACCESS_REQUIRED/);
+  assert.match(app, /isGuardedWriteTarget/);
+  assert.match(server, /authorizeWriteAccess/);
+  assert.match(server, /WRITE_ACCESS_DENIED/);
+  assert.match(server, /writeAccess: writeAccessMode\(\)/);
+});
+
 test("asynchronous provider failures expose a stable limitation instead of provider detail", () => {
   assert.match(server, /const failure = classifyCognitiveFailure\(error\)/);
   assert.match(server, /run\.failureCode = failure\.code/);

@@ -9,10 +9,11 @@
 5. Configure `BLOB_READ_WRITE_TOKEN` only if the Blob objects require bearer authentication.
 6. Run the manual `verify-knowledge-manifest` workflow against the same URL, or execute `pnpm run kb:verify-runtime` in an authorized environment.
 7. Optionally set `ALLOWED_ORIGIN` to the Railway public URL.
-8. Provision PostgreSQL and set `DATABASE_URL` when durable safe-run checkpoints are required. Startup idempotently applies `db/migrations/001_governance_runs.sql`.
-9. Keep `COGNITIVE_RUN_LEASE_MS` longer than `COGNITIVE_MAX_RUN_MS`; the defaults are 20 and 15 minutes respectively.
-10. Configure `COGNITIVE_MAX_ACTIVE_RUNS` for per-process queue concurrency and keep `COGNITIVE_QUEUE_POLL_MS` operationally reasonable.
-11. Deploy. Railway executes `pnpm run check`, starts `pnpm start`, and probes `/health`.
+8. Set `ADMIN_SECRET` to the shared write password. The dashboard remains readable without it; uploads, intake edits and analysis require the password. Leave it unset only for local tests.
+9. Provision PostgreSQL and set `DATABASE_URL` when durable safe-run checkpoints are required. Startup idempotently applies `db/migrations/001_governance_runs.sql`.
+10. Keep `COGNITIVE_RUN_LEASE_MS` longer than `COGNITIVE_MAX_RUN_MS`; the defaults are 20 and 15 minutes respectively.
+11. Configure `COGNITIVE_MAX_ACTIVE_RUNS` for per-process queue concurrency and keep `COGNITIVE_QUEUE_POLL_MS` operationally reasonable.
+12. Deploy. Railway executes `pnpm run check`, starts `pnpm start`, and probes `/health`.
 
 Railway captures the service's structured JSON stdout. Expected events include `service_started`, Intake preflight/retrieval/re-read/proposal outcomes, `intake_final_approval_completed`, cognitive queue/start/finish transitions, `cognitive_step_checkpoint`, `request_failed_safely`, and normalized `http_request_completed` records. Use the opaque `requestId` and `runId`, stable `failureCode`, `runStage`, `step`, `stepStatus` and aggregate counts for diagnosis. The logger deliberately excludes uploaded content and paths, request bodies, prompts, provider responses, credentials, IP addresses and arbitrary exception messages.
 

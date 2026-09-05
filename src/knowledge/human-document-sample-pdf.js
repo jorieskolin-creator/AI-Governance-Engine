@@ -670,7 +670,7 @@ function makeDocument(outputFile, render, capability, antipattern) {
       bufferPages: true,
       info: {
         Title: "AI Governance Knowledge Base — human-readable document sample",
-        Author: "AI Governance Engine",
+        Author: "Solution Assurance Engine",
         Subject: `Schema ${SCHEMA_VERSION} category document structure and Engine JSON translation`
       }
     });

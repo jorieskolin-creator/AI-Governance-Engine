@@ -134,7 +134,8 @@ test("the Railway deployment always enforces production policy", () => {
 
 test("the dashboard opens without a password and write actions require ADMIN_SECRET", () => {
   assert.match(index, /<title>Solution Assurance Engine<\/title>/);
-  assert.match(index, /<h1>Solution Assurance Engine<\/h1>/);
+  assert.match(index, /<h1><a class="brand-link" href="https:\/\/ai-governance-engine-thinking-flow\.vercel\.app\/" rel="noopener noreferrer" target="_blank">Solution Assurance Engine<\/a><\/h1>/);
+  assert.match(index, /<footer><a class="brand-link" href="https:\/\/ai-governance-engine-thinking-flow\.vercel\.app\/" rel="noopener noreferrer" target="_blank">Solution Assurance Engine<\/a>/);
   assert.doesNotMatch(index, /AI Governance Engine/);
   assert.match(index, /id="write-access-dialog"/);
   assert.match(app, /\/api\/v2\/session/);

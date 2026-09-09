@@ -366,7 +366,7 @@ const server = http.createServer(async (request, response) => {
           response.writeHead(401, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
           return response.end(body);
         }
-        throw Object.assign(new Error(decision.message), { statusCode: decision.status, failureCode: decision.code });
+        throw Object.assign(new Error("Password required to view the thinking-flow visual."), { statusCode: decision.status, failureCode: decision.code });
       }
       return serveThinkingFlow(response);
     }

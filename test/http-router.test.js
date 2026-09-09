@@ -238,6 +238,12 @@ test("production HTTP process starts on local unpublished knowledge when the man
     assert.equal(knowledge.status, 200);
     assert.equal(knowledge.body.source, "LOCAL_BOOTSTRAP");
     assert.equal(knowledge.body.diagnostics.status, "WARN");
+    const thinkingFlow = await fetch(new URL("/thinking-flow", baseUrl), {
+      headers: { Accept: "text/html" },
+      signal: AbortSignal.timeout(5000)
+    });
+    assert.equal(thinkingFlow.status, 200);
+    assert.match(await thinkingFlow.text(), /Thinking Flow/);
   } finally {
     child.kill("SIGTERM");
     if (child.exitCode === null) await once(child, "exit");
@@ -269,8 +275,10 @@ test("ADMIN_SECRET keeps the dashboard readable and requires a password before w
     assert.equal(page.status, 200);
     const html = await page.text();
     assert.match(html, /Solution Assurance Engine/);
-    assert.match(html, /id="write-access-dialog"/);
-    assert.doesNotMatch(html, /AI Governance Engine/);
+    assert.match(html, /href="\/thinking-flow"/);
+    const blockedFlow = await request(baseUrl, "/thinking-flow");
+    assert.equal(blockedFlow.status, 401);
+    assert.equal(blockedFlow.body.failureCode, "WRITE_ACCESS_REQUIRED");
     const config = await request(baseUrl, "/api/config");
     assert.equal(config.status, 200);
     assert.equal(config.body.writeAccess, "REQUIRED");
@@ -303,6 +311,14 @@ test("ADMIN_SECRET keeps the dashboard readable and requires a password before w
     });
     assert.equal(allowed.status, 201);
     assert.equal(allowed.body.stage, "DETERMINISTIC_DISCOVERY_COMPLETED");
+    const thinkingFlow = await fetch(new URL("/thinking-flow", baseUrl), {
+      headers: { Cookie: cookieHeader, Accept: "text/html" },
+      signal: AbortSignal.timeout(5000)
+    });
+    assert.equal(thinkingFlow.status, 200);
+    const thinkingHtml = await thinkingFlow.text();
+    assert.match(thinkingHtml, /Thinking Flow/);
+    assert.match(thinkingHtml, /Solution Assurance Engine/);
   } finally {
     child.kill("SIGTERM");
     if (child.exitCode === null) await once(child, "exit");

@@ -134,8 +134,10 @@ test("the Railway deployment always enforces production policy", () => {
 
 test("the dashboard opens without a password and write actions require ADMIN_SECRET", () => {
   assert.match(index, /<title>Solution Assurance Engine<\/title>/);
-  assert.match(index, /<h1><a class="brand-link" href="https:\/\/solution-assurance-engine-thinking-flow\.vercel\.app\/" rel="noopener noreferrer" target="_blank">Solution Assurance Engine<\/a><\/h1>/);
-  assert.match(index, /<footer><a class="brand-link" href="https:\/\/solution-assurance-engine-thinking-flow\.vercel\.app\/" rel="noopener noreferrer" target="_blank">Solution Assurance Engine<\/a>/);
+  assert.match(index, /<h1><a class="brand-link" href="\/thinking-flow" rel="noopener noreferrer" target="_blank">Solution Assurance Engine<\/a><\/h1>/);
+  assert.match(index, /<footer><a class="brand-link" href="\/thinking-flow" rel="noopener noreferrer" target="_blank">Solution Assurance Engine<\/a>/);
+  assert.match(index, /Viewing the thinking-flow visual, adding material, editing intake, or starting analysis requires the shared access password/);
+  assert.doesNotMatch(index, /solution-assurance-engine-thinking-flow\.vercel\.app/);
   assert.match(index, /The Solution Assurance Engine creates evidence-gated readiness analysis from digital solutions by comparing declared purpose, documentation, implementation, testing, and observed behaviour under deterministic controls, using AI only in a bounded role, and reserving final authority for humans\./);
   assert.doesNotMatch(index, /AI Governance Engine/);
   assert.match(index, /id="write-access-dialog"/);
@@ -144,7 +146,8 @@ test("the dashboard opens without a password and write actions require ADMIN_SEC
   assert.match(app, /isGuardedWriteTarget/);
   assert.match(server, /authorizeWriteAccess/);
   assert.match(server, /WRITE_ACCESS_DENIED/);
-  assert.match(server, /writeAccess: writeAccessMode\(\)/);
+  assert.match(server, /url.pathname === "\/thinking-flow"/);
+  assert.match(app, /a\.brand-link/);
 });
 
 test("asynchronous provider failures expose a stable limitation instead of provider detail", () => {

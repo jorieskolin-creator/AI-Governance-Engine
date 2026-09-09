@@ -51,6 +51,7 @@ const INTAKE_FLOW_STEPS = ["UPLOAD", "DETERMINISTIC", "AI_VERIFICATION", "USER_R
 function isGuardedWriteTarget(target) {
   if (!(target instanceof Element)) return false;
   if (target.closest("#write-access-dialog, #knowledge-diagnostics, #results, #progress, #error, #view-switch, .summary-toolbar")) return false;
+  if (target.closest("a.brand-link")) return true;
   const control = target.closest("input, textarea, select, button, label.upload-box");
   if (!control) return false;
   return Boolean(control.closest("#source-intake, #assessment-input, #intake-approval-dialog"));
@@ -1265,7 +1266,7 @@ document.addEventListener("click", async (event) => {
   if (!isGuardedWriteTarget(event.target)) return;
   event.preventDefault();
   event.stopPropagation();
-  const resume = event.target.closest("input, textarea, select, button, label.upload-box");
+  const resume = event.target.closest("input, textarea, select, button, label.upload-box, a.brand-link");
   if (await ensureWriteAccess() && resume) {
     resumingGuardedClick = true;
     resume.click();

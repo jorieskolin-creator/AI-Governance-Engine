@@ -26,6 +26,7 @@ import { allowUnlockAttempt, authorizeWriteAccess, configuredAdminSecret, create
 
 const port = Number(process.env.PORT ?? 4174);
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
+const thinkingFlowFile = fileURLToPath(new URL("../docs/thinking-flow.html", import.meta.url));
 const allowedOrigin = process.env.ALLOWED_ORIGIN ?? `http://localhost:${port}`;
 const maxBodyBytes = 25 * 1024 * 1024;
 const assuranceSummaryEnabled = process.env.ASSURANCE_SUMMARY_ENABLED !== "false";
@@ -97,6 +98,13 @@ function securityHeaders(response) {
   response.setHeader("X-Frame-Options", "DENY");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'");
+}
+
+async function serveThinkingFlow(response) {
+  const body = await readFile(thinkingFlowFile);
+  response.setHeader("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; frame-ancestors 'none'");
+  response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  response.end(body);
 }
 
 function rateAllowed(request) {
@@ -349,6 +357,18 @@ const server = http.createServer(async (request, response) => {
       }
       response.setHeader("Set-Cookie", sessionCookieHeader(createSessionToken(secret), { secure: requestIsSecure(request) }));
       return sendJson(response, 200, { writeAccess: "REQUIRED", unlocked: true });
+    }
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname === "/thinking-flow") {
+      const decision = authorizeWriteAccess(request);
+      if (!decision.ok) {
+        if (String(request.headers.accept ?? "").includes("text/html")) {
+          const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Password required</title></head><body><p>The thinking-flow visual requires the shared access password.</p><p><a href="/">Return to Solution Assurance Engine</a></p></body></html>`;
+          response.writeHead(401, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+          return response.end(body);
+        }
+        throw Object.assign(new Error(decision.message), { statusCode: decision.status, failureCode: decision.code });
+      }
+      return serveThinkingFlow(response);
     }
     const mutating = request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS";
     if (mutating) {

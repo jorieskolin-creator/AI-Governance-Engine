@@ -1,0 +1,239 @@
+{
+  "schema_version": "doc-support-handoff/1.0.0",
+  "purpose": "ASSESSMENT_HANDOFF",
+  "documentation_boundary": "This record documents information available at the time of completion. It is not an approval, legal conclusion, risk acceptance, gate decision or assurance finding.",
+  "release": {
+    "state": "DOCUMENTATION_CONFIRMED"
+  },
+  "record": {
+    "schemaVersion": "documentation-workspace-0.1",
+    "answers": {
+      "solutionName": "Record review assistant",
+      "recordOwner": "Service team",
+      "lifecycleStage": "QUALIFICATION_REGISTRATION",
+      "intendedPurpose": "Help the review team find the right records."
+    },
+    "evidenceRefs": {
+      "intendedPurpose": "E-001"
+    },
+    "notApplicable": {
+      "propagation": {
+        "rationale": "No downstream copy.",
+        "owner": "Service team"
+      }
+    },
+    "evidence": [
+      {
+        "id": "E-001",
+        "title": "Review history",
+        "reference": "Documentation/evidence/review-history.json",
+        "type": "Test / validation",
+        "basis": "DOCUMENTED",
+        "verification": "UNVERIFIED",
+        "owner": "Service team",
+        "scope": "Specification only",
+        "transmission": "Internal only"
+      }
+    ],
+    "dataSources": [
+      {
+        "id": "D-001",
+        "name": "Review records",
+        "owner": "Service team",
+        "categories": "Review metadata",
+        "usageRights": "Internal use",
+        "quality": "Quarterly review",
+        "restrictions": "No external sharing"
+      }
+    ],
+    "confirmation": {
+      "confirmedAt": "2026-10-30T12:00:00.000Z",
+      "version": 1
+    },
+    "version": 1,
+    "updatedAt": "2026-10-30T12:00:00.000Z"
+  },
+  "failure_mode_import": {
+    "filePath": "Documentation/02-Risk-and-Impact.md",
+    "snapshotHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "importedAt": "2026-10-30T12:00:00.000Z",
+    "notices": []
+  },
+  "failure_mode_register": {
+    "schema_version": "failure-mode-register/1.0.0",
+    "entries": [
+      {
+        "id": "FM-03",
+        "archetype_id": "FM-03",
+        "source": "DOCUMENT_EXTRACTED",
+        "title": "Incorrect records shown",
+        "trigger_or_cause": "Incorrect filter",
+        "effect_summary": "",
+        "severity_user": "HIGH",
+        "occurrence_inherent": "UNKNOWN",
+        "detectability_inherent": "UNKNOWN",
+        "mapped_objects": [
+          "B4",
+          "D1",
+          "AP-B4",
+          "AP-D1"
+        ],
+        "claimed_mitigations": [
+          {
+            "control": "Review filter",
+            "type": "PREVENTIVE",
+            "code_ref": "src/filter.ts",
+            "evidence_ref": "Documentation/evidence/review-history.json",
+            "evidence_status_observed": "NOT_RUN"
+          }
+        ],
+        "provenance": {
+          "basis": "DOCUMENT_DECLARATION",
+          "source_unit_ids": [
+            "SRC-02:table-fm-row-1:L4"
+          ],
+          "limitations": [],
+          "file_path": "Documentation/02-Risk-and-Impact.md",
+          "snapshot_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      {
+        "id": "FM-06",
+        "archetype_id": "FM-06",
+        "source": "DOCUMENT_EXTRACTED",
+        "title": "Unsupported summary",
+        "trigger_or_cause": "Missing context",
+        "effect_summary": "",
+        "severity_user": "HIGH",
+        "occurrence_inherent": "UNKNOWN",
+        "detectability_inherent": "UNKNOWN",
+        "mapped_objects": [
+          "D2",
+          "F2",
+          "AP-D2",
+          "AP-F2"
+        ],
+        "claimed_mitigations": [
+          {
+            "control": "Independent review",
+            "type": "DETECTIVE",
+            "code_ref": "src/review.ts",
+            "evidence_ref": null,
+            "evidence_status_observed": "OBSERVED_IN_CONFIG"
+          }
+        ],
+        "provenance": {
+          "basis": "DOCUMENT_DECLARATION",
+          "source_unit_ids": [
+            "SRC-02:table-fm-row-2:L5"
+          ],
+          "limitations": [],
+          "file_path": "Documentation/02-Risk-and-Impact.md",
+          "snapshot_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      {
+        "id": "FM-07",
+        "archetype_id": "FM-07",
+        "source": "DOCUMENT_EXTRACTED",
+        "title": "Untrusted instructions",
+        "trigger_or_cause": "Ambiguous input",
+        "effect_summary": "",
+        "severity_user": "HIGH",
+        "occurrence_inherent": "UNKNOWN",
+        "detectability_inherent": "UNKNOWN",
+        "mapped_objects": [
+          "D3",
+          "AP-D3"
+        ],
+        "claimed_mitigations": [
+          {
+            "control": "Reviewer instruction",
+            "type": "PROCEDURAL_OR_PROMPT_ONLY",
+            "code_ref": null,
+            "evidence_ref": null,
+            "evidence_status_observed": "DECLARED_IN_DOC"
+          }
+        ],
+        "provenance": {
+          "basis": "DOCUMENT_DECLARATION",
+          "source_unit_ids": [
+            "SRC-02:table-fm-row-3:L6"
+          ],
+          "limitations": [],
+          "file_path": "Documentation/02-Risk-and-Impact.md",
+          "snapshot_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      {
+        "id": "FM-CUSTOM-01",
+        "archetype_id": null,
+        "source": "DOCUMENT_EXTRACTED",
+        "title": "Blended cloud maturity headline",
+        "trigger_or_cause": "Aggregate hides differences",
+        "effect_summary": "Reviewers may overestimate readiness.",
+        "severity_user": "MEDIUM",
+        "occurrence_inherent": "UNKNOWN",
+        "detectability_inherent": "UNKNOWN",
+        "mapped_objects": [
+          "D2"
+        ],
+        "claimed_mitigations": [],
+        "provenance": {
+          "basis": "DOCUMENT_DECLARATION",
+          "source_unit_ids": [
+            "SRC-02:table-fm-row-4:L7"
+          ],
+          "limitations": [],
+          "file_path": "Documentation/02-Risk-and-Impact.md",
+          "snapshot_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    ],
+    "validation_summary": {
+      "total_entries": 4,
+      "archetype_entries": 3,
+      "custom_entries": 1,
+      "open_warnings": [
+        "FM_UNEXECUTED_EVIDENCE_REF",
+        "FM_HIGH_SEVERITY_WEAK_MITIGATION"
+      ],
+      "blockers": []
+    }
+  },
+  "outstanding_work": [
+    {
+      "id": "fm-not-run-FM-03-0-0",
+      "code": "FM_UNEXECUTED_EVIDENCE_REF",
+      "severity": "info",
+      "kind": "HONEST_GAP",
+      "title": "FM-03: Evidence is NOT_RUN",
+      "message": "Linked evidence is NOT_RUN / specification only. Will not satisfy Q3 in Solution Assurance Engine.",
+      "permittedNextAction": "Execute the referenced verification and link observed test output before assurance gating.",
+      "target": {
+        "step": "impact",
+        "fieldId": "failureModes",
+        "rowId": "FM-03"
+      }
+    },
+    {
+      "id": "fm-weak-mitigation-FM-07-2",
+      "code": "FM_HIGH_SEVERITY_WEAK_MITIGATION",
+      "severity": "warning",
+      "kind": "HONEST_GAP",
+      "title": "FM-07: Weak or missing mitigation for HIGH risk",
+      "message": "All claimed mitigations are PROCEDURAL_OR_PROMPT_ONLY (or UNKNOWN) for a HIGH/CRITICAL failure mode.",
+      "permittedNextAction": "Add a PREVENTIVE or DETECTIVE technical control if one exists, or preserve this honest gap for review.",
+      "target": {
+        "step": "impact",
+        "fieldId": "failureModes",
+        "rowId": "FM-07"
+      }
+    }
+  ],
+  "integrity": {
+    "canonicalization": "RFC8785",
+    "algorithm": "SHA-256",
+    "payload_sha256": "60423a7faa018e4115c6c7df08b2825be3b2029e4f7854162e0b9dec872da672"
+  }
+}

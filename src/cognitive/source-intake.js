@@ -2,6 +2,7 @@ import { extname } from "node:path";
 import { classifyArtifact, HUMAN_AUTHORITIES } from "../contracts.js";
 import { sha256, stableId } from "../core/hash.js";
 import { sanitizeRestrictedText } from "../../public/content-policy.js";
+import { HANDOFF_REVIEW_INSTRUCTION, HANDOFF_REVIEW_ONLY, isDocumentationHandoffJson } from "../../public/documentation-handoff.js";
 import { CODE_EVIDENCE_SUMMARY_VERSION, createCodeEvidenceUnit } from "../intake/code-evidence.js";
 import { createDocumentEvidenceUnit, DOCUMENT_EVIDENCE_SUMMARY_VERSION } from "../intake/document-evidence.js";
 import { createMediaEvidenceUnit, MEDIA_EVIDENCE_SUMMARY_VERSION } from "../intake/media-evidence.js";
@@ -311,7 +312,7 @@ function parseFailure(error, source) {
     format: source.format,
     size: source.encoding === "base64" ? null : String(source.content ?? "").length,
     disposition: unsafe ? "REJECTED_UNSAFE" : "PARSE_FAILED",
-    reasonCode: unsafe ? "UNSAFE_OR_MISMATCHED_SOURCE" : "SOURCE_PARSE_FAILED",
+    reasonCode: error?.code === HANDOFF_REVIEW_ONLY ? HANDOFF_REVIEW_ONLY : unsafe ? "UNSAFE_OR_MISMATCHED_SOURCE" : "SOURCE_PARSE_FAILED",
     error: message.slice(0, 240)
   };
 }
@@ -330,6 +331,9 @@ export async function parseAndScreenSources(sources, options = {}) {
       const bytes = bytesFor(source);
       if (bytes.length > MAX_SOURCE_BYTES) throw new Error(`${source.path} exceeds the 15 MB per-source intake limit`);
       assertFileSignature(source, bytes);
+      if (source.mimeType === "application/json" && isDocumentationHandoffJson(bytes.toString("utf8"))) {
+        throw Object.assign(new Error(HANDOFF_REVIEW_INSTRUCTION), { code: HANDOFF_REVIEW_ONLY });
+      }
       const sourceHash = sha256(bytes);
       const safePath = sanitizeRestrictedText(source.path);
       const sourceId = stableId("src", { path: source.path, sourceHash });
@@ -422,7 +426,10 @@ export async function parseAndScreenSources(sources, options = {}) {
       failedSources.push(parseFailure(error, source));
     }
   }
-  if (!sourceUnits.length && !registeredSources.length) throw new Error("No supported source could be parsed. Review the disclosed exclusions and provide at least one supported source.");
+  if (!sourceUnits.length && !registeredSources.length) {
+    if (failedSources.some((item) => item.reasonCode === HANDOFF_REVIEW_ONLY)) throw new Error(HANDOFF_REVIEW_INSTRUCTION);
+    throw new Error("No supported source could be parsed. Review the disclosed exclusions and provide at least one supported source.");
+  }
   return { registeredSources, sourceUnits, localSourceUnits, dlpFindings, failedSources };
   } finally {
     if (ownsOcrSession) await ocrSession.terminate();

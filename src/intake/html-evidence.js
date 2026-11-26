@@ -1,4 +1,5 @@
 import { Parser } from "htmlparser2";
+import { HANDOFF_REVIEW_INSTRUCTION, HANDOFF_REVIEW_ONLY, HANDOFF_SCRIPT_ID } from "../../public/documentation-handoff.js";
 
 const MAX_EXTRACTED_CHARACTERS = 5_000_000;
 const MAX_SEGMENTS = 10_000;
@@ -93,6 +94,7 @@ export function extractStructuredHtml(html) {
   const parser = new Parser({
     onopentag(name, attributes) {
       if (name === "script") {
+        if (attributes.id === HANDOFF_SCRIPT_ID) throw Object.assign(new Error(HANDOFF_REVIEW_INSTRUCTION), { code: HANDOFF_REVIEW_ONLY });
         const type = String(attributes.type ?? "").split(";")[0].trim().toLowerCase();
         const supportedType = JSON_SCRIPT_TYPES.has(type);
         if (supportedType) embeddedJsonBlockCount += 1;

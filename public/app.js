@@ -1,6 +1,7 @@
 import { renderAssuranceSummary, standaloneReportHtml } from "/report.js";
 import { binaryMimeTypes, classifyUploadPath, provisionalIngestionManifest } from "/upload-types.js";
 import { sanitizeRestrictedValue } from "/content-policy.js";
+import { embeddedDocumentationHandoff, fillEmptyHandoffControls, HANDOFF_MAX_BYTES, HANDOFF_REVIEW_INSTRUCTION, HANDOFF_REVIEW_ONLY, parseDocumentationHandoff } from "/documentation-handoff.js";
 
 const STAGES = [
   "QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION",
@@ -17,6 +18,9 @@ let intakeFieldRegistry = { version: "unavailable", fields: [] };
 let latestSolutionProfile = null;
 let latestDiscoveryRecheck = null;
 let latestDiscoveryContext = null;
+let documentationHandoff = null;
+let handoffReadId = 0;
+let intakeApprovalStarted = false;
 let retrievalPlanningProviders = [];
 let proposalProviders = [];
 let modelReadiness = { status: "UNAVAILABLE", issueCodes: ["MODEL_POLICY_UNAVAILABLE"] };
@@ -332,6 +336,98 @@ function fillDossier(dossier) {
   fillQuestionnaire(dossier.intakeAnswers ?? {});
   intakeControlBaseline.clear();
   for (const controlId of Object.keys(INTAKE_CONTROL_FIELDS)) intakeControlBaseline.set(controlId, intakeControlValue(controlId));
+}
+
+function canApplyDocumentationHandoff() {
+  return Boolean(documentationHandoff?.suggestions.length && activeRunId && !intakeApprovalStarted &&
+    !$("assess-button").disabled && latestDiscoveryContext?.sourceIngestion?.parsedCount > 0);
+}
+
+function updateDocumentationHandoffAction(message) {
+  const canApply = canApplyDocumentationHandoff();
+  $("apply-documentation-handoff").disabled = !canApply;
+  $("documentation-handoff-apply-status").textContent = message ?? (canApply
+    ? "Only empty fields are filled. These values remain editable, Self-Declared Intake."
+    : !documentationHandoff?.suggestions.length ? "No reusable Intake fields were supplied in this handoff."
+      : intakeApprovalStarted ? "Start a new discovery to apply declarations after Intake approval."
+        : "Discover case information from original sources before applying handoff declarations.");
+}
+
+function handoffDetails(title, entries) {
+  const details = el("details", "intake-workspace-section handoff-details");
+  details.append(el("summary", "", title));
+  const list = el("ul");
+  list.append(...entries.map((entry) => el("li", "", entry)));
+  details.append(list);
+  return details;
+}
+
+function renderDocumentationHandoff() {
+  const review = $("documentation-handoff-review");
+  const content = $("documentation-handoff-content");
+  review.classList.toggle("hidden", !documentationHandoff);
+  content.replaceChildren();
+  updateDocumentationHandoffAction();
+  if (!documentationHandoff) return;
+  const { documentationConfirmed, suggestions, context, entries, evidence, work } = documentationHandoff;
+  $("documentation-handoff-boundary").textContent = `${documentationConfirmed ? "Marked documentation-confirmed" : "Draft documentation"} · Payload digest matches (not a signature). All information below is supplied by the handoff, not verified by the Engine.`;
+  if (suggestions.length) content.append(handoffDetails("Reusable Intake declarations", suggestions.map(({ label: name, value, controlId }) => `${name}: ${controlId === "current-stage" ? label(value) : value}`)));
+  if (context.length) content.append(handoffDetails("Other documentation context (review only)", context.map(([name, value]) => `${name}: ${value}`)));
+  const risks = el("details", "intake-workspace-section handoff-details");
+  risks.append(el("summary", "", `Failure Mode Register (${entries.length}, declared)`));
+  if (!entries.length) risks.append(el("p", "", "No failure modes declared."));
+  for (const entry of entries) {
+    const { provenance } = entry;
+    const notes = [
+      `Trigger or cause: ${entry.trigger_or_cause || "Not provided"}`,
+      `Effect: ${entry.effect_summary || "Not provided"}`,
+      `Severity / inherent occurrence / inherent detectability: ${entry.severity_user} / ${entry.occurrence_inherent} / ${entry.detectability_inherent}`,
+      `Control mappings (not findings): ${entry.mapped_objects.join(", ") || "Unmapped"}`,
+      `Source: ${label(entry.source)}${provenance.file_path ? ` · ${provenance.file_path}` : ""}${provenance.source_unit_ids.length ? ` · ${provenance.source_unit_ids.join(", ")}` : ""}`,
+      ...provenance.limitations
+    ];
+    if (!entry.claimed_mitigations.length) notes.push("No mitigations claimed.");
+    for (const claim of entry.claimed_mitigations) {
+      notes.push(`Claimed mitigation: ${claim.control || "Not described"} (${label(claim.type)}) · Reported status: ${claim.evidence_status_observed}${claim.evidence_status_observed === "NOT_RUN" ? " (not proof of execution)" : ""}${claim.code_ref ? ` · Code/config reference: ${claim.code_ref}` : ""}${claim.evidence_ref ? ` · Evidence reference: ${claim.evidence_ref}` : ""}`);
+    }
+    risks.append(handoffDetails(`${entry.id} · ${entry.title || "Untitled failure mode"}`, notes));
+  }
+  content.append(risks);
+  if (evidence.length) content.append(handoffDetails("Evidence index (references only)", evidence.map((item) => `${item.id} · ${item.title || "Untitled reference"} · ${item.reference || "No reference supplied"} · Status reported by handoff: ${item.verification || "Unknown"}`)));
+  if (work.length) content.append(handoffDetails("Outstanding work", work.map((item) => `${item.code} · ${item.title} — ${item.permittedNextAction}`)));
+}
+
+async function reviewDocumentationHandoff(event) {
+  const readId = ++handoffReadId;
+  const file = event.target.files[0];
+  const status = $("documentation-handoff-status");
+  documentationHandoff = null;
+  renderDocumentationHandoff();
+  if (!file) { status.textContent = "No handoff selected."; return; }
+  status.textContent = "Checking the handoff…";
+  try {
+    if (file.size > HANDOFF_MAX_BYTES) throw new Error("The handoff exceeds the 15 MB review limit.");
+    if (!/\.(?:html?|json)$/i.test(file.name)) throw new Error("Choose a Documentation Support HTML or JSON export.");
+    const contents = await file.text();
+    const source = /\.html?$/i.test(file.name) ? embeddedDocumentationHandoff(contents, document.createElement("template")) : contents;
+    const handoff = await parseDocumentationHandoff(source);
+    if (readId !== handoffReadId) return;
+    documentationHandoff = handoff;
+    renderDocumentationHandoff();
+    status.textContent = "Handoff loaded for review. It was not added as an evidence source.";
+    $("documentation-handoff-title").focus();
+  } catch (error) {
+    if (readId === handoffReadId) status.textContent = `Cannot review the handoff: ${error.message}`;
+  }
+}
+
+function applyDocumentationHandoff() {
+  if (!canApplyDocumentationHandoff()) return;
+  const filled = fillEmptyHandoffControls(documentationHandoff.suggestions, $, (controlId) => {
+    const fieldId = INTAKE_CONTROL_FIELDS[controlId];
+    return latestSolutionProfile?.fields[fieldId]?.status === "CONFLICTING";
+  }, (control) => control.dispatchEvent(new Event("input", { bubbles: true })));
+  updateDocumentationHandoffAction(filled ? `${filled} field(s) filled as Self-Declared. Review the filled fields before approving Intake.` : "No empty, non-conflicting fields matched. Existing values and conflicts were left unchanged.");
 }
 
 function intakeControlValue(controlId) {
@@ -716,7 +812,10 @@ function renderSourceIngestionExceptions(root) {
   details.append(el("summary", "", `Review ${exceptions.length} source ingestion exception(s)`));
   details.append(el("p", "field-hint", "These files were not parsed into evidence. Their source-level limitations do not automatically apply to every Intake field."));
   const list = el("ul", "discovery-candidates");
-  for (const item of exceptions) list.append(el("li", "", `${item.path} · ${label(item.disposition)} · ${label(item.reasonCode)}`));
+  for (const item of exceptions) {
+    const reason = item.reasonCode === HANDOFF_REVIEW_ONLY ? HANDOFF_REVIEW_INSTRUCTION : label(item.reasonCode);
+    list.append(el("li", "", `${item.path} · ${label(item.disposition)} · ${reason}`));
+  }
   details.append(list); root.append(details);
 }
 
@@ -815,6 +914,7 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
 
 async function discoverCaseInformation() {
   $("error").classList.add("hidden"); $("discover-button").disabled = true; $("assess-button").disabled = true;
+  updateDocumentationHandoffAction();
   for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
   setIntakeFlow("DETERMINISTIC");
   $("discovery-status").textContent = "Stage 2 of 5 · Parsing sources locally and building deterministic cited facts…";
@@ -854,6 +954,8 @@ async function discoverCaseInformation() {
         ? `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). Resolve it manually or explicitly request optional GenAI proposals from safe summaries.`
         : `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). GenAI proposals are unavailable because no configured Reasoner route has an available credential; resolve the Intake manually.`;
     $("assess-button").disabled = false;
+    intakeApprovalStarted = false;
+    updateDocumentationHandoffAction();
     $("assessment-input").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
     $("discovery-status").textContent = "Discovery could not be completed."; $("error").textContent = error.message; $("error").classList.remove("hidden");
@@ -1064,6 +1166,12 @@ async function loadSample() {
   latestDiscoveryContext = null;
   for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
   $("assess-button").disabled = true; setIntakeFlow("UPLOAD");
+  intakeApprovalStarted = false;
+  ++handoffReadId;
+  documentationHandoff = null;
+  $("documentation-handoff-file").value = "";
+  $("documentation-handoff-status").textContent = "No handoff selected.";
+  renderDocumentationHandoff();
   $("folder-summary").textContent = `${sample.sources.length} controlled sample evidence files loaded`;
   $("file-summary").textContent = "No individual files selected";
   $("discovery-status").textContent = "Controlled sample loaded. Discover case information to run the same source-first AI workflow.";
@@ -1131,6 +1239,7 @@ async function waitForRun(runId) {
 
 async function runAssessment(event) {
   event.preventDefault(); $("error").classList.add("hidden"); $("assess-button").disabled = true;
+  updateDocumentationHandoffAction();
   try {
     if (!activeRunId) throw new Error("Complete deterministic discovery before starting the A–F assessment.");
     await selectedSources();
@@ -1145,6 +1254,7 @@ async function runAssessment(event) {
     }
     const resolutions = intakeResolutions(dossier);
     if (!await requestIntakeApproval(resolutions)) return;
+    intakeApprovalStarted = true;
     $("progress").classList.remove("hidden");
     setProgress("Preparing AI analysis", "Local screening is complete. Redacted evidence will be analysed by the Engine’s configured providers.");
     const currentRunResponse = await fetch(`/api/v2/runs/${encodeURIComponent(activeRunId)}`);
@@ -1174,7 +1284,10 @@ async function runAssessment(event) {
     setIntakeFlow(null);
     activeRunId = null;
   } catch (error) { $("error").textContent = error.message; $("error").classList.remove("hidden"); }
-  finally { $("progress").classList.add("hidden"); $("assess-button").disabled = activeRunId === null; }
+  finally {
+    $("progress").classList.add("hidden"); $("assess-button").disabled = activeRunId === null;
+    updateDocumentationHandoffAction();
+  }
 }
 
 function download(content, type, suffix) {
@@ -1242,6 +1355,8 @@ Promise.all([
   renderQuestionnaire();
 }).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; $("knowledge-diagnostics-content").textContent = "Knowledge connection diagnostics are unavailable."; });
 $("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("request-retrieval-plan").addEventListener("click", requestRetrievalPlan); $("execute-local-reread").addEventListener("click", executeLocalReread); $("request-ai-proposals").addEventListener("click", requestAiProposals); $("dossier-form").addEventListener("submit", runAssessment);
+$("documentation-handoff-file").addEventListener("change", reviewDocumentationHandoff);
+$("apply-documentation-handoff").addEventListener("click", applyDocumentationHandoff);
 $("dossier-form").addEventListener("input", (event) => {
   const controlId = event.target.id || event.target.closest("#data-categories")?.id;
   const field = INTAKE_CONTROL_FIELDS[controlId];
@@ -1259,8 +1374,16 @@ $("dossier-form").addEventListener("input", (event) => {
 });
 $("summary-tab").addEventListener("click", () => selectView("summary")); $("workspace-tab").addEventListener("click", () => selectView("workspace"));
 $("print-button").addEventListener("click", printReport); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);
-$("source-files").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("file-summary").textContent = `${$("source-files").files.length} individual file(s) selected`; previewSelectedSources(); });
-$("source-folder").addEventListener("change", () => { sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden"); $("assess-button").disabled = true; setIntakeFlow("UPLOAD"); $("folder-summary").textContent = `${$("source-folder").files.length} folder file(s) selected`; previewSelectedSources(); });
+for (const [control, summary, kind] of [["source-files", "file-summary", "individual"], ["source-folder", "folder-summary", "folder"]]) {
+  $(control).addEventListener("change", () => {
+    sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; intakeApprovalStarted = false;
+    for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
+    $("assess-button").disabled = true; setIntakeFlow("UPLOAD");
+    $(summary).textContent = `${$(control).files.length} ${kind} file(s) selected`;
+    updateDocumentationHandoffAction();
+    previewSelectedSources();
+  });
+}
 document.addEventListener("click", async (event) => {
   if (writeAccess !== "REQUIRED" || writeUnlocked || resumingGuardedClick) return;
   if (!isGuardedWriteTarget(event.target)) return;

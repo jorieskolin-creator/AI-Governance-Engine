@@ -107,6 +107,9 @@ legend { color: var(--forest-2); font-size: .75rem; font-weight: 850; padding: 0
 .field-provenance { display: block; width: fit-content; margin-top: 6px; line-height: 1.35; text-transform: none; letter-spacing: 0; }
 .intake-workspace-section { margin: 14px 0; padding: 13px 15px; border: 1px solid var(--line); border-radius: 12px; background: #fafbf7; }
 .intake-workspace-section[open] > summary { margin-bottom: 15px; }
+.handoff-details { overflow-wrap: anywhere; }
+#documentation-handoff-review h3 { margin: 0 0 8px; }
+#documentation-handoff-status, #documentation-handoff-apply-status { margin: 8px 0 0; }
 .intake-workspace-section .questionnaire-panel, .intake-workspace-section .operating-boundary, .intake-workspace-section .flag-groups { margin-top: 0; }
 .confirmation-note { display: flex; flex-direction: column; justify-content: center; gap: 5px; border: 1px solid var(--line); border-radius: 11px; padding: 12px; background: #f1f6f1; }
 .confirmation-note span { color: var(--muted); font-size: .75rem; line-height: 1.45; }

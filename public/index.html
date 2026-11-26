@@ -40,8 +40,14 @@
         </details>
         <div class="form-grid two">
           <label class="upload-box">Codebase or evidence folder<input id="source-folder" type="file" multiple webkitdirectory /><span id="folder-summary">No folder selected</span></label>
-            <label class="upload-box">Individual documents and files<input id="source-files" type="file" multiple /><span id="file-summary">No individual files selected</span></label>
+          <label class="upload-box">Individual documents and files<input id="source-files" type="file" multiple /><span id="file-summary">No individual files selected</span></label>
         </div>
+        <details class="intake-workspace-section handoff-details">
+          <summary>Start from a Documentation Support summary (optional)</summary>
+          <p class="field-hint" id="handoff-instructions">Read a Documentation Support HTML or JSON export in this browser. It can help fill Intake but does not count as a source for analysis. Upload the original documentation, code and test results separately.</p>
+          <label class="upload-box">Documentation Support handoff<input id="documentation-handoff-file" type="file" accept=".html,.htm,.json" aria-describedby="handoff-instructions" /></label>
+          <p id="documentation-handoff-status" class="field-hint" role="status">No handoff selected.</p>
+        </details>
         <div class="discovery-actions">
           <button id="discover-button" class="primary-button" type="button">Discover case information</button>
           <button id="request-retrieval-plan" class="secondary-button hidden" type="button">Request Retrieval Suggestions</button>
@@ -53,11 +59,27 @@
       </section>
 
       <section id="assessment-input" class="panel input-panel">
-        <div class="section-heading"><div><p class="eyebrow">Confirm assessment intake</p><h2>Review detected solution profile</h2></div></div>
+        <div class="section-heading"><div><p class="eyebrow">Confirm assessment intake</p><h2>Review solution profile</h2></div></div>
+        <section id="documentation-handoff-review" class="intake-workspace-section hidden" aria-labelledby="documentation-handoff-title">
+          <h3 id="documentation-handoff-title" tabindex="-1">Documentation Support handoff</h3>
+          <p id="documentation-handoff-boundary"></p>
+          <div id="documentation-handoff-content"></div>
+          <button id="apply-documentation-handoff" class="secondary-button" type="button" disabled>Fill empty Intake fields from handoff</button>
+          <p class="field-hint" id="documentation-handoff-apply-status" role="status">Discover case information from original sources before applying handoff declarations.</p>
+          <details class="intake-workspace-section handoff-details">
+            <summary>What the Engine still needs to check</summary>
+            <ul>
+              <li><strong>Required for analysis:</strong> solution name, accountable solution owner, and at least one separate parsed source. The documentation record owner may be a different person.</li>
+              <li><strong>Review separately:</strong> expected value, target lifecycle stage, jurisdictions and regulatory roles, and applicable screening answers. The handoff does not supply these as Engine Intake fields.</li>
+              <li><strong>Confirm rather than infer:</strong> allowed uses and operating boundaries, data categories, current and intended access, consequential decisions, and agent authority. Narrative about these topics does not answer the Engine's structured questions.</li>
+              <li><strong>Provide supporting material:</strong> Q1 (defined) is a declaration; Q2 (code/configuration) and Q3 (executed evidence) require original artifacts. A link or <code>NOT_RUN</code> status is not proof.</li>
+            </ul>
+          </details>
+        </section>
         <form id="dossier-form">
           <div class="intake-boundary-notice"><strong>Self-Declared information has a controlled lifecycle boundary</strong><span>Information you add or change can support assessment through Verification and Validation, but progression beyond that stage is blocked until documentary support is verified.</span></div>
           <div id="intake-review-summary" class="intake-review-summary" aria-live="polite"></div>
-          <div class="form-grid two"><label>Solution name · required<input id="name" aria-required="true" placeholder="Detected from product documentation or project manifest" /></label><label>Accountable owner · required<input id="owner" aria-required="true" placeholder="Must be supported by ownership, RACI, charter or governance evidence" /></label></div>
+          <div class="form-grid two"><label>Solution name · required<input id="name" aria-required="true" placeholder="Detected from product documentation or project manifest" /></label><label>Accountable owner · required<input id="owner" aria-required="true" placeholder="Confirm the accountable solution owner, not just the documentation owner" /></label></div>
           <label>Intended purpose<textarea id="purpose" rows="3" placeholder="Detected from business, product or architecture documentation"></textarea></label>
           <label>Expected value<textarea id="value" rows="2" placeholder="Measurable outcome and value hypothesis"></textarea></label>
           <div class="form-grid four">

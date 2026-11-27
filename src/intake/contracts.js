@@ -250,7 +250,7 @@ function fieldRecord(field, decision, dossier, sourceProfile, discoveryRecheck, 
   };
 }
 
-export function createApprovedIntakeSnapshot({ run, dossier, effectiveDossier, solutionProfile, sourceProfile, resolutions, approval, priorRevisionRef = null }) {
+export function createApprovedIntakeSnapshot({ run, dossier, effectiveDossier, solutionProfile, sourceProfile, resolutions, approval, documentation = null, priorRevisionRef = null }) {
   invariant(resolutions && typeof resolutions === "object" && !Array.isArray(resolutions), "Explicit Intake field resolutions are required");
   invariant(approval && typeof approval === "object", "Explicit user approval is required");
   const actorRef = sanitizeRestrictedText(String(approval.actorRef ?? "").trim());
@@ -310,6 +310,7 @@ export function createApprovedIntakeSnapshot({ run, dossier, effectiveDossier, s
     solutionProfile: structuredClone(solutionProfile),
     sourceIngestion: structuredClone(run.sourceIngestion)
   };
+  if (documentation) payload.declaredDocumentation = structuredClone(documentation);
   const snapshot = { ...payload, snapshotHash: sha256(payload) };
   return deepFreeze(snapshot);
 }
@@ -327,6 +328,12 @@ export function validateApprovedIntakeSnapshot(snapshot, options = {}) {
   invariant(typeof snapshot.snapshotHash === "string", "The approved Intake snapshot hash is required");
   const { snapshotHash, ...payload } = snapshot;
   invariant(sha256(payload) === snapshotHash, "The approved Intake snapshot failed its integrity check");
+  if (snapshot.declaredDocumentation !== undefined) {
+    const documentation = snapshot.declaredDocumentation;
+    invariant(documentation?.schemaVersion === "declared-documentation/1.0.0" && documentation.evidenceCeiling === "DECLARED", "Approved documentation declaration contract is invalid");
+    invariant(Array.isArray(documentation.failureModes) && Array.isArray(documentation.evidenceReferences) && Array.isArray(documentation.dataSources), "Approved documentation registers are invalid");
+    invariant(!documentation.handoff || /^[a-f0-9]{64}$/.test(documentation.handoff.payloadHash), "Approved documentation handoff reference is invalid");
+  }
   invariant(!options.acquisitionManifestHash || snapshot.acquisitionManifest?.hash === options.acquisitionManifestHash, "The approved Intake snapshot does not reference the active acquisition manifest");
   invariant(snapshot.approval?.authority === "USER_ONLY" && snapshot.approval.actorRef && !Number.isNaN(Date.parse(snapshot.approval.confirmedAt)), "The approved Intake snapshot lacks valid user approval");
   invariant(Number.isInteger(snapshot.revision) && snapshot.revision >= 1, "The approved Intake revision is invalid");

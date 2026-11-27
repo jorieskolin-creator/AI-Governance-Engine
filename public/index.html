@@ -85,7 +85,12 @@
             <label>Current lifecycle stage<select id="current-stage"></select></label><label>Target lifecycle stage<select id="target-stage"></select></label>
             <label>Jurisdictions<input id="jurisdictions" placeholder="Unknown until detected or declared" /></label><label>Regulatory roles<input id="roles" placeholder="Unknown until screened below" /></label>
           </div>
-          <div class="form-grid two"><label>Users and affected groups<input id="users" placeholder="Unknown until detected or declared" /></label><div class="confirmation-note"><strong>Confirmation preserves provenance</strong><span>Corrections become user declarations. They do not erase missing documentation or contradictory source evidence.</span></div></div>
+          <div class="form-grid two"><label>Users and operators<input id="users" placeholder="Unknown until detected or declared" /></label><div class="confirmation-note"><strong>Confirmation preserves provenance</strong><span>Corrections become user declarations. They do not erase missing documentation or contradictory source evidence.</span></div></div>
+          <details class="intake-workspace-section">
+            <summary>Declared documentation, risks and data rules</summary>
+            <p class="field-hint">Review and edit these declarations before approval. The imported failure-mode, data-source and evidence registers appear in the handoff review above.</p>
+            <div id="declared-documentation-topics"></div>
+          </details>
 
           <details class="intake-workspace-section">
             <summary>Applicability and classification questions</summary>

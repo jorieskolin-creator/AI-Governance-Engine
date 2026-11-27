@@ -77,7 +77,7 @@ test("ZIP source containers require explicit local extraction", () => {
 
 test("the Intake workspace prefills AI proposals without a separate acceptance action", () => {
   assert.match(index, /id="intake-review-summary"/);
-  assert.equal((index.match(/class="intake-workspace-section"/g) ?? []).length, 3);
+  assert.match(index, /id="declared-documentation-topics"/);
   assert.match(app, /Review exceptions first/);
   assert.match(app, /prefillProposalOnce/);
   assert.match(app, /prefilledProposalByField/);

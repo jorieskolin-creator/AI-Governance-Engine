@@ -10,7 +10,7 @@ import { createAcquiredFactPackage } from "../intake/acquired-facts.js";
 import { createAcquisitionDiagnostics } from "../intake/acquisition-diagnostics.js";
 import { createIntakeCandidatePackage, validateIntakeCandidatePackage } from "../intake/candidate-contract.js";
 import { createIntakeGapAnalysis } from "../intake/gap-analysis.js";
-import { splitDocumentationInput } from "../intake/documentation-input.js";
+import { approvedDocumentation, splitDocumentationInput } from "../intake/documentation-input.js";
 import { preferredDocumentationDraft } from "../../public/documentation-handoff.js";
 
 const DEFAULT_PACKET_CHARS = 18_000;
@@ -248,6 +248,7 @@ export async function confirmPreflightDossier(run, input, options = {}) {
       sourceProfile,
       resolutions: input?.resolutions,
       approval: input?.approval,
+      documentation: approvedDocumentation(run.documentationHandoff, input?.documentationEdits, dossier),
       priorRevisionRef: input?.priorRevisionRef
     });
   } catch (error) { throw Object.assign(error, { statusCode: 422 }); }
@@ -259,6 +260,7 @@ export async function confirmPreflightDossier(run, input, options = {}) {
   run.intakeCandidates = null;
   run.dossier = structuredClone(effectiveDossier);
   run.approvedIntake = approvedIntake;
+  delete run.documentationHandoff;
   run.registeredSources = [...run.registeredSources.filter((item) => item.path !== "intended-use-dossier.json"), ...dossierSource.registeredSources];
   run.dlpFindings = [...run.dlpFindings.filter((item) => !oldDossierUnitIds.has(item.sourceUnitId)), ...dossierSource.dlpFindings];
   run.localSourceUnits = [...sourceUnits, ...dossierSource.localSourceUnits];

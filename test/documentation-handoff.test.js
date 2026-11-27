@@ -73,7 +73,8 @@ test("handoff declarations take priority in the draft without replacing the inde
   assert.equal(draft.name, "Record review assistant");
   assert.equal(draft.intendedPurpose, "Help the review team find the right records.");
   assert.equal(draft.accountableOwner, "Evidence owner");
-  assert.deepEqual(draft.users, ["Operators", "Customers"]);
+  assert.deepEqual(draft.users, ["Operators"]);
+  assert.equal(handoff.answers.affectedParties, "Customers, Operators");
   assert.deepEqual(draft.operatingBoundary.excludedUses, ["No external access"]);
   assert.equal(sourceDossier.intendedPurpose, "Independent purpose");
   assert.equal(preferredDocumentationDraft(sourceDossier, null), sourceDossier);
@@ -101,10 +102,22 @@ test("preflight validates both handoff input routes without admitting the handof
   assert.equal(dossier.accountableOwner, "Review service lead");
   const resolutions = createIntakeResolutionDraft(dossier, run.solutionProfile);
   await assert.rejects(confirmPreflightDossier(run, { dossier, resolutions }), /approval/i);
-  const confirmed = await confirmPreflightDossier(run, { dossier, resolutions, approval: { confirmed: true, actorRef: "TEST_USER" } });
+  const confirmed = await confirmPreflightDossier(run, {
+    dossier, resolutions, documentationEdits: { useContext: "A revised user declaration" },
+    approval: { confirmed: true, actorRef: "TEST_USER" }
+  });
   const purpose = confirmed.approvedIntake.fields.find(({ fieldId }) => fieldId === "intendedPurpose");
   assert.equal(purpose.origin, "USER_DECLARATION");
   assert.deepEqual(purpose.evidenceRefs, []);
+  const documentation = confirmed.approvedIntake.declaredDocumentation;
+  assert.equal(documentation.evidenceCeiling, "DECLARED");
+  assert.equal(documentation.failureModes.length, 4);
+  assert.equal(documentation.failureModes[0].claimed_mitigations[0].evidence_status_observed, "NOT_RUN");
+  assert.equal(documentation.handoff.documentationConfirmed, true);
+  assert.equal(documentation.topics.useContext.value, "A revised user declaration");
+  assert.equal(documentation.topics.useContext.origin, "USER_DECLARATION");
+  assert.equal(documentation.mapped.intendedPurpose.origin, "DOCUMENTATION_SUPPORT");
+  assert.ok(Object.isFrozen(documentation.failureModes));
 });
 
 test("an invalid or ambiguous handoff produces an explicit error before discovery", async () => {

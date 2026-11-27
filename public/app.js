@@ -1,7 +1,7 @@
 import { renderAssuranceSummary, standaloneReportHtml } from "/report.js";
 import { binaryMimeTypes, classifyUploadPath, provisionalIngestionManifest } from "/upload-types.js";
 import { sanitizeRestrictedValue } from "/content-policy.js";
-import { embeddedDocumentationHandoff, HANDOFF_MAX_BYTES, HANDOFF_REVIEW_INSTRUCTION, HANDOFF_REVIEW_ONLY, parseDocumentationHandoff } from "/documentation-handoff.js";
+import { DECLARED_TOPIC_GROUPS, embeddedDocumentationHandoff, HANDOFF_MAX_BYTES, HANDOFF_REVIEW_INSTRUCTION, HANDOFF_REVIEW_ONLY, parseDocumentationHandoff } from "/documentation-handoff.js";
 
 const STAGES = [
   "QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION",
@@ -23,6 +23,7 @@ let documentationHandoffSource;
 let handoffReadId = 0;
 let discoveryAttempt = 0;
 const handoffDraftControls = new Map();
+const declaredTopicBaselines = new Map();
 let intakeApprovalStarted = false;
 let retrievalPlanningProviders = [];
 let proposalProviders = [];
@@ -368,7 +369,7 @@ function renderDocumentationHandoff() {
   const { documentationConfirmed, suggestions, context, entries, evidence, work } = documentationHandoff;
   $("documentation-handoff-boundary").textContent = `${documentationConfirmed ? "Marked documentation-confirmed" : "Draft documentation"} · Payload digest matches (not a signature). All information below is supplied by the handoff, not verified by the Engine.`;
   if (suggestions.length) content.append(handoffDetails("Reusable Intake declarations", suggestions.map(({ label: name, value, controlId }) => `${name}: ${controlId === "current-stage" ? label(value) : value}`)));
-  if (context.length) content.append(handoffDetails("Other documentation context (review only)", context.map(([name, value]) => `${name}: ${value}`)));
+  if (context.length) content.append(handoffDetails("Imported documentation context", context.map(([name, value]) => `${name}: ${value}`)));
   const risks = el("details", "intake-workspace-section handoff-details");
   risks.append(el("summary", "", `Failure Mode Register (${entries.length}, declared)`));
   if (!entries.length) risks.append(el("p", "", "No failure modes declared."));
@@ -389,8 +390,43 @@ function renderDocumentationHandoff() {
     risks.append(handoffDetails(`${entry.id} · ${entry.title || "Untitled failure mode"}`, notes));
   }
   content.append(risks);
+  if (documentationHandoff.dataSources.length) content.append(handoffDetails("Declared data sources", documentationHandoff.dataSources.map((item) => `${item.id} · ${item.name} · ${item.usageRights || "Usage rights unknown"}`)));
   if (evidence.length) content.append(handoffDetails("Evidence index (references only)", evidence.map((item) => `${item.id} · ${item.title || "Untitled reference"} · ${item.reference || "No reference supplied"} · Status reported by handoff: ${item.verification || "Unknown"}`)));
   if (work.length) content.append(handoffDetails("Outstanding work", work.map((item) => `${item.code} · ${item.title} — ${item.permittedNextAction}`)));
+}
+
+function declaredTopicInputs() {
+  return [...$("declared-documentation-topics").querySelectorAll("textarea[data-topic]")];
+}
+
+function documentationEdits() {
+  return Object.fromEntries(declaredTopicInputs().filter((input) => input.value !== declaredTopicBaselines.get(input.dataset.topic))
+    .map((input) => [input.dataset.topic, input.value]));
+}
+
+function renderDeclaredTopics(handoff = null, edits = {}) {
+  declaredTopicBaselines.clear();
+  const root = $("declared-documentation-topics");
+  root.replaceChildren(...DECLARED_TOPIC_GROUPS.map(([title, fields]) => {
+    const group = el("fieldset", "form-grid two");
+    group.append(el("legend", "", title));
+    for (const [id, heading] of fields) {
+      const label = el("label", "", heading);
+      const input = el("textarea");
+      input.dataset.topic = id;
+      input.rows = 2;
+      input.maxLength = 10000;
+      const baseline = handoff?.answers[id] ?? "";
+      input.value = edits[id] ?? baseline;
+      input.placeholder = "No information offered";
+      declaredTopicBaselines.set(id, baseline);
+      label.append(input);
+      const ref = handoff?.evidenceRefs[id];
+      if (ref) label.append(el("span", "field-hint", `Handoff references: ${ref}`));
+      group.append(label);
+    }
+    return group;
+  }));
 }
 
 async function reviewDocumentationHandoff(event) {
@@ -940,6 +976,7 @@ async function discoverCaseInformation() {
       const baseline = intakeQuestionBaseline[question.id];
       return baseline && JSON.stringify(answer) !== JSON.stringify(baseline) ? [[question.id, answer]] : [];
     }));
+    const manualTopics = documentationEdits();
     activeRunId = preflight.runId;
     latestSolutionProfile = preflight.solutionProfile;
     latestDiscoveryContext = {
@@ -960,6 +997,7 @@ async function discoverCaseInformation() {
       selectedAcquiredFactIds: []
     };
     documentationHandoff = preflight.documentationHandoff;
+    renderDeclaredTopics(documentationHandoff, manualTopics);
     const draft = preflight.intakeDraft ?? preflight.solutionProfile.suggestedDossier;
     fillDossier(draft);
     if (Object.keys(manualAnswers).length) fillQuestionnaire({ ...draft.intakeAnswers, ...manualAnswers });
@@ -1210,6 +1248,7 @@ async function loadSample() {
   documentationHandoff = null;
   documentationHandoffSource = undefined;
   handoffDraftControls.clear();
+  renderDeclaredTopics();
   $("documentation-handoff-file").value = "";
   $("documentation-handoff-status").textContent = "No handoff selected.";
   renderDocumentationHandoff();
@@ -1309,6 +1348,7 @@ async function runAssessment(event) {
       await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, {
         dossier,
         resolutions,
+        documentationEdits: documentationEdits(),
         approval: { confirmed: true, actorRef: "INTERACTIVE_USER" }
       });
     }
@@ -1397,6 +1437,7 @@ Promise.all([
 }).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; $("knowledge-diagnostics-content").textContent = "Knowledge connection diagnostics are unavailable."; });
 $("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("request-retrieval-plan").addEventListener("click", requestRetrievalPlan); $("execute-local-reread").addEventListener("click", executeLocalReread); $("request-ai-proposals").addEventListener("click", requestAiProposals); $("dossier-form").addEventListener("submit", runAssessment);
 $("documentation-handoff-file").addEventListener("change", reviewDocumentationHandoff);
+renderDeclaredTopics();
 $("dossier-form").addEventListener("input", (event) => {
   const controlId = event.target.id || event.target.closest("#data-categories")?.id;
   const field = INTAKE_CONTROL_FIELDS[controlId];

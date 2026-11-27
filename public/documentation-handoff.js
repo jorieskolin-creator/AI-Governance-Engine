@@ -3,6 +3,41 @@ export const HANDOFF_REVIEW_ONLY = "DOCUMENTATION_HANDOFF_REVIEW_ONLY";
 export const HANDOFF_REVIEW_INSTRUCTION = "Open Documentation Support exports in the handoff review and upload independent source material separately.";
 export const HANDOFF_MAX_BYTES = 15 * 1024 * 1024;
 export const HANDOFF_VERSION = "doc-support-handoff/1.0.0";
+export const DECLARED_DOCUMENTATION_VERSION = "declared-documentation/1.0.0";
+export const DECLARED_TOPIC_GROUPS = [
+  ["Context and oversight", [
+    ["recordOwner", "Documentation record owner"],
+    ["businessUnit", "Business or customer context"],
+    ["saidotReference", "Governance system reference"],
+    ["engineReference", "Engine reference"],
+    ["affectedParties", "Affected people and groups"],
+    ["useContext", "Process and use context"],
+    ["outputRole", "Output role"],
+    ["outputConsumers", "Output recipients and downstream use"],
+    ["humanAcceptance", "Human review and acceptance"]
+  ]],
+  ["Risk and impact", [
+    ["consequences", "Plausible adverse consequences"],
+    ["severity", "Declared severity"],
+    ["detectability", "Declared detectability"],
+    ["reversibility", "Reversibility"],
+    ["scaleBeforeDetection", "Scale before detection"],
+    ["propagation", "Propagation and downstream dependency"],
+    ["existingRisk", "Existing risk or classification"],
+    ["classificationBasis", "Classification basis and date"]
+  ]],
+  ["Permission and data", [
+    ["permissionStatus", "Declared permission status"],
+    ["permissionBasis", "Permission basis and authority"],
+    ["privacyConfidentiality", "Privacy and confidentiality rules"],
+    ["contractualConstraints", "Contracts and customer commitments"],
+    ["sensitiveDerivedData", "Sensitive and derived data"],
+    ["minimization", "Minimisation and retention"],
+    ["usageRights", "Usage rights"],
+    ["sourceQuality", "Source quality and provenance"],
+    ["openConstraints", "Unresolved permission questions"]
+  ]]
+];
 const REGISTER_VERSION = "failure-mode-register/1.0.0";
 const levels = ["LOW", "MEDIUM", "HIGH", "UNKNOWN"];
 const referenceStatuses = ["DECLARED_IN_DOC", "OBSERVED_IN_CONFIG", "TEST_EVIDENCE_LINKED", "NOT_RUN", "MISSING_UNKNOWN"];
@@ -112,7 +147,7 @@ export async function parseDocumentationHandoff(source, subtle = globalThis.cryp
     ["name", "Solution name", display(answers.solutionName)],
     ["purpose", "Intended purpose", display(answers.intendedPurpose)],
     ["current-stage", "Current lifecycle stage", stages.get(answers.lifecycleStage)],
-    ["users", "Users and affected groups", [...new Set([answers.users, answers.affectedParties].flatMap((value) => display(value).split(/[,\r\n]+/).map(display)).filter(Boolean))].join(", ")],
+    ["users", "Users and operators", display(answers.users)],
     ["excluded-uses", "Excluded uses", display(answers.exclusions)]
   ].filter(([, , value]) => value).map(([controlId, label, value]) => ({ controlId, label, value }));
   const context = [
@@ -141,7 +176,7 @@ export function preferredDocumentationDraft(dossier, handoff) {
     intendedPurpose: values.get("purpose") ?? dossier.intendedPurpose,
     currentStage: currentStage ?? dossier.currentStage,
     lifecycleDeclaration: currentStage ? { ...dossier.lifecycleDeclaration, currentStage } : dossier.lifecycleDeclaration,
-    users: values.has("users") ? values.get("users").split(", ").filter(Boolean) : dossier.users,
+    users: values.has("users") ? values.get("users").split(/[,\r\n]+/).map(display).filter(Boolean) : dossier.users,
     operatingBoundary: values.has("excluded-uses") ? {
       ...dossier.operatingBoundary, excludedUses: values.get("excluded-uses").split(/\r?\n/).map((value) => value.trim()).filter(Boolean)
     } : dossier.operatingBoundary

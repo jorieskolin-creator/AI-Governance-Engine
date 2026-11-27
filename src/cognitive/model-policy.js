@@ -36,7 +36,8 @@ export function providerCredentials(env = process.env) {
   return {
     OPENAI: env.OPENAI_API_KEY || env.GPT_API_KEY || null,
     XAI: env.XAI_API_KEY || null,
-    MOONSHOT: env.MOONSHOT_API_KEY || null
+    MOONSHOT: env.MOONSHOT_API_KEY || null,
+    ANTHROPIC: env.ANTHROPIC_API_KEY || null
   };
 }
 

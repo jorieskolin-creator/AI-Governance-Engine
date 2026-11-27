@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { acquisitionAssistancePolicy, COGNITIVE_PROVIDERS, modelPolicy, modelPolicyReadiness, publicModelRoleSlots, requiredGovernanceProviders, validateGovernanceRouteTopology } from "../src/cognitive/model-policy.js";
 import {
-  normalizeProviderResponse, providerAdapter, serializeProviderRequest
+  normalizeProviderResponse, providerAdapter, providerHeaders, serializeProviderRequest
 } from "../src/cognitive/provider-adapters.js";
 import { ModelBudget, StructuredModelClient } from "../src/cognitive/provider-client.js";
 
@@ -38,10 +38,25 @@ test("outbound prompts and trace hashes are screened separately for each attempt
   assert.equal(new Set(client.traces.map((item) => item.requestHash)).size, 3);
 });
 
-test("the canonical provider catalog contains only OpenAI, xAI and Moonshot", () => {
-  assert.deepEqual([...COGNITIVE_PROVIDERS].sort(), ["MOONSHOT", "OPENAI", "XAI"]);
+test("the canonical provider catalog contains the registered text-only adapters", () => {
+  assert.deepEqual([...COGNITIVE_PROVIDERS].sort(), ["ANTHROPIC", "MOONSHOT", "OPENAI", "XAI"]);
   assert.ok(COGNITIVE_PROVIDERS.every((provider) => providerAdapter(provider).capabilities.imageInput === false));
   assert.throws(() => providerAdapter("LEGACY_PROVIDER"), /unsupported cognitive provider/i);
+});
+
+test("Anthropic Messages preserves structural requirements and uses native credentials", () => {
+  const profile = { provider: "ANTHROPIC", model: "claude-sonnet-5-5", effort: "high", maxOutputTokens: 8000 };
+  const canonical = { ...schema, properties: { ok: { type: ["string", "null"], maxLength: 80 } } };
+  const request = serializeProviderRequest(profile, "safe packet", "result", canonical);
+  assert.equal(request.url, "https://api.anthropic.com/v1/messages");
+  assert.deepEqual(providerHeaders(profile.provider, "test"), { "Content-Type": "application/json", "x-api-key": "test", "anthropic-version": "2023-06-01" });
+  assert.equal(request.body.output_config.effort, "high");
+  assert.deepEqual(request.body.output_config.format.schema.properties.ok, { anyOf: [{ type: "string" }, { type: "null" }] });
+  assert.deepEqual(normalizeProviderResponse(profile.provider, {
+    model: profile.model, stop_reason: "end_turn", content: [{ type: "thinking", thinking: "Hidden" }, { type: "text", text: '{"ok":"yes"}' }], usage: { input_tokens: 2, output_tokens: 3, cache_read_input_tokens: 4 }
+  }), { responseModel: profile.model, text: '{"ok":"yes"}', usage: { inputTokens: 6, outputTokens: 3, totalTokens: 9 } });
+  assert.throws(() => normalizeProviderResponse(profile.provider, { stop_reason: "max_tokens" }), /incomplete/);
+  assert.throws(() => normalizeProviderResponse(profile.provider, { stop_reason: "refusal" }), { refusal: true });
 });
 
 test("role routing is deterministic and model identities are server-configurable", () => {

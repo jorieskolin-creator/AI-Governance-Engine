@@ -1,7 +1,7 @@
 import { sha256, stableStringify } from "../core/hash.js";
 import { redactText, screenSensitiveValue } from "../core/privacy.js";
 import { classifyCognitiveFailure } from "./failure-policy.js";
-import { assertStrictSchema, normalizeProviderResponse, serializeProviderRequest } from "./provider-adapters.js";
+import { assertStrictSchema, normalizeProviderResponse, providerHeaders, serializeProviderRequest } from "./provider-adapters.js";
 
 function parseJson(value, label) {
   try { return JSON.parse(value); }
@@ -19,11 +19,13 @@ function validateSchema(value, schema, path = "$") {
     for (const [key, child] of Object.entries(schema.properties ?? {})) if (Object.hasOwn(value, key)) validateSchema(value[key], child, `${path}.${key}`);
   } else if (types.includes("array")) {
     if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
+    if (schema.maxItems != null && value.length > schema.maxItems) throw new Error(`${path} exceeds the allowed item count`);
     for (let index = 0; index < value.length; index += 1) validateSchema(value[index], schema.items, `${path}[${index}]`);
   } else if (types.includes("string") && typeof value !== "string") throw new Error(`${path} must be a string`);
   else if (types.includes("boolean") && typeof value !== "boolean") throw new Error(`${path} must be a boolean`);
   else if (types.includes("integer") && (!Number.isInteger(value))) throw new Error(`${path} must be an integer`);
   else if (types.includes("number") && (typeof value !== "number" || !Number.isFinite(value))) throw new Error(`${path} must be a number`);
+  if (typeof value === "string" && schema.maxLength != null && [...value].length > schema.maxLength) throw new Error(`${path} exceeds the allowed text length`);
 }
 
 export const assertOpenAiStrictSchema = assertStrictSchema;
@@ -43,7 +45,7 @@ function providerRequest(profile, credential, prompt, schemaName, schema, signal
   const request = serializeProviderRequest(profile, prompt, schemaName, schema);
   return requestJson(request.url, {
     method: "POST",
-    headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" },
+    headers: providerHeaders(profile.provider, credential),
     body: JSON.stringify(request.body)
   }, 120_000, signal).then((body) => {
     const normalized = normalizeProviderResponse(profile.provider, body);

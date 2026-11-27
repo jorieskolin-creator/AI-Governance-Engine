@@ -10,9 +10,9 @@ const railway = JSON.parse(await readFile(new URL("../railway.json", import.meta
 test("the browser assessment workflow starts and waits for the cognitive run", () => {
   assert.match(app, /\/api\/v2\/runs\/preflight/);
   assert.match(app, /\/api\/v2\/runs\/\$\{encodeURIComponent\(activeRunId\)\}\/discover-recheck/);
-  assert.match(app, /\/api\/v2\/runs\/\$\{encodeURIComponent\(activeRunId\)\}\/confirm/);
-  assert.match(app, /\/api\/v2\/runs\/\$\{encodeURIComponent\(activeRunId\)\}\/execute/);
-  assert.match(app, /waitForRun\(activeRunId\)/);
+  assert.match(app, /\/api\/v2\/runs\/\$\{encodeURIComponent\(runId\)\}\/confirm/);
+  assert.match(app, /\/api\/v2\/runs\/\$\{encodeURIComponent\(runId\)\}\/execute/);
+  assert.match(app, /waitForRun\(runId\)/);
   assert.doesNotMatch(app, /fetch\("\/api\/assess"/);
 });
 
@@ -98,14 +98,15 @@ test("final Intake approval requires only solution identity and makes evidence g
   assert.match(index, /Accountable owner · required/);
   assert.match(index, /id="intake-approval-dialog"/);
   assert.match(index, />Go back<\/button>/);
-  assert.match(index, />Accept and Continue to Analysis<\/button>/);
+  assert.match(index, />Approve content<\/button>/);
+  assert.match(index, /id="start-analysis-button"[^>]*>Start analysis<\/button>/);
   assert.match(app, /field\.requirement\?\.analysis === "VALUE_REQUIRED"/);
   assert.match(app, /remain empty or unresolved/);
   assert.match(app, /Analysis will treat them as evidence limitations/);
   assert.match(app, /All applicable Intake fields are filled/);
   assert.doesNotMatch(app, /explanation\.required/);
   assert.doesNotMatch(app, /resolutionState = "CONFLICT_REQUIRES_RESOLUTION"/);
-  assert.match(app, /currentRun\.stage !== "INTAKE_CONFIRMED"/);
+  assert.match(app, /expectedSnapshotHash: snapshotHash/);
   assert.match(app, /\["QUEUED", "RUNNING"\]\.includes\(currentRun\.status\)/);
   assert.match(app, /RECOVERY_REQUIRES_REUPLOAD/);
   assert.match(app, /Model readiness:/);

@@ -25,6 +25,7 @@ let discoveryAttempt = 0;
 const handoffDraftControls = new Map();
 const declaredTopicBaselines = new Map();
 let intakeApprovalStarted = false;
+let approvedIntakeRevision = null;
 let retrievalPlanningProviders = [];
 let proposalProviders = [];
 let modelReadiness = { status: "UNAVAILABLE", issueCodes: ["MODEL_POLICY_UNAVAILABLE"] };
@@ -297,8 +298,7 @@ function updateQuestionnaireConditions() {
 }
 
 function questionnaireAnswers() {
-  const now = new Date().toISOString();
-  return Object.fromEntries((intakeQuestionnaire.questions ?? []).map((question) => [question.id, questionnaireAnswerRecord(question, now)]));
+  return Object.fromEntries((intakeQuestionnaire.questions ?? []).map((question) => [question.id, questionnaireAnswerRecord(question, null)]));
 }
 
 function fillQuestionnaire(answers = {}) {
@@ -348,6 +348,12 @@ function updateDocumentationHandoffAction(message) {
   $("documentation-handoff-apply-status").textContent = message ?? (activeRunId
     ? "Handoff declarations seed Intake. You can edit them and review any differences with the sources before approval."
     : "Select Discover case information to prepare the Intake draft.");
+}
+
+function clearIntakeApproval() {
+  approvedIntakeRevision = null;
+  $("start-analysis-button").disabled = true;
+  $("intake-approval-status").textContent = "Approve the Intake content before starting analysis.";
 }
 
 function handoffDetails(title, entries) {
@@ -432,6 +438,7 @@ function renderDeclaredTopics(handoff = null, edits = {}) {
 async function reviewDocumentationHandoff(event) {
   const readId = ++handoffReadId;
   discoveryAttempt++;
+  clearIntakeApproval();
   activeRunId = null;
   latestDiscoveryContext = null;
   intakeApprovalStarted = false;
@@ -684,9 +691,8 @@ function missingAnalysisFields(dossier) {
 function requestIntakeApproval(resolutions) {
   const unresolvedCount = Object.values(resolutions).filter((decision) => ["USER_SELECTED_UNKNOWN", "CONFLICT_REQUIRES_RESOLUTION"].includes(decision.resolutionState)).length;
   $("intake-approval-message").textContent = unresolvedCount
-    ? `${unresolvedCount} applicable Intake field(s) remain empty or unresolved. You may go back and add information, or accept the gaps and continue. Analysis will treat them as evidence limitations and may produce a lower-readiness outcome.`
-    : "All applicable Intake fields are filled. Continue when you are ready to start Analysis.";
-  $("confirm-analysis-button").textContent = unresolvedCount ? "Accept and Continue to Analysis" : "Continue to Analysis";
+    ? `${unresolvedCount} applicable Intake field(s) remain empty or unresolved. You may go back and add information or approve the draft with those gaps. Analysis will treat them as evidence limitations.`
+    : "All applicable Intake fields are filled. Approve this revision to make it available for analysis.";
   const dialog = $("intake-approval-dialog");
   dialog.returnValue = "";
   dialog.showModal();
@@ -837,10 +843,10 @@ function renderAcquisitionStages(root) {
 function updateAcquisitionActions() {
   const context = latestDiscoveryContext;
   const privacyBlocked = context?.dlpFindings?.some((item) => item.blocking) ?? true;
-  const planAvailable = !privacyBlocked && !context?.retrievalPlan && (context?.intakeGapAnalysis?.summary?.boundedRetrievalFieldCount ?? 0) > 0 && retrievalPlanningProviders.length > 0;
+  const planAvailable = !intakeApprovalStarted && !privacyBlocked && !context?.retrievalPlan && (context?.intakeGapAnalysis?.summary?.boundedRetrievalFieldCount ?? 0) > 0 && retrievalPlanningProviders.length > 0;
   $("request-retrieval-plan").classList.toggle("hidden", !planAvailable);
   $("request-retrieval-plan").disabled = false;
-  const rereadAvailable = context?.status === "AWAITING_INTAKE_CONFIRMATION"
+  const rereadAvailable = !intakeApprovalStarted && context?.status === "AWAITING_INTAKE_CONFIRMATION"
     && context?.stage === "DETERMINISTIC_DISCOVERY_COMPLETED"
     && context?.retrievalPlan?.status === "COMPLETED"
     && !context?.localReread
@@ -958,6 +964,7 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
 
 async function discoverCaseInformation() {
   const attempt = ++discoveryAttempt;
+  clearIntakeApproval();
   $("error").classList.add("hidden"); $("discover-button").disabled = true; $("assess-button").disabled = true;
   updateDocumentationHandoffAction();
   for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
@@ -1232,6 +1239,7 @@ async function loadSample() {
   const attempt = ++discoveryAttempt;
   const response = await fetch("/api/sample"); const sample = await response.json();
   if (attempt !== discoveryAttempt) return;
+  clearIntakeApproval();
   fillDossier(sample.dossier);
   latestSolutionProfile = null;
   sampleSources = sample.sources.map((source) => ({
@@ -1317,56 +1325,87 @@ async function waitForRun(runId) {
   throw new Error("Cognitive analysis exceeded the browser waiting limit. The server may still be processing the run.");
 }
 
-async function runAssessment(event) {
-  event.preventDefault(); $("error").classList.add("hidden"); $("assess-button").disabled = true;
-  updateDocumentationHandoffAction();
+function intakeApprovalRequest() {
+  const dossier = dossierFromForm();
+  return { dossier, resolutions: intakeResolutions(dossier), documentationEdits: documentationEdits() };
+}
+
+async function approveContent(event) {
+  event.preventDefault();
+  if (!activeRunId || approvedIntakeRevision || $("assess-button").disabled) return;
+  const runId = activeRunId;
+  const sourceHash = latestDiscoveryContext.sourceIngestion.manifestHash;
+  $("error").classList.add("hidden");
+  $("assess-button").disabled = true;
   try {
-    if (!activeRunId) throw new Error("Complete deterministic discovery before starting the A–F assessment.");
-    await selectedSources();
-    const dossier = dossierFromForm();
+    const input = intakeApprovalRequest();
     for (const id of ["name", "owner"]) $(id).removeAttribute("aria-invalid");
-    const missing = missingAnalysisFields(dossier);
+    const missing = missingAnalysisFields(input.dossier);
     if (missing.length) {
       for (const field of missing) $(field.uiControlId)?.setAttribute("aria-invalid", "true");
       const first = $(missing[0].uiControlId);
       first?.focus(); first?.scrollIntoView({ behavior: "smooth", block: "center" });
       throw new Error(`Complete the two required Intake fields before analysis: ${missing.map((field) => label(field.id)).join(", ")}.`);
     }
-    const resolutions = intakeResolutions(dossier);
-    if (!await requestIntakeApproval(resolutions)) return;
+    if (!await requestIntakeApproval(input.resolutions)) return;
+    if (runId !== activeRunId || JSON.stringify(input) !== JSON.stringify(intakeApprovalRequest())) throw new Error("Intake or the source selection changed. Review and approve the current draft.");
     intakeApprovalStarted = true;
-    $("progress").classList.remove("hidden");
-    setProgress("Preparing AI analysis", "Local screening is complete. Redacted evidence will be analysed by the Engine’s configured providers.");
-    const currentRunResponse = await fetch(`/api/v2/runs/${encodeURIComponent(activeRunId)}`);
+    const confirmed = await postJson(`/api/v2/runs/${encodeURIComponent(runId)}/confirm`, {
+      ...input, expectedAcquisitionManifestHash: sourceHash, approval: { confirmed: true }
+    });
+    if (runId !== activeRunId) return;
+    if (JSON.stringify(input) !== JSON.stringify(intakeApprovalRequest())) {
+      activeRunId = null;
+      throw new Error("The draft changed during approval. Discover the current sources and approve again.");
+    }
+    approvedIntakeRevision = { runId, snapshotHash: confirmed.approvedIntake.snapshotHash };
+    $("intake-approval-status").textContent = "Content approved. Select Start analysis when ready.";
+    $("start-analysis-button").disabled = false;
+    $("request-ai-proposals").classList.add("hidden");
+    updateAcquisitionActions();
+  } catch (error) {
+    intakeApprovalStarted = false;
+    $("error").textContent = error.message;
+    $("error").classList.remove("hidden");
+  } finally {
+    $("assess-button").disabled = Boolean(approvedIntakeRevision) || !activeRunId || !latestDiscoveryContext?.sourceIngestion?.parsedCount;
+  }
+}
+
+async function runAssessment() {
+  if (!approvedIntakeRevision || $("start-analysis-button").disabled) return;
+  const { runId, snapshotHash } = approvedIntakeRevision;
+  $("error").classList.add("hidden");
+  $("start-analysis-button").disabled = true;
+  $("progress").classList.remove("hidden");
+  setProgress("Preparing AI analysis", "Checking the approved Intake revision and evidence.");
+  try {
+    const currentRunResponse = await fetch(`/api/v2/runs/${encodeURIComponent(runId)}`);
     const currentRun = await currentRunResponse.json();
     if (!currentRunResponse.ok) throw new Error(requestFailureMessage(currentRun));
     if (currentRun.status === "RECOVERY_REQUIRES_REUPLOAD" || currentRun.recovery?.requiresReupload) {
       throw new Error(currentRun.error || "Raw evidence is unavailable after recovery. Re-upload source material to create a new Intake draft.");
     }
-    const postApproval = currentRun.status === "AWAITING_TRANSMISSION_APPROVAL" || ["QUEUED", "RUNNING", "COMPLETED"].includes(currentRun.status);
-    if (currentRun.stage !== "INTAKE_CONFIRMED" && !postApproval) {
-      await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, {
-        dossier,
-        resolutions,
-        documentationEdits: documentationEdits(),
-        approval: { confirmed: true, actorRef: "INTERACTIVE_USER" }
-      });
-    }
+    if (approvedIntakeRevision?.snapshotHash !== snapshotHash || currentRun.approvedIntake?.snapshotHash !== snapshotHash) throw new Error("The approved Intake revision is no longer current.");
     setIntakeFlow("ASSESSMENT");
     if (["QUEUED", "RUNNING"].includes(currentRun.status)) {
-      await waitForRun(activeRunId);
+      await waitForRun(runId);
     } else if (currentRun.status !== "COMPLETED") {
-      await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/execute`);
-      await waitForRun(activeRunId);
+      await postJson(`/api/v2/runs/${encodeURIComponent(runId)}/execute`, { expectedSnapshotHash: snapshotHash });
+      await waitForRun(runId);
     }
-    const response = await fetch(`/api/v2/runs/${encodeURIComponent(activeRunId)}/result`);
+    const response = await fetch(`/api/v2/runs/${encodeURIComponent(runId)}/result`);
     const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Cognitive result is unavailable");
     renderPackage(body);
     setIntakeFlow(null);
-    activeRunId = null;
+    if (activeRunId === runId) {
+      activeRunId = null;
+      clearIntakeApproval();
+    }
   } catch (error) { $("error").textContent = error.message; $("error").classList.remove("hidden"); }
   finally {
-    $("progress").classList.add("hidden"); $("assess-button").disabled = activeRunId === null;
+    $("progress").classList.add("hidden");
+    $("start-analysis-button").disabled = !approvedIntakeRevision;
     updateDocumentationHandoffAction();
   }
 }
@@ -1435,10 +1474,17 @@ Promise.all([
   })));
   renderQuestionnaire();
 }).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; $("knowledge-diagnostics-content").textContent = "Knowledge connection diagnostics are unavailable."; });
-$("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("request-retrieval-plan").addEventListener("click", requestRetrievalPlan); $("execute-local-reread").addEventListener("click", executeLocalReread); $("request-ai-proposals").addEventListener("click", requestAiProposals); $("dossier-form").addEventListener("submit", runAssessment);
+$("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("request-retrieval-plan").addEventListener("click", requestRetrievalPlan); $("execute-local-reread").addEventListener("click", executeLocalReread); $("request-ai-proposals").addEventListener("click", requestAiProposals); $("dossier-form").addEventListener("submit", approveContent);
+$("start-analysis-button").addEventListener("click", runAssessment);
 $("documentation-handoff-file").addEventListener("change", reviewDocumentationHandoff);
 renderDeclaredTopics();
 $("dossier-form").addEventListener("input", (event) => {
+  if (approvedIntakeRevision) {
+    clearIntakeApproval();
+    activeRunId = null;
+    $("assess-button").disabled = true;
+    $("intake-approval-status").textContent = "Content changed. Discover the sources again to review and approve the edited draft.";
+  }
   const controlId = event.target.id || event.target.closest("#data-categories")?.id;
   const field = INTAKE_CONTROL_FIELDS[controlId];
   if (field && latestSolutionProfile) {
@@ -1458,6 +1504,7 @@ $("print-button").addEventListener("click", printReport); $("html-button").addEv
 for (const [control, summary, kind] of [["source-files", "file-summary", "individual"], ["source-folder", "folder-summary", "folder"]]) {
   $(control).addEventListener("change", () => {
     discoveryAttempt++;
+    clearIntakeApproval();
     sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; intakeApprovalStarted = false;
     for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
     $("assess-button").disabled = true; setIntakeFlow("UPLOAD");

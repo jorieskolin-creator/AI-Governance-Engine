@@ -98,3 +98,11 @@ export function authorizeWriteAccess(request, env = process.env) {
     message: "Password required to add material or change assessment information."
   };
 }
+
+export function intakeApprovalActorRef(request, env = process.env) {
+  const secret = configuredAdminSecret(env);
+  if (!secret) return "LOCAL_INTERACTIVE_USER";
+  const token = readCookie(request.headers?.cookie);
+  if (!sessionTokenIsValid(token, secret)) throw Object.assign(new Error("A valid write session is required to approve Intake."), { statusCode: 401 });
+  return `WRITE_SESSION_${createHmac("sha256", secret).update(`intake-approval:${token}`).digest("hex").slice(0, 24)}`;
+}

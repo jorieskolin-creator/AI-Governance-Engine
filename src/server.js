@@ -22,7 +22,7 @@ import { COGNITIVE_PROVIDERS } from "./cognitive/provider-adapters.js";
 import { executeLocalReread, LOCAL_REREAD_PURPOSE } from "./intake/local-reread.js";
 import { createCognitiveStepLedger, prepareInterruptedRunRestart, recoveredExecutionDataUnavailable, RECOVERY_RESTART_PURPOSE, releaseLocalEvidenceForCognitiveExecution } from "./cognitive/orchestration.js";
 import { cancellationError, classifyCognitiveFailure } from "./cognitive/failure-policy.js";
-import { allowUnlockAttempt, authorizeWriteAccess, configuredAdminSecret, createSessionToken, requestIsSecure, secretsMatch, sessionCookieHeader, writeAccessMode } from "./access-control.js";
+import { allowUnlockAttempt, authorizeWriteAccess, configuredAdminSecret, createSessionToken, intakeApprovalActorRef, requestIsSecure, secretsMatch, sessionCookieHeader, writeAccessMode } from "./access-control.js";
 
 const port = Number(process.env.PORT ?? 4174);
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
@@ -81,7 +81,7 @@ function sendJson(response, status, value) {
   response.end(body);
 }
 
-async function readJson(request) {
+async function readJson(request, { allowEmpty = false } = {}) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
@@ -89,6 +89,7 @@ async function readJson(request) {
     if (size > maxBodyBytes) throw Object.assign(new Error("Request exceeds 25 MB"), { statusCode: 413 });
     chunks.push(chunk);
   }
+  if (!size && allowEmpty) return {};
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
   catch { throw Object.assign(new Error("Request body must be valid JSON"), { statusCode: 400 }); }
 }
@@ -145,10 +146,20 @@ function automaticApproval(run, policy = modelPolicy(), stage = null) {
   return validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
 }
 
-async function enqueueCognitiveRun(run, request) {
+const intakeMutations = new Set();
+
+async function withIntakeMutation(run, operation) {
+  if (intakeMutations.has(run.id)) throw Object.assign(new Error("An Intake or execution request is already being processed"), { statusCode: 409 });
+  intakeMutations.add(run.id);
+  try { return await operation(); }
+  finally { intakeMutations.delete(run.id); }
+}
+
+async function enqueueCognitiveRun(run, request, expectedSnapshotHash) {
   if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive assessment rate limit exceeded"), { statusCode: 429 });
   if (run.status !== "AWAITING_TRANSMISSION_APPROVAL") throw Object.assign(new Error(`Run cannot execute from status ${run.status}`), { statusCode: 409 });
   if (run.stage !== "INTAKE_CONFIRMED" || !run.approvedIntake?.snapshotHash) throw Object.assign(new Error("A user-approved immutable Intake snapshot is required before execution"), { statusCode: 409 });
+  if (expectedSnapshotHash !== undefined && expectedSnapshotHash !== run.approvedIntake.snapshotHash) throw Object.assign(new Error("The approved Intake revision has changed"), { statusCode: 409 });
   try { validateApprovedIntakeSnapshot(run.approvedIntake, { acquisitionManifestHash: run.sourceIngestion.manifestHash }); }
   catch (error) { throw Object.assign(error, { statusCode: 409 }); }
   try { validateExecutionPacketManifest(run); }
@@ -552,24 +563,30 @@ const server = http.createServer(async (request, response) => {
     }
     const confirmMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/confirm$/);
     if (request.method === "POST" && confirmMatch) {
+      const input = await readJson(request);
       const run = await runStore.get(confirmMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
-      if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run mutation is already owned by another worker" });
-      try {
-        await confirmPreflightDossier(run, await readJson(request));
-        await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
-        logOperational("INFO", "intake_final_approval_completed", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage });
-        return sendJson(response, 200, publicPreflightView(run));
-      } catch (error) {
-        error.statusCode ??= 422;
-        throw error;
-      } finally { await runStore.releaseLease(run.id); }
+      return await withIntakeMutation(run, async () => {
+        if (input?.expectedAcquisitionManifestHash !== undefined && input.expectedAcquisitionManifestHash !== run.sourceIngestion?.manifestHash) return sendJson(response, 409, { error: "The reviewed source selection has changed" });
+        if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run mutation is already owned by another worker" });
+        try {
+          const approval = { ...input?.approval, actorRef: intakeApprovalActorRef(request) };
+          await confirmPreflightDossier(run, { ...input, approval });
+          await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          logOperational("INFO", "intake_final_approval_completed", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage });
+          return sendJson(response, 200, publicPreflightView(run));
+        } catch (error) {
+          error.statusCode ??= 422;
+          throw error;
+        } finally { await runStore.releaseLease(run.id); }
+      });
     }
     const executeMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/execute$/);
     if (request.method === "POST" && executeMatch) {
+      const input = await readJson(request, { allowEmpty: true });
       const run = await runStore.get(executeMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
-      await enqueueCognitiveRun(run, request);
+      await withIntakeMutation(run, () => enqueueCognitiveRun(run, request, input?.expectedSnapshotHash));
       logOperational("INFO", "cognitive_execution_queued", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage });
       dispatchQueuedRunsSafely();
       return sendJson(response, 202, publicRunView(run));

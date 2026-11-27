@@ -670,10 +670,22 @@ const queueTimer = setInterval(dispatchQueuedRunsSafely, cognitiveQueuePollMs);
 queueTimer.unref?.();
 dispatchQueuedRunsSafely();
 
+let expirySweep;
+function sweepExpiredRuns() {
+  if (!runStore.sweepExpired || expirySweep) return;
+  expirySweep = runStore.sweepExpired()
+    .catch((error) => logOperational("ERROR", "run_expiry_sweep_failed", { failureCode: safeFailureCode(error) }))
+    .finally(() => { expirySweep = null; });
+}
+const expiryTimer = setInterval(sweepExpiredRuns, 60_000);
+expiryTimer.unref?.();
+sweepExpiredRuns();
+
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     clearInterval(queueTimer);
+    clearInterval(expiryTimer);
     for (const controller of activeExecutions.values()) controller.abort(cancellationError(`Cognitive run interrupted by ${signal}`));
-    server.close(async () => { await runStore.close(); process.exit(0); });
+    server.close(async () => { await expirySweep; await runStore.close(); process.exit(0); });
   });
 }

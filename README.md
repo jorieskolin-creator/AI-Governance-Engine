@@ -136,6 +136,7 @@ See [docs/knowledge-base.md](docs/knowledge-base.md) for the runtime manifest an
 
 - The service is a development skeleton, not a multi-tenant production service.
 - Without `DATABASE_URL`, the v2 run store remains process-local and restarts lose active runs. With PostgreSQL, approved Intake and terminal safe state are recoverable; pre-approval recovery requires source re-upload because raw evidence is deliberately excluded, and interrupted provider execution is never resumed automatically.
+- Run content expires after one hour by default. While the service is running, a PostgreSQL sweep clears expired run payloads and leaves a minimal tombstone. Cancelled runs also clear persisted payloads. Hosting backups and provider retention are governed by their own deployments and agreements.
 - After final Intake approval, queue admission purges local raw source units and retains only the durable safe-summary package plus an audit marker. PostgreSQL workers atomically claim that work with bounded service concurrency. Queued work that never started can recover automatically; interrupted work never replays without the explicit recovery acknowledgement.
 - Cancellation aborts provider requests on the owning worker and purges evidence. In a multi-worker PostgreSQL deployment, cancellation on another worker is observed through failed heartbeat renewal; the current schema does not use PostgreSQL notifications for immediate cross-worker signalling.
 - Authentication and tenant authorization remain production-hardening work.

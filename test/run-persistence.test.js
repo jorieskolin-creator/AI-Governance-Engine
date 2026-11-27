@@ -57,6 +57,14 @@ class FakePool {
       lease.expiresAt = parameters[2];
       return { rowCount: 1, rows: [{ id: parameters[0] }] };
     }
+    if (normalized.includes("expires_at <= $1")) {
+      const expired = [...this.rows].filter(([, row]) => !row.deleted && Date.parse(row.expiresAt) <= Date.parse(parameters[0]));
+      for (const [id, row] of expired) {
+        Object.assign(row, { deleted: true, state: null, status: "EXPIRED", stage: "EXPIRED" });
+        this.lease.delete(id);
+      }
+      return { rowCount: expired.length, rows: [] };
+    }
     if (normalized.includes("SET state = NULL")) {
       const row = this.rows.get(parameters[0]); if (!row || row.deleted) return { rowCount: 0, rows: [] };
       row.deleted = true; row.state = null; row.status = parameters[1]; this.lease.delete(parameters[0]);
@@ -228,6 +236,24 @@ test("expired and purged PostgreSQL runs are unavailable", async () => {
   await store.create(active);
   assert.equal(await store.purge(active.id, "CANCELLED"), true);
   assert.equal(await store.get(active.id), null);
+});
+
+test("PostgreSQL expiry clears persisted content without a request for the run", async () => {
+  let now = new Date("2026-08-21T12:00:00.000Z");
+  const clock = () => new Date(now);
+  const pool = new FakePool(clock);
+  const writer = await new PostgresRunStore({ pool, now: clock }).initialize();
+  const sweeper = await new PostgresRunStore({ pool, now: clock }).initialize();
+  const sources = [{ path: "overview.md", mimeType: "text/markdown", content: "# Case" }];
+  const expired = await createPreflight({ sources }, { now, ttlMs: 1_000 });
+  const current = await createPreflight({ sources: [{ ...sources[0], path: "current.md" }] }, { now, ttlMs: 60_000 });
+  await writer.create(expired);
+  await writer.create(current);
+  now = new Date(now.getTime() + 1_001);
+  assert.equal(await sweeper.sweepExpired(), 1);
+  assert.equal(await sweeper.sweepExpired(), 0);
+  assert.equal(pool.rows.get(expired.id).state, null);
+  assert.ok(pool.rows.get(current.id).state);
 });
 
 test("memory leases serialize mutation and are released by purge", async () => {

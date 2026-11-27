@@ -1,7 +1,7 @@
 import { renderAssuranceSummary, standaloneReportHtml } from "/report.js";
 import { binaryMimeTypes, classifyUploadPath, provisionalIngestionManifest } from "/upload-types.js";
 import { sanitizeRestrictedValue } from "/content-policy.js";
-import { embeddedDocumentationHandoff, fillEmptyHandoffControls, HANDOFF_MAX_BYTES, HANDOFF_REVIEW_INSTRUCTION, HANDOFF_REVIEW_ONLY, parseDocumentationHandoff } from "/documentation-handoff.js";
+import { embeddedDocumentationHandoff, HANDOFF_MAX_BYTES, HANDOFF_REVIEW_INSTRUCTION, HANDOFF_REVIEW_ONLY, parseDocumentationHandoff } from "/documentation-handoff.js";
 
 const STAGES = [
   "QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION",
@@ -19,7 +19,10 @@ let latestSolutionProfile = null;
 let latestDiscoveryRecheck = null;
 let latestDiscoveryContext = null;
 let documentationHandoff = null;
+let documentationHandoffSource;
 let handoffReadId = 0;
+let discoveryAttempt = 0;
+const handoffDraftControls = new Map();
 let intakeApprovalStarted = false;
 let retrievalPlanningProviders = [];
 let proposalProviders = [];
@@ -31,6 +34,7 @@ const acceptedAcquiredCandidateByField = new Map();
 const editedAcquiredCandidateByField = new Map();
 const declinedAcquiredCandidateByField = new Map();
 const intakeControlBaseline = new Map();
+let intakeQuestionBaseline = {};
 let INTAKE_CONTROL_FIELDS = Object.freeze({});
 let writeAccess = "OPEN";
 let writeUnlocked = false;
@@ -298,7 +302,7 @@ function questionnaireAnswers() {
 
 function fillQuestionnaire(answers = {}) {
   for (const question of intakeQuestionnaire.questions ?? []) {
-    const answer = answers[question.id]; if (!answer) continue;
+    const answer = answers[question.id] ?? { answerState: "UNKNOWN", values: [] };
     const card = document.querySelector(`.question-card[data-question-id="${question.id}"]`); if (!card) continue;
     if (question.type === "SINGLE") card.querySelector("select").value = answer.answerState ?? "UNKNOWN";
     else for (const input of card.querySelectorAll('input[type="checkbox"]')) input.checked = (answer.values ?? []).includes(input.value);
@@ -334,23 +338,15 @@ function fillDossier(dossier) {
   setTri("uses-agents", dossier.agent?.usesAgents); setTri("takes-actions", dossier.agent?.canTakeActions); setTri("irreversible", dossier.agent?.irreversibleActions); setTri("human-override", dossier.agent?.humanOverride);
   setTri("prohibited", dossier.classification?.prohibitedPractice); setTri("high-risk", dossier.classification?.highRiskCandidate);
   fillQuestionnaire(dossier.intakeAnswers ?? {});
+  intakeQuestionBaseline = Object.fromEntries(intakeQuestionnaire.questions.map((question) => [question.id, collectedQuestionAnswer(question)]));
   intakeControlBaseline.clear();
   for (const controlId of Object.keys(INTAKE_CONTROL_FIELDS)) intakeControlBaseline.set(controlId, intakeControlValue(controlId));
 }
 
-function canApplyDocumentationHandoff() {
-  return Boolean(documentationHandoff?.suggestions.length && activeRunId && !intakeApprovalStarted &&
-    !$("assess-button").disabled && latestDiscoveryContext?.sourceIngestion?.parsedCount > 0);
-}
-
 function updateDocumentationHandoffAction(message) {
-  const canApply = canApplyDocumentationHandoff();
-  $("apply-documentation-handoff").disabled = !canApply;
-  $("documentation-handoff-apply-status").textContent = message ?? (canApply
-    ? "Only empty fields are filled. These values remain editable, Self-Declared Intake."
-    : !documentationHandoff?.suggestions.length ? "No reusable Intake fields were supplied in this handoff."
-      : intakeApprovalStarted ? "Start a new discovery to apply declarations after Intake approval."
-        : "Discover case information from original sources before applying handoff declarations.");
+  $("documentation-handoff-apply-status").textContent = message ?? (activeRunId
+    ? "Handoff declarations seed Intake. You can edit them and review any differences with the sources before approval."
+    : "Select Discover case information to prepare the Intake draft.");
 }
 
 function handoffDetails(title, entries) {
@@ -399,9 +395,16 @@ function renderDocumentationHandoff() {
 
 async function reviewDocumentationHandoff(event) {
   const readId = ++handoffReadId;
+  discoveryAttempt++;
+  activeRunId = null;
+  latestDiscoveryContext = null;
+  intakeApprovalStarted = false;
+  $("assess-button").disabled = true;
+  updateAcquisitionActions();
   const file = event.target.files[0];
   const status = $("documentation-handoff-status");
   documentationHandoff = null;
+  documentationHandoffSource = undefined;
   renderDocumentationHandoff();
   if (!file) { status.textContent = "No handoff selected."; return; }
   status.textContent = "Checking the handoff…";
@@ -413,21 +416,13 @@ async function reviewDocumentationHandoff(event) {
     const handoff = await parseDocumentationHandoff(source);
     if (readId !== handoffReadId) return;
     documentationHandoff = handoff;
+    documentationHandoffSource = source;
     renderDocumentationHandoff();
-    status.textContent = "Handoff loaded for review. It was not added as an evidence source.";
+    status.textContent = "Handoff ready to populate Intake. Select Discover case information.";
     $("documentation-handoff-title").focus();
   } catch (error) {
     if (readId === handoffReadId) status.textContent = `Cannot review the handoff: ${error.message}`;
   }
-}
-
-function applyDocumentationHandoff() {
-  if (!canApplyDocumentationHandoff()) return;
-  const filled = fillEmptyHandoffControls(documentationHandoff.suggestions, $, (controlId) => {
-    const fieldId = INTAKE_CONTROL_FIELDS[controlId];
-    return latestSolutionProfile?.fields[fieldId]?.status === "CONFLICTING";
-  }, (control) => control.dispatchEvent(new Event("input", { bubbles: true })));
-  updateDocumentationHandoffAction(filled ? `${filled} field(s) filled as Self-Declared. Review the filled fields before approving Intake.` : "No empty, non-conflicting fields matched. Existing values and conflicts were left unchanged.");
 }
 
 function intakeControlValue(controlId) {
@@ -439,6 +434,8 @@ function renderIntakeWorkspace(profile, recheck = null) {
   if (!profile) return;
   latestDiscoveryRecheck = recheck ?? latestDiscoveryRecheck;
   const aiByField = new Map((latestDiscoveryRecheck?.candidates ?? []).map((item) => [item.field, item]));
+  const dossier = dossierFromForm();
+  const conflictingFields = new Set(Object.values(profile.fields).filter((item) => item.status === "CONFLICTING").map((item) => item.field));
   for (const [controlId, field] of Object.entries(INTAKE_CONTROL_FIELDS)) {
     const control = $(controlId); if (!control) continue;
     const host = control.closest("label") ?? control.closest("fieldset"); if (!host) continue;
@@ -446,11 +443,17 @@ function renderIntakeWorkspace(profile, recheck = null) {
     const fact = profile.fields[field];
     const ai = aiByField.get(field);
     const edited = editedIntakeFields.has(field);
+    const fromHandoff = handoffDraftControls.has(controlId) && !edited && !prefilledProposalByField.has(field);
+    const differed = fromHandoff && (fact?.status === "CONFLICTING" ||
+      (fact?.status !== "UNKNOWN" && fact?.value != null && !sameIntakeValue(dossierPathValue(dossier, field), fact.value)));
+    if (differed) conflictingFields.add(field);
     const state = acceptedAcquiredCandidateByField.has(field) ? { tone: "observed", text: "Recovered deterministic candidate selected · editable · enters Intake only on final approval" }
       : editedAcquiredCandidateByField.has(field) ? { tone: "self-declared", text: "Recovered candidate edited by user · treated as Self-Declared" }
         : declinedAcquiredCandidateByField.has(field) ? { tone: "missing", text: "Recovered candidate declined · provide a value or resolve as Unknown / Not Applicable" }
           : prefilledProposalByField.has(field) ? { tone: "review", text: "GenAI proposal prefilled · editable or removable · becomes a user decision only on final approval" }
       : edited ? { tone: "self-declared", text: "Self-Declared · changed by user · V&V lifecycle cap applies" }
+      : differed ? { tone: "conflicting", text: `Documentation Support declaration differs from the submitted source: ${displayIntakeValue(fact?.value)}. Review both before approval.` }
+      : fromHandoff ? { tone: "self-declared", text: "Documentation Support declaration · editable · user approval required" }
       : fact?.status === "CONFLICTING" ? { tone: "conflicting", text: "Conflict · source values require resolution" }
         : ai?.recommendation === "REVIEW_REWRITE" ? { tone: "review", text: "AI wording proposal available · accepting it becomes Self-Declared" }
           : ai?.recommendation === "REVIEW_CANDIDATE" ? { tone: "review", text: "AI source-grounded candidate available · user decision required" }
@@ -463,10 +466,11 @@ function renderIntakeWorkspace(profile, recheck = null) {
   const facts = Object.values(profile.fields);
   const declaredFields = new Set(facts.filter((item) => item.factClass === "SELF_DECLARED").map((item) => item.field));
   for (const field of editedIntakeFields) declaredFields.add(field);
+  for (const controlId of handoffDraftControls.keys()) declaredFields.add(INTAKE_CONTROL_FIELDS[controlId]);
   const counts = {
-    observed: facts.filter((item) => item.factClass === "OBSERVED" && item.status !== "CONFLICTING").length,
-    missing: facts.filter((item) => item.status === "UNKNOWN" && !editedIntakeFields.has(item.field)).length,
-    conflicting: facts.filter((item) => item.status === "CONFLICTING").length,
+    observed: facts.filter((item) => item.factClass === "OBSERVED" && !declaredFields.has(item.field) && !conflictingFields.has(item.field)).length,
+    missing: facts.filter((item) => item.status === "UNKNOWN" && dossierPathValue(dossier, item.field) === null).length,
+    conflicting: conflictingFields.size,
     declared: declaredFields.size
   };
   const summary = $("intake-review-summary"); summary.replaceChildren(
@@ -703,6 +707,10 @@ async function selectedSources() {
   const sourceContainerCount = sourceIngestion.items.filter((item) => item.reasonCode === "UNSUPPORTED_SOURCE_CONTAINER").length;
   const sourceContainerNotice = sourceContainerCount ? ` ${sourceContainerCount} ZIP archive(s) must be extracted locally and selected as a folder.` : "";
   if (!sources.length) throw new Error(`No supported source could be prepared. ${sourceIngestion.excludedCount} file(s) were excluded and ${sourceIngestion.failedCount + sourceIngestion.unsafeCount} require review.${sourceContainerNotice}`);
+  const currentFiles = [...$("source-folder").files, ...$("source-files").files];
+  if (files.some((file, index) => file !== currentFiles[index]) || files.length !== currentFiles.length) {
+    throw new Error("Source selection changed while reading files. Start discovery again.");
+  }
   preparedSources = { sources, sourceIngestion };
   $("discovery-status").textContent = `${sourceIngestion.acceptedCount} supported file(s) prepared · ${sourceIngestion.excludedCount} disclosed exclusion(s) · ${sourceIngestion.failedCount + sourceIngestion.unsafeCount} file(s) require review.${sourceContainerNotice}`;
   return preparedSources;
@@ -913,6 +921,7 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
 }
 
 async function discoverCaseInformation() {
+  const attempt = ++discoveryAttempt;
   $("error").classList.add("hidden"); $("discover-button").disabled = true; $("assess-button").disabled = true;
   updateDocumentationHandoffAction();
   for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
@@ -920,8 +929,17 @@ async function discoverCaseInformation() {
   $("discovery-status").textContent = "Stage 2 of 5 · Parsing sources locally and building deterministic cited facts…";
   try {
     const prepared = await selectedSources();
-    if (!prepared.sources.length) throw new Error("Select a folder or one or more supported files first.");
-    const preflight = await postJson("/api/v2/runs/preflight", prepared);
+    if ($("documentation-handoff-file").files.length && !documentationHandoffSource) throw new Error("Choose a valid Documentation Support handoff or clear that file selection.");
+    if (!prepared.sources.length && !documentationHandoffSource) throw new Error("Select a folder, supported files, or a Documentation Support handoff.");
+    const preflight = await postJson("/api/v2/runs/preflight", { ...prepared, documentationHandoff: documentationHandoffSource });
+    if (attempt !== discoveryAttempt) return;
+    const manualValues = [...Object.entries(INTAKE_CONTROL_FIELDS)].filter(([, field]) => editedIntakeFields.has(field))
+      .map(([controlId, field]) => ({ controlId, field, value: intakeControlValue(controlId) }));
+    const manualAnswers = Object.fromEntries(intakeQuestionnaire.questions.flatMap((question) => {
+      const answer = collectedQuestionAnswer(question);
+      const baseline = intakeQuestionBaseline[question.id];
+      return baseline && JSON.stringify(answer) !== JSON.stringify(baseline) ? [[question.id, answer]] : [];
+    }));
     activeRunId = preflight.runId;
     latestSolutionProfile = preflight.solutionProfile;
     latestDiscoveryContext = {
@@ -941,7 +959,21 @@ async function discoverCaseInformation() {
       recheck: preflight.discoveryRecheck,
       selectedAcquiredFactIds: []
     };
-    fillDossier(preflight.solutionProfile.suggestedDossier);
+    documentationHandoff = preflight.documentationHandoff;
+    const draft = preflight.intakeDraft ?? preflight.solutionProfile.suggestedDossier;
+    fillDossier(draft);
+    if (Object.keys(manualAnswers).length) fillQuestionnaire({ ...draft.intakeAnswers, ...manualAnswers });
+    handoffDraftControls.clear();
+    for (const item of documentationHandoff?.suggestions ?? []) handoffDraftControls.set(item.controlId, item.value);
+    for (const { controlId, field, value } of manualValues) {
+      if (controlId === "data-categories") {
+        const categories = new Set(JSON.parse(value));
+        for (const box of $(controlId).querySelectorAll('input[type="checkbox"]')) box.checked = categories.has(box.value);
+      } else $(controlId).value = value;
+      if (intakeControlValue(controlId) !== intakeControlBaseline.get(controlId)) editedIntakeFields.add(field);
+    }
+    if (documentationHandoff) $("documentation-handoff-status").textContent = "Handoff applied to the Intake draft.";
+    renderDocumentationHandoff();
     renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, null, preflight.citationIndex, preflight.acquisitionDiagnostics);
     const blocked = preflight.dlpFindings.some((item) => item.blocking);
     $("request-ai-proposals").classList.toggle("hidden", blocked || proposalProviders.length === 0);
@@ -953,11 +985,16 @@ async function discoverCaseInformation() {
       : proposalProviders.length
         ? `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). Resolve it manually or explicitly request optional GenAI proposals from safe summaries.`
         : `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). GenAI proposals are unavailable because no configured Reasoner route has an available credential; resolve the Intake manually.`;
-    $("assess-button").disabled = false;
+    $("assess-button").disabled = preflight.sourceIngestion.parsedCount === 0;
+    if (!preflight.sourceIngestion.parsedCount) {
+      $("discovery-status").textContent = "The draft is ready to edit. Add at least one supporting source before approval and analysis.";
+      updateAcquisitionActions();
+    }
     intakeApprovalStarted = false;
     updateDocumentationHandoffAction();
     $("assessment-input").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
+    if (attempt !== discoveryAttempt) return;
     $("discovery-status").textContent = "Discovery could not be completed."; $("error").textContent = error.message; $("error").classList.remove("hidden");
   } finally { $("discover-button").disabled = false; }
 }
@@ -1154,7 +1191,9 @@ function renderPackage(pkg) {
 }
 
 async function loadSample() {
+  const attempt = ++discoveryAttempt;
   const response = await fetch("/api/sample"); const sample = await response.json();
+  if (attempt !== discoveryAttempt) return;
   fillDossier(sample.dossier);
   latestSolutionProfile = null;
   sampleSources = sample.sources.map((source) => ({
@@ -1169,6 +1208,8 @@ async function loadSample() {
   intakeApprovalStarted = false;
   ++handoffReadId;
   documentationHandoff = null;
+  documentationHandoffSource = undefined;
+  handoffDraftControls.clear();
   $("documentation-handoff-file").value = "";
   $("documentation-handoff-status").textContent = "No handoff selected.";
   renderDocumentationHandoff();
@@ -1356,7 +1397,6 @@ Promise.all([
 }).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; $("knowledge-diagnostics-content").textContent = "Knowledge connection diagnostics are unavailable."; });
 $("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("request-retrieval-plan").addEventListener("click", requestRetrievalPlan); $("execute-local-reread").addEventListener("click", executeLocalReread); $("request-ai-proposals").addEventListener("click", requestAiProposals); $("dossier-form").addEventListener("submit", runAssessment);
 $("documentation-handoff-file").addEventListener("change", reviewDocumentationHandoff);
-$("apply-documentation-handoff").addEventListener("click", applyDocumentationHandoff);
 $("dossier-form").addEventListener("input", (event) => {
   const controlId = event.target.id || event.target.closest("#data-categories")?.id;
   const field = INTAKE_CONTROL_FIELDS[controlId];
@@ -1376,6 +1416,7 @@ $("summary-tab").addEventListener("click", () => selectView("summary")); $("work
 $("print-button").addEventListener("click", printReport); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);
 for (const [control, summary, kind] of [["source-files", "file-summary", "individual"], ["source-folder", "folder-summary", "folder"]]) {
   $(control).addEventListener("change", () => {
+    discoveryAttempt++;
     sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; intakeApprovalStarted = false;
     for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
     $("assess-button").disabled = true; setIntakeFlow("UPLOAD");

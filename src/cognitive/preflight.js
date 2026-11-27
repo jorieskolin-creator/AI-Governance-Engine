@@ -11,6 +11,7 @@ import { createAcquisitionDiagnostics } from "../intake/acquisition-diagnostics.
 import { createIntakeCandidatePackage, validateIntakeCandidatePackage } from "../intake/candidate-contract.js";
 import { createIntakeGapAnalysis } from "../intake/gap-analysis.js";
 import { splitDocumentationInput } from "../intake/documentation-input.js";
+import { preferredDocumentationDraft } from "../../public/documentation-handoff.js";
 
 const DEFAULT_PACKET_CHARS = 18_000;
 
@@ -89,6 +90,7 @@ export function publicPreflightView(run) {
       snapshotHash: run.approvedIntake.snapshotHash
     } : null,
     documentationHandoff: run.documentationHandoff ?? null,
+    intakeDraft: run.solutionProfile ? preferredDocumentationDraft(run.solutionProfile.suggestedDossier, run.documentationHandoff) : null,
     executionPacketManifest: run.executionPacketManifest ?? null,
     citationIndex: run.packets.flatMap((packet) => packet.sourceUnits.map((unit) => ({ sourceUnitId: unit.id, path: unit.path, locator: unit.locator, sha256: unit.sha256 })))
   };

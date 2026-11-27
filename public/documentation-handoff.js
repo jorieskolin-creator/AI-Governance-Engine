@@ -131,16 +131,19 @@ export async function parseDocumentationHandoff(source, subtle = globalThis.cryp
   };
 }
 
-export function fillEmptyHandoffControls(suggestions, getControl, isConflicting, onFill) {
-  let filled = 0;
-  for (const { controlId, value } of suggestions) {
-    const control = getControl(controlId);
-    if (!control || isConflicting(controlId)) continue;
-    const current = control.value.trim();
-    if (current && (controlId !== "current-stage" || current !== "UNKNOWN")) continue;
-    control.value = value;
-    onFill(control);
-    filled++;
-  }
-  return filled;
+export function preferredDocumentationDraft(dossier, handoff) {
+  const values = new Map((handoff?.suggestions ?? []).map(({ controlId, value }) => [controlId, value]));
+  if (!values.size) return dossier;
+  const currentStage = values.get("current-stage");
+  return {
+    ...dossier,
+    name: values.get("name") ?? dossier.name,
+    intendedPurpose: values.get("purpose") ?? dossier.intendedPurpose,
+    currentStage: currentStage ?? dossier.currentStage,
+    lifecycleDeclaration: currentStage ? { ...dossier.lifecycleDeclaration, currentStage } : dossier.lifecycleDeclaration,
+    users: values.has("users") ? values.get("users").split(", ").filter(Boolean) : dossier.users,
+    operatingBoundary: values.has("excluded-uses") ? {
+      ...dossier.operatingBoundary, excludedUses: values.get("excluded-uses").split(/\r?\n/).map((value) => value.trim()).filter(Boolean)
+    } : dossier.operatingBoundary
+  };
 }

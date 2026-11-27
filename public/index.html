@@ -44,7 +44,7 @@
         </div>
         <details class="intake-workspace-section handoff-details">
           <summary>Start from a Documentation Support summary (optional)</summary>
-          <p class="field-hint" id="handoff-instructions">Read a Documentation Support HTML or JSON export in this browser. It can help fill Intake but does not count as a source for analysis. Upload the original documentation, code and test results separately.</p>
+          <p class="field-hint" id="handoff-instructions">A valid Documentation Support HTML or JSON export fills the first Intake draft. You can also include it in your selected files. Upload documentation, code and test results as separate evidence for the assessment.</p>
           <label class="upload-box">Documentation Support handoff<input id="documentation-handoff-file" type="file" accept=".html,.htm,.json" aria-describedby="handoff-instructions" /></label>
           <p id="documentation-handoff-status" class="field-hint" role="status">No handoff selected.</p>
         </details>
@@ -64,8 +64,7 @@
           <h3 id="documentation-handoff-title" tabindex="-1">Documentation Support handoff</h3>
           <p id="documentation-handoff-boundary"></p>
           <div id="documentation-handoff-content"></div>
-          <button id="apply-documentation-handoff" class="secondary-button" type="button" disabled>Fill empty Intake fields from handoff</button>
-          <p class="field-hint" id="documentation-handoff-apply-status" role="status">Discover case information from original sources before applying handoff declarations.</p>
+          <p class="field-hint" id="documentation-handoff-apply-status" role="status"></p>
           <details class="intake-workspace-section handoff-details">
             <summary>What the Engine still needs to check</summary>
             <ul>

@@ -1,4 +1,5 @@
 import { sha256, stableStringify } from "../core/hash.js";
+import { redactText, screenSensitiveValue } from "../core/privacy.js";
 import { classifyCognitiveFailure } from "./failure-policy.js";
 import { assertStrictSchema, normalizeProviderResponse, serializeProviderRequest } from "./provider-adapters.js";
 
@@ -123,14 +124,15 @@ export class StructuredModelClient {
   async generate({ profile, fallbackProfiles = [], prompt, schemaName, schema, packetHash, promptVersion, media = [] }) {
     if (media.length) throw new Error("Provider transmission cannot contain media; only local deterministic media summaries are allowed");
     const profiles = [...new Map([profile, ...fallbackProfiles].map((item) => [item.id, item])).values()];
+    const screenedPrompt = redactText(prompt).text;
     let lastError;
     for (let routeAttempt = 0; routeAttempt < profiles.length; routeAttempt += 1) {
       const selectedProfile = profiles[routeAttempt];
-      const requestHash = sha256({ profile: selectedProfile.id, prompt, schemaName, schema, packetHash, promptVersion });
       for (let retry = 0; retry <= 1; retry += 1) {
         this.signal?.throwIfAborted();
         const started = Date.now();
-        const repairPrompt = retry === 0 ? prompt : `${prompt}\n\nSCHEMA_REPAIR: The previous response was malformed or violated the schema. Return one complete JSON value that exactly matches the supplied schema.`;
+        const repairPrompt = retry === 0 ? screenedPrompt : `${screenedPrompt}\n\nSCHEMA_REPAIR: The previous response was malformed or violated the schema. Return one complete JSON value that exactly matches the supplied schema.`;
+        const requestHash = sha256({ profile: selectedProfile.id, prompt: repairPrompt, schemaName, schema, packetHash, promptVersion });
         try {
           this.budget.reserve(selectedProfile.role, selectedProfile.maxOutputTokens ?? 0);
           const response = this.transport
@@ -138,6 +140,8 @@ export class StructuredModelClient {
             : await providerRequest(selectedProfile, this.policy.credentials[selectedProfile.provider], repairPrompt, schemaName, schema, this.signal);
           this.signal?.throwIfAborted();
           if (!responseModelMatches(selectedProfile.model, response.responseModel)) throw new Error(`Provider returned unexpected model ${response.responseModel ?? "UNKNOWN"}; expected ${selectedProfile.model}`);
+          validateSchema(response.value, schema);
+          response.value = screenSensitiveValue(response.value);
           validateSchema(response.value, schema);
           this.budget.record(response.usage ?? {}, selectedProfile.role);
           const trace = this.trace(selectedProfile, promptVersion, schemaName, packetHash, requestHash, started, response, retry, routeAttempt, null);
@@ -164,7 +168,7 @@ export class StructuredModelClient {
       parameters: { effort: profile.effort },
       promptVersion, schemaName, schemaVersion: "3.1.0", packetHash, requestHash,
       usage: response?.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, latencyMs: Date.now() - started,
-      retry, routeAttempt, routePriority: profile.routePriority, refusal: Boolean(error?.refusal), status: error ? "FAILED" : "COMPLETED", error: error ? error.message : null,
+      retry, routeAttempt, routePriority: profile.routePriority, refusal: Boolean(error?.refusal), status: error ? "FAILED" : "COMPLETED", error: error ? redactText(error.message).text : null,
       failureCode: failure?.code ?? null,
       retryDisposition: failure?.code === "STRUCTURED_OUTPUT_INVALID" && retry > 0 ? "REVIEW_REQUIRED" : failure?.retryDisposition ?? null,
       outputHash: response ? sha256(stableStringify(response.value)) : null

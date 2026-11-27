@@ -1,7 +1,7 @@
 import { webcrypto } from "node:crypto";
 import { DomUtils, parseDocument } from "htmlparser2";
 import { DECLARED_DOCUMENTATION_VERSION, DECLARED_TOPIC_GROUPS, HANDOFF_MAX_BYTES, HANDOFF_SCRIPT_ID, isDocumentationHandoffJson, parseDocumentationHandoff, readHandoffScript } from "../../public/documentation-handoff.js";
-import { redactText } from "../cognitive/source-intake.js";
+import { screenSensitiveValue } from "../core/privacy.js";
 
 function handoffError(message) {
   return Object.assign(new Error(message), { statusCode: 422, failureCode: "DOCUMENTATION_HANDOFF_INVALID" });
@@ -29,13 +29,6 @@ function readFromSource(source) {
   })));
 }
 
-function screened(value) {
-  if (typeof value === "string") return redactText(value).text;
-  if (Array.isArray(value)) return value.map(screened);
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, screened(item)]));
-  return value;
-}
-
 export async function splitDocumentationInput(sources, selectedHandoff) {
   const evidenceSources = [];
   const handoffPaths = new Set();
@@ -44,7 +37,7 @@ export async function splitDocumentationInput(sources, selectedHandoff) {
     if (typeof content !== "string" || Buffer.byteLength(content) > HANDOFF_MAX_BYTES) throw handoffError("Choose a Documentation Support handoff within the 15 MB limit.");
     const parsed = await parseDocumentationHandoff(content, webcrypto.subtle);
     if (handoff && handoff.payloadHash !== parsed.payloadHash) throw handoffError("Multiple different Documentation Support handoffs were selected. Choose one.");
-    handoff = { ...screened(parsed), schemaVersion: parsed.schemaVersion, payloadHash: parsed.payloadHash };
+    handoff = { ...screenSensitiveValue(parsed), schemaVersion: parsed.schemaVersion, payloadHash: parsed.payloadHash };
   }
   try {
     if (selectedHandoff !== undefined) await admit(selectedHandoff);
@@ -80,13 +73,13 @@ export function approvedDocumentation(handoff, edits, dossier) {
   if (!handoff && !Object.values(edits ?? {}).some((value) => value.trim())) return null;
   const topics = Object.fromEntries([...topicIds].map((id) => {
     const original = handoff?.answers[id]?.trim() || "";
-    const value = screened((edits?.[id] ?? original).trim());
+    const value = screenSensitiveValue((edits?.[id] ?? original).trim());
     return [id, { value: value || null, origin: value && value === original ? "DOCUMENTATION_SUPPORT" : value ? "USER_DECLARATION" : "UNKNOWN" }];
   }));
   const mapped = Object.fromEntries((handoff?.suggestions ?? []).map(({ controlId, value }) => {
     const [id, getValue] = mappedFields[controlId];
     const approved = getValue(dossier);
-    const selected = approved && approved !== "UNKNOWN" ? screened(approved) : null;
+    const selected = approved && approved !== "UNKNOWN" ? screenSensitiveValue(approved) : null;
     return [id, { value: selected, origin: selected && selected === value ? "DOCUMENTATION_SUPPORT" : selected ? "USER_DECLARATION" : "UNKNOWN" }];
   }));
   return {

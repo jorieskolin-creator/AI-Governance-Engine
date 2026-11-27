@@ -127,3 +127,14 @@ test("an invalid or ambiguous handoff produces an explicit error before discover
   const other = updateFixture(({ record }) => { record.answers.solutionName = "Separate solution"; });
   await assert.rejects(createPreflight({ sources: [{ ...uploadedHandoffs[0], content: other }, evidence], documentationHandoff: golden }), { statusCode: 422, message: /Multiple different/ });
 });
+
+test("an Intake edit containing a restricted identifier cannot enter an approved snapshot", async () => {
+  const run = await createPreflight({ sources: [evidence], documentationHandoff: golden });
+  const dossier = validateDossier({ name: "Local case", accountableOwner: "Service lead", intendedPurpose: "Contact synthetic-review@example.invalid" });
+  await assert.rejects(confirmPreflightDossier(run, {
+    dossier, resolutions: createIntakeResolutionDraft(dossier, run.solutionProfile),
+    approval: { confirmed: true, actorRef: "TEST_USER" }
+  }), { statusCode: 422, message: /restricted identifier/ });
+  assert.equal(run.approvedIntake, undefined);
+  assert.doesNotMatch(JSON.stringify(run), /synthetic-review@example\.invalid/);
+});

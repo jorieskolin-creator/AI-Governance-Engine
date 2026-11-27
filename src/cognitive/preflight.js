@@ -1,4 +1,5 @@
 import { sha256, stableId } from "../core/hash.js";
+import { screenSensitiveValue } from "../core/privacy.js";
 import { validatePreflightInput } from "./contracts.js";
 import { parseAndScreenSources } from "./source-intake.js";
 import { validateDossier } from "../contracts.js";
@@ -98,6 +99,7 @@ export function publicPreflightView(run) {
 
 export async function createPreflight(input, options = {}) {
   const validated = validatePreflightInput(input, { dossierOptional: true, allowEmptySources: input?.documentationHandoff !== undefined });
+  validated.dossier = screenSensitiveValue(validated.dossier);
   const { evidenceSources, handoffPaths, handoff } = await splitDocumentationInput(validated.sources, input.documentationHandoff);
   const screened = await parseAndScreenSources(evidenceSources, { continueOnError: true, ...options.sourceIntake, allowEmpty: Boolean(handoff) });
   const submitted = handoffPaths.size && Array.isArray(input.sourceIngestion?.items)
@@ -163,6 +165,10 @@ export async function confirmPreflightDossier(run, input, options = {}) {
   let submittedDossier;
   try { submittedDossier = validateDossier(input?.dossier); }
   catch (error) { throw Object.assign(error, { statusCode: 422 }); }
+  const userContent = { dossier: submittedDossier, documentationEdits: input?.documentationEdits, resolutions: input?.resolutions };
+  if (sha256(userContent) !== sha256(screenSensitiveValue(userContent))) {
+    throw Object.assign(new Error("Intake contains a restricted identifier or credential. Remove it and review the content before approving."), { statusCode: 422 });
+  }
   const sourceProfile = run.solutionProfile;
   const candidatePackage = validateIntakeCandidatePackage(run.intakeCandidates);
   const acceptedAcquiredCandidate = (fieldId) => {

@@ -20,6 +20,24 @@ const credentials = {
 };
 const candidatePolicy = (env) => modelPolicy(env);
 
+test("outbound prompts and trace hashes are screened separately for each attempt", async () => {
+  const policy = candidatePolicy(credentials);
+  const routes = policy.candidates("SOLUTION_UNDERSTANDING");
+  const prompt = "Review fictional-contact@example.invalid against the submitted facts.";
+  const sent = [];
+  const client = new StructuredModelClient({ policy, transport: async (request) => {
+    sent.push(request.prompt);
+    if (sent.length === 1) return { responseModel: request.profile.model, value: {} };
+    if (sent.length === 2) throw Object.assign(new Error("Provider request timed out"), { statusCode: 504 });
+    return { responseModel: request.profile.model, value: { ok: true } };
+  } });
+  const response = await client.generate({ profile: routes[0], fallbackProfiles: routes.slice(1), prompt, schemaName: "screened", schema, packetHash: "source-hash", promptVersion: "screened/1" });
+  assert.equal(response.value.ok, true);
+  assert.equal(sent.length, 3);
+  assert.ok(sent.every((item) => item.includes("[REDACTED_EMAIL]") && !item.includes("example.invalid")));
+  assert.equal(new Set(client.traces.map((item) => item.requestHash)).size, 3);
+});
+
 test("the canonical provider catalog contains only OpenAI, xAI and Moonshot", () => {
   assert.deepEqual([...COGNITIVE_PROVIDERS].sort(), ["MOONSHOT", "OPENAI", "XAI"]);
   assert.ok(COGNITIVE_PROVIDERS.every((provider) => providerAdapter(provider).capabilities.imageInput === false));

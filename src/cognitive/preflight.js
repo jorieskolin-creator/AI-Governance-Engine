@@ -10,6 +10,7 @@ import { createAcquiredFactPackage } from "../intake/acquired-facts.js";
 import { createAcquisitionDiagnostics } from "../intake/acquisition-diagnostics.js";
 import { createIntakeCandidatePackage, validateIntakeCandidatePackage } from "../intake/candidate-contract.js";
 import { createIntakeGapAnalysis } from "../intake/gap-analysis.js";
+import { splitDocumentationInput } from "../intake/documentation-input.js";
 
 const DEFAULT_PACKET_CHARS = 18_000;
 
@@ -87,22 +88,28 @@ export function publicPreflightView(run) {
       approvedAt: run.approvedIntake.approval.confirmedAt,
       snapshotHash: run.approvedIntake.snapshotHash
     } : null,
+    documentationHandoff: run.documentationHandoff ?? null,
     executionPacketManifest: run.executionPacketManifest ?? null,
     citationIndex: run.packets.flatMap((packet) => packet.sourceUnits.map((unit) => ({ sourceUnitId: unit.id, path: unit.path, locator: unit.locator, sha256: unit.sha256 })))
   };
 }
 
 export async function createPreflight(input, options = {}) {
-  const validated = validatePreflightInput(input, { dossierOptional: true });
-  const screened = await parseAndScreenSources(validated.sources, { continueOnError: true, ...options.sourceIntake });
+  const validated = validatePreflightInput(input, { dossierOptional: true, allowEmptySources: input?.documentationHandoff !== undefined });
+  const { evidenceSources, handoffPaths, handoff } = await splitDocumentationInput(validated.sources, input.documentationHandoff);
+  const screened = await parseAndScreenSources(evidenceSources, { continueOnError: true, ...options.sourceIntake, allowEmpty: Boolean(handoff) });
+  const submitted = handoffPaths.size && Array.isArray(input.sourceIngestion?.items)
+    ? { ...input.sourceIngestion, items: input.sourceIngestion.items.filter((item) => !handoffPaths.has(String(item.path).replaceAll("\\", "/").replace(/^\.\//, ""))) }
+    : input.sourceIngestion;
   const now = options.now ?? new Date();
   const ttlMs = options.ttlMs ?? 60 * 60 * 1000;
   const run = {
-    id: stableId("run", { dossier: validated.dossier, manifest: screened.registeredSources, createdAt: now.toISOString() }),
+    id: stableId("run", { dossier: validated.dossier, manifest: screened.registeredSources, handoffHash: handoff?.payloadHash ?? null, createdAt: now.toISOString() }),
     schemaVersion: "2.6.0", status: "AWAITING_INTAKE_CONFIRMATION", stage: "DETERMINISTIC_DISCOVERY_COMPLETED",
     createdAt: now.toISOString(), expiresAt: new Date(now.getTime() + ttlMs).toISOString(), dossier: validated.dossier,
     registeredSources: screened.registeredSources, dlpFindings: screened.dlpFindings,
-    sourceIngestion: buildSourceIngestionManifest({ submitted: input.sourceIngestion, parsedSources: screened.registeredSources.filter((item) => item.path !== "intended-use-dossier.json"), failedSources: screened.failedSources }),
+    documentationHandoff: handoff,
+    sourceIngestion: buildSourceIngestionManifest({ submitted, parsedSources: screened.registeredSources.filter((item) => item.path !== "intended-use-dossier.json"), failedSources: screened.failedSources }),
     localSourceUnits: screened.localSourceUnits,
     packets: packetize(screened.sourceUnits, options.maxPacketChars), trace: [], result: null, error: null
   };

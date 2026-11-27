@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { webcrypto } from "node:crypto";
 import { DomUtils, parseDocument } from "htmlparser2";
-import { embeddedDocumentationHandoff, fillEmptyHandoffControls, HANDOFF_REVIEW_ONLY, parseDocumentationHandoff } from "../public/documentation-handoff.js";
+import { embeddedDocumentationHandoff, fillEmptyHandoffControls, parseDocumentationHandoff } from "../public/documentation-handoff.js";
 import { createPreflight, confirmPreflightDossier } from "../src/cognitive/preflight.js";
 import { validateDossier } from "../src/contracts.js";
 import { sha256 } from "../src/core/hash.js";
@@ -76,13 +76,17 @@ test("draft handoff suggestions reuse only exact mappings and never overwrite no
   assert.deepEqual(filled, ["QUALIFICATION_AND_REGISTRATION", "Operators, Customers", "No external access"]);
 });
 
-test("handoff artifacts stay outside Engine evidence while a reviewed value can enter approved Intake as a declaration", async () => {
+test("preflight validates both handoff input routes without admitting the handoff as independent evidence", async () => {
   for (const handoff of uploadedHandoffs) {
-    await assert.rejects(createPreflight({ sources: [handoff] }), /handoff review and upload independent source material/);
+    const draft = await createPreflight({ sources: [handoff] });
+    assert.equal(draft.documentationHandoff.documentationConfirmed, true);
+    assert.equal(draft.sourceIngestion.parsedCount, 0);
+    assert.deepEqual(draft.packets, []);
+    await assert.rejects(confirmPreflightDossier(draft, {}), /At least one parsed evidence source/);
   }
-  const run = await createPreflight({ sources: [...uploadedHandoffs, evidence] });
+  const run = await createPreflight({ sources: [...uploadedHandoffs, evidence], documentationHandoff: golden });
   assert.equal(run.sourceIngestion.parsedCount, 1);
-  assert.equal(run.sourceIngestion.items.filter(({ reasonCode }) => reasonCode === HANDOFF_REVIEW_ONLY).length, 2);
+  assert.deepEqual(run.sourceIngestion.items.map(({ path }) => path), [evidence.path]);
   const evidenceOnly = await createPreflight({ sources: [evidence] });
   assert.deepEqual(run.localSourceUnits, evidenceOnly.localSourceUnits);
   assert.deepEqual(run.packets, evidenceOnly.packets);
@@ -96,4 +100,12 @@ test("handoff artifacts stay outside Engine evidence while a reviewed value can 
   const purpose = confirmed.approvedIntake.fields.find(({ fieldId }) => fieldId === "intendedPurpose");
   assert.equal(purpose.origin, "USER_DECLARATION");
   assert.deepEqual(purpose.evidenceRefs, []);
+});
+
+test("an invalid or ambiguous handoff produces an explicit error before discovery", async () => {
+  const tampered = golden.replace("Incorrect records shown", "Changed records");
+  await assert.rejects(createPreflight({ sources: [evidence], documentationHandoff: tampered }), { statusCode: 422, message: /digest does not match/ });
+  await assert.rejects(createPreflight({ sources: [{ ...uploadedHandoffs[1], content: script(golden) + script(golden) }, evidence] }), { statusCode: 422, message: /Expected one inert/ });
+  const other = updateFixture(({ record }) => { record.answers.solutionName = "Separate solution"; });
+  await assert.rejects(createPreflight({ sources: [{ ...uploadedHandoffs[0], content: other }, evidence], documentationHandoff: golden }), { statusCode: 422, message: /Multiple different/ });
 });

@@ -426,7 +426,7 @@ export async function parseAndScreenSources(sources, options = {}) {
       failedSources.push(parseFailure(error, source));
     }
   }
-  if (!sourceUnits.length && !registeredSources.length) {
+  if (!options.allowEmpty && !sourceUnits.length && !registeredSources.length) {
     if (failedSources.some((item) => item.reasonCode === HANDOFF_REVIEW_ONLY)) throw new Error(HANDOFF_REVIEW_INSTRUCTION);
     throw new Error("No supported source could be parsed. Review the disclosed exclusions and provide at least one supported source.");
   }

@@ -2,7 +2,7 @@ export const HANDOFF_SCRIPT_ID = "doc-support-handoff";
 export const HANDOFF_REVIEW_ONLY = "DOCUMENTATION_HANDOFF_REVIEW_ONLY";
 export const HANDOFF_REVIEW_INSTRUCTION = "Open Documentation Support exports in the handoff review and upload independent source material separately.";
 export const HANDOFF_MAX_BYTES = 15 * 1024 * 1024;
-const HANDOFF_VERSION = "doc-support-handoff/1.0.0";
+export const HANDOFF_VERSION = "doc-support-handoff/1.0.0";
 const REGISTER_VERSION = "failure-mode-register/1.0.0";
 const levels = ["LOW", "MEDIUM", "HIGH", "UNKNOWN"];
 const referenceStatuses = ["DECLARED_IN_DOC", "OBSERVED_IN_CONFIG", "TEST_EVIDENCE_LINKED", "NOT_RUN", "MISSING_UNKNOWN"];
@@ -48,8 +48,12 @@ function canonicalize(value, depth = 0, budget = { remaining: 100_000 }) {
 /** Reads only the exported script text; the template and all of its contents stay detached. */
 export function embeddedDocumentationHandoff(html, template) {
   template.innerHTML = html;
-  const scripts = template.content.querySelectorAll(`script[id="${HANDOFF_SCRIPT_ID}"]`);
-  if (scripts.length !== 1 || scripts[0].getAttribute("type") !== "application/json" || scripts[0].hasAttribute("src")) {
+  const scripts = template.content.querySelectorAll(`[id="${HANDOFF_SCRIPT_ID}"]`);
+  return readHandoffScript(scripts);
+}
+
+export function readHandoffScript(scripts) {
+  if (scripts.length !== 1 || (scripts[0].tagName && scripts[0].tagName.toLowerCase() !== "script") || scripts[0].getAttribute("type") !== "application/json" || scripts[0].hasAttribute("src")) {
     throw new Error("Expected one inert Documentation Support handoff in the HTML. Try the standalone JSON export if it is missing.");
   }
   return scripts[0].textContent;
@@ -95,6 +99,9 @@ export async function parseDocumentationHandoff(source, subtle = globalThis.cryp
   const { record, release, failure_mode_register: register, outstanding_work: work } = payload;
   if (!object(record?.answers) || !Object.values(record.answers).every(text) ||
       !listOf(record.evidence, (entry) => object(entry) && [entry.id, entry.title, entry.reference, entry.verification].every(text)) ||
+      !listOf(record.dataSources, (entry) => object(entry) && ["id", "name", "owner", "categories", "usageRights", "quality", "restrictions"].every((key) => text(entry[key]))) ||
+      !object(record.evidenceRefs) || !Object.values(record.evidenceRefs).every(text) ||
+      !object(record.notApplicable) || !Object.values(record.notApplicable).every((entry) => object(entry) && text(entry.rationale) && text(entry.owner)) ||
       !["DRAFT", "DOCUMENTATION_CONFIRMED"].includes(release?.state) ||
       !listOf(work, (item) => object(item) && [item.code, item.title, item.permittedNextAction].every(text))) {
     throw new Error("The handoff record structure is not supported.");
@@ -116,7 +123,12 @@ export async function parseDocumentationHandoff(source, subtle = globalThis.cryp
     ["Classification basis and date", answers.classificationBasis], ["Permission basis and authority", answers.permissionBasis],
     ["Privacy and confidentiality rules", answers.privacyConfidentiality], ["Unresolved permission questions", answers.openConstraints]
   ].filter(([, value]) => display(value));
-  return { documentationConfirmed: release.state === "DOCUMENTATION_CONFIRMED", suggestions, context, entries: register.entries, evidence: record.evidence, work };
+  return {
+    schemaVersion: HANDOFF_VERSION, payloadHash: integrity.payload_sha256,
+    documentationConfirmed: release.state === "DOCUMENTATION_CONFIRMED", suggestions, context,
+    answers, evidenceRefs: record.evidenceRefs, notApplicable: record.notApplicable,
+    entries: register.entries, evidence: record.evidence, dataSources: record.dataSources, work
+  };
 }
 
 export function fillEmptyHandoffControls(suggestions, getControl, isConflicting, onFill) {

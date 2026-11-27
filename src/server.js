@@ -15,6 +15,7 @@ import { READINESS_PACKAGE_VERSIONS, readinessPackageJsonSchema } from "./readin
 import { publicJsonValue } from "../public/content-policy.js";
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./intake/field-registry.js";
 import { validateApprovedIntakeSnapshot } from "./intake/contracts.js";
+import { buildDeclarationComparison, validateDeclarationComparison } from "./intake/declaration-comparison.js";
 import { createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "./intake/acquired-facts.js";
 import { setAcquisitionGenAiStatus } from "./intake/acquisition-diagnostics.js";
 import { planIntakeRetrieval, RETRIEVAL_PLANNING_PURPOSE } from "./cognitive/retrieval-planner.js";
@@ -175,19 +176,22 @@ async function enqueueCognitiveRun(run, request, expectedSnapshotHash) {
     throw error;
   }
   if (!await runStore.acquireLease(run.id)) throw Object.assign(new Error("Run execution is already owned by another worker"), { statusCode: 409 });
-  run.dossier = structuredClone(run.approvedIntake.effectiveDossier);
-  run.solutionProfile = structuredClone(run.approvedIntake.solutionProfile);
-  run.approval = approval;
-  run.stepLedger = createCognitiveStepLedger();
-  run.queueAttempt = (run.queueAttempt ?? 0) + 1;
-  releaseLocalEvidenceForCognitiveExecution(run);
-  for (const packet of run.packets) packet.transmissionState = "APPROVED";
-  run.status = "QUEUED";
-  run.stage = "COGNITIVE_EXECUTION_QUEUED";
-  run.trace.push({ stage: run.stage, status: "QUEUED", at: new Date().toISOString() });
-  try { await runStore.checkpoint(run, { leaseOwner: runStore.instanceId }); }
-  catch (error) { await runStore.releaseLease(run.id); throw error; }
-  await runStore.releaseLease(run.id);
+  try {
+    run.declarationComparison = validateDeclarationComparison(
+      buildDeclarationComparison(run.approvedIntake, run.localSourceUnits ?? [], run.registeredSources), run.approvedIntake
+    );
+    run.dossier = structuredClone(run.approvedIntake.effectiveDossier);
+    run.solutionProfile = structuredClone(run.approvedIntake.solutionProfile);
+    run.approval = approval;
+    run.stepLedger = createCognitiveStepLedger();
+    run.queueAttempt = (run.queueAttempt ?? 0) + 1;
+    releaseLocalEvidenceForCognitiveExecution(run);
+    for (const packet of run.packets) packet.transmissionState = "APPROVED";
+    run.status = "QUEUED";
+    run.stage = "COGNITIVE_EXECUTION_QUEUED";
+    run.trace.push({ stage: run.stage, status: "QUEUED", at: new Date().toISOString() });
+    await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+  } finally { await runStore.releaseLease(run.id); }
 }
 
 async function startClaimedCognitiveRun(run) {

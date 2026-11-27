@@ -83,7 +83,18 @@ function caseProfileMarkup(summary) {
   return section("02", "Case identification", "Case Profile and Assessment Scope", `<div class="case-grid">${caseGroup("Identity and intent", profile.identityAndIntent)}${caseGroup("Assessment scope", profile.assessmentScope)}${caseGroup("Declared operating boundary", profile.operatingBoundary)}${caseGroup("Risk-relevant declarations", profile.riskDeclarations)}${caseGroup("Applicability and classification screening", profile.classificationScreening)}</div>`);
 }
 
-function documentationMarkup(summary) {
+function sourceComparisonMarkup(comparison) {
+  if (!comparison) return "";
+  const rows = array(comparison.rows).toSorted((left, right) => Number(right.status === "CONTRADICTED") - Number(left.status === "CONTRADICTED"));
+  return `<details open class="report-collapsible"><summary>Approved Intake compared with submitted sources</summary>${rows.length ? rows.map((row) => `<article><h4>${escapeHtml(label(row.field))} · ${escapeHtml(label(row.evidenceTier))} ${status(row.status)}</h4><p>Approved: ${escapeHtml(displayValue(row.declared))}</p>${row.observations.map((item) => `<p>Source: ${escapeHtml(displayValue(item.value))} · ${item.citations.map((cite) => escapeHtml(`${cite.path} · ${cite.locator}`)).join(", ")}</p>`).join("")}</article>`).join("") : "<p>No comparison evidence was established in scope.</p>"}${comparison.limitations.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</details>`;
+}
+
+function declaredRisksMarkup(documentation) {
+  if (!documentation?.failureModes?.length) return "";
+  return `<details class="report-collapsible"><summary>Declared failure modes (${documentation.failureModes.length})</summary><p>These scenarios guide verification. The evidence status shown here was supplied by the user.</p>${documentation.failureModes.map((row) => `<article><h4>${escapeHtml(row.id)} · ${escapeHtml(row.title)} ${status(row.severity_user)}</h4><p>${escapeHtml(row.effect_summary)} · ${escapeHtml(row.mapped_objects.join(", ") || "Unmapped")}</p>${row.claimed_mitigations.map((item) => `<p>${escapeHtml(item.control)} · ${status(item.evidence_status_observed)}</p>`).join("")}</article>`).join("")}</details>`;
+}
+
+function documentationMarkup(summary, intake) {
   const doc = summary.documentationAlignment ?? {};
   const unknown = array(doc.unknownFields);
   const conflicts = array(doc.contradictions).map((item) => item.statement);
@@ -98,7 +109,7 @@ function documentationMarkup(summary) {
   const issues = [
     ["Unknown fields", unknown], ["Self-Declared only", declaredOnly], ["Contradictions", conflicts]
   ];
-  return section("03", "Documentation gate", "Documentation Alignment", `<div class="documentation-summary">${metrics.map(([name, value]) => `<div><span>${escapeHtml(name)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div><div class="documentation-issues">${issues.map(([name, values]) => `<article><h3>${escapeHtml(name)}</h3><p>${values.length ? escapeHtml(values.map(label).join(", ")) : "None recorded"}</p></article>`).join("")}</div>${doc.sandboxRequired ? `<p class="boundary-warning"><strong>Effective boundary:</strong> Isolated Sandbox until the critical documentation conditions are resolved.</p>` : ""}`);
+  return section("03", "Documentation gate", "Documentation Alignment", `<div class="documentation-summary">${metrics.map(([name, value]) => `<div><span>${escapeHtml(name)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div><div class="documentation-issues">${issues.map(([name, values]) => `<article><h3>${escapeHtml(name)}</h3><p>${values.length ? escapeHtml(values.map(label).join(", ")) : "None recorded"}</p></article>`).join("")}</div>${doc.sandboxRequired ? `<p class="boundary-warning"><strong>Effective boundary:</strong> Isolated Sandbox until the critical documentation conditions are resolved.</p>` : ""}${sourceComparisonMarkup(doc.sourceComparison)}${declaredRisksMarkup(intake?.declaredDocumentation)}`);
 }
 
 function boundaryMarkup(summary) {
@@ -149,7 +160,7 @@ function reportBodyMarkup(pkg) {
   const executiveGaps = array(summary.executiveGapGroups).length ? summary.executiveGapGroups : summary.blockingFindings;
   const blockers = section("09", "Confidence and progression conditions", "Blocking Gaps and Unknowns", listItems(array(executiveGaps), "No blocking gap or unknown was recorded for the declared transition."));
   const limitations = section("13", "Scope and interpretation", "Limitations", listItems(array(summary.limitations).map((text) => ({ text })), "No additional limitation was recorded."));
-  return `<div class="assurance-report">${decisionMarkup(pkg, summary)}${caseProfileMarkup(summary)}${documentationMarkup(summary)}${boundaryMarkup(summary)}${interpretationMarkup(summary)}${gatesMarkup(summary)}${domainsMarkup(summary)}${strengths}${blockers}${actionsMarkup(summary)}${authorityMarkup(summary)}${auditMarkup(pkg, summary)}${limitations}</div>`;
+  return `<div class="assurance-report">${decisionMarkup(pkg, summary)}${caseProfileMarkup(summary)}${documentationMarkup(summary, pkg.assessmentIntake)}${boundaryMarkup(summary)}${interpretationMarkup(summary)}${gatesMarkup(summary)}${domainsMarkup(summary)}${strengths}${blockers}${actionsMarkup(summary)}${authorityMarkup(summary)}${auditMarkup(pkg, summary)}${limitations}</div>`;
 }
 
 export function renderAssuranceSummary(root, pkg) {

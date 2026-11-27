@@ -620,8 +620,10 @@ export function flattenDossier(dossier) {
   };
 }
 
-export function buildDocumentationReadiness(profile, targetStage, sourceIngestion = null) {
+export function buildDocumentationReadiness(profile, targetStage, sourceIngestion = null, comparison = null) {
   const statuses = {};
+  const comparedConflicts = (comparison?.rows ?? []).filter((row) => row.status === "CONTRADICTED");
+  const comparedFields = new Set(comparedConflicts.map((row) => row.field));
   for (const field of deployRequiredFields) {
     const item = profile.fields[field];
     const agentsExplicitlyExcluded = profile.fields["agent.usesAgents"]?.value === false && profile.fields["agent.usesAgents"]?.status === "CONFIRMED";
@@ -632,7 +634,8 @@ export function buildDocumentationReadiness(profile, targetStage, sourceIngestio
       || actionsExplicitlyExcluded && field === "agent.irreversibleActions"
       || field === "data.categories" && (!Array.isArray(profile.fields[field]?.value) || profile.fields[field].value.length === 0) && legacyDataDocumented
       || ["exposure.currentUserAccess", "exposure.intendedUserAccess"].includes(field) && legacyExposureDocumented && profile.fields[field]?.factClass !== "OBSERVED";
-    statuses[field] = notApplicable ? "NOT_APPLICABLE"
+    statuses[field] = comparedFields.has(field) ? "CONFLICTING"
+      : notApplicable ? "NOT_APPLICABLE"
       : !item || item.status === "UNKNOWN" ? "UNKNOWN"
       : item.status === "CONFLICTING" ? "CONFLICTING"
         : item.factClass === "OBSERVED" && item.status === "CONFIRMED" ? "DOCUMENTED_AND_CONFIRMED"
@@ -662,7 +665,14 @@ export function buildDocumentationReadiness(profile, targetStage, sourceIngestio
   const maximumLifecycleStage = selfDeclaredIntakeFields.length ? "VERIFICATION_AND_VALIDATION" : null;
   const targetExceedsSelfDeclarationBoundary = maximumLifecycleStage !== null && LIFECYCLE_STAGES.indexOf(targetStage) > LIFECYCLE_STAGES.indexOf(maximumLifecycleStage);
   const incompleteForDeployment = values.some((value) => !["DOCUMENTED_AND_CONFIRMED", "NOT_APPLICABLE"].includes(value)) || missingImplementationScope || sourceCoverageReviewRequired || questionnaireUnknowns.length > 0 || unsupportedNegativeAnswers.length > 0 || questionnaireConflicts.length > 0;
-  const materialContradictions = profile.contradictions.filter((item) => ["HIGH", "CRITICAL"].includes(item.severity));
+  const contradictions = [...profile.contradictions, ...comparedConflicts.filter((row) => row.evidenceTier !== "README_DOCUMENTATION" || !profile.contradictions.some((item) => item.field === row.field))
+    .map((row) => ({
+      id: stableId("intake-comparison-conflict", { comparison: comparison.comparisonHash, field: row.field, evidenceTier: row.evidenceTier }),
+      field: row.field, severity: row.severity, statement: `${fieldLabel(row.field)} differs from the submitted ${row.evidenceTier === "README_DOCUMENTATION" ? "README" : "configuration"}.`,
+      declaredValue: row.declared, observedCandidates: row.observations.map((item) => item.value),
+      sourceUnitIds: unique(row.observations.flatMap((item) => item.citations.map((citation) => citation.sourceUnitId)))
+    }))];
+  const materialContradictions = contradictions.filter((item) => ["HIGH", "CRITICAL"].includes(item.severity));
   const criticalQuestionIds = new Set(["AI_SYSTEM_QUALIFICATION", "PROHIBITED_PRACTICE_CATEGORIES", "EU_MARKET_OR_SERVICE", "EU_ESTABLISHED_ACTOR", "EU_OUTPUT_USED", "ANNEX_III_USE_AREAS"]);
   const sandboxRequired = [...unknownFields, ...conflictingFields].some((field) => criticalFields.has(field)) || questionnaireUnknowns.some((id) => criticalQuestionIds.has(id)) || questionnaireConflicts.length > 0 || materialContradictions.length > 0 || sourceCoverageReviewRequired;
   const value = {
@@ -680,14 +690,16 @@ export function buildDocumentationReadiness(profile, targetStage, sourceIngestio
     unknownFields, conflictingFields,
     implementationSourceCount,
     missingImplementationScope,
-    contradictions: profile.contradictions,
+    contradictions,
+    ...(comparison ? { sourceComparison: comparison } : {}),
     materialContradictionCount: materialContradictions.length,
     sourceCoverageStatus: sourceIngestion?.coverageStatus ?? "SUBMITTED_SCOPE_ONLY",
     sourceCoverageReviewRequired,
     questionnaireUnknowns,
     unsupportedNegativeAnswers,
     questionnaireConflicts,
-    documentationToCodeAlignment: conflictingFields.length ? "CONFLICTING" : missingImplementationScope ? "NOT_ASSESSED" : incompleteForDeployment ? "INCOMPLETE" : "ALIGNED",
+    documentationToCodeAlignment: conflictingFields.length ? "CONFLICTING" : missingImplementationScope ? "NOT_ASSESSED" : incompleteForDeployment ? "INCOMPLETE"
+      : comparison ? comparison.rows.some((row) => row.evidenceTier === "STATIC_CONFIGURATION" && row.status === "ALIGNED") ? "SCOPED_CHECKS_ALIGNED" : "NOT_ASSESSED" : "ALIGNED",
     sandboxRequired,
     deploymentReady: !incompleteForDeployment,
     gateRequired: deploymentTarget && incompleteForDeployment,
@@ -696,7 +708,7 @@ export function buildDocumentationReadiness(profile, targetStage, sourceIngestio
   return { ...value, hash: sha256(value) };
 }
 
-export function buildAssessmentIntake(dossier, profile, documentationReadiness, registeredSources, sourceIngestion = null) {
+export function buildAssessmentIntake(dossier, profile, documentationReadiness, registeredSources, sourceIngestion = null, declaredDocumentation = null) {
   const provenance = [];
   const seenSources = new Set();
   for (const item of registeredSources) {
@@ -731,6 +743,7 @@ export function buildAssessmentIntake(dossier, profile, documentationReadiness, 
     sourceManifestHash: sha256(provenance.map(({ id, path, sha256: hash, artifactClass: classification }) => ({ id, path, hash, classification }))),
     fieldConfirmations: Object.values(profile.fields).filter((item) => item.confirmedBy).map((item) => ({ field: item.field, confirmedBy: item.confirmedBy, confirmedAt: item.confirmedAt, sourceUnitIds: item.sourceUnitIds })),
     documentationAlignment: documentationReadiness,
+    ...(declaredDocumentation ? { declaredDocumentation } : {}),
     immutable: true
   };
   return { ...intake, hash: sha256(intake) };

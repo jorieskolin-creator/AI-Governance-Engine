@@ -19,6 +19,7 @@ import {
 } from "./integrity.js";
 import { completeCognitiveStep, createCognitiveStepLedger, startCognitiveStep } from "./orchestration.js";
 import { rethrowFatal } from "./failure-policy.js";
+import { validateDeclarationComparison } from "../intake/declaration-comparison.js";
 
 const HIGH_INTEGRITY = new Set(["HIGH", "CRITICAL"]);
 const unique = (values) => [...new Set(values.filter(Boolean))];
@@ -307,6 +308,21 @@ export async function executeCognitiveRun(run, options = {}) {
   const client = options.client ?? new StructuredModelClient({ policy, budget, transport: options.transport, signal: options.signal }); const knowledge = options.knowledge;
   const failedStages = []; const verificationRecords = []; const findingLockRecords = []; const adjudicatedClaims = []; const unresolvedClaims = []; const reanalysisTrace = []; const integrityIncidents = [];
   const claimRecords = new Map(); let claims = []; let lockedFindings = []; const derivedSourceUnits = [];
+  const declaredDocumentation = run.approvedIntake?.declaredDocumentation ?? null;
+  const declarationComparison = run.declarationComparison ? validateDeclarationComparison(run.declarationComparison, run.approvedIntake) : null;
+  const declaredRisks = (declaredDocumentation?.failureModes ?? []).map((row) => ({
+    id: row.id, title: row.title, trigger: row.trigger_or_cause, effect: row.effect_summary,
+    severity: row.severity_user, occurrence: row.occurrence_inherent, detectability: row.detectability_inherent,
+    mappedObjects: row.mapped_objects,
+    claimedMitigations: row.claimed_mitigations.map((item) => ({ control: item.control, type: item.type, declaredStatus: item.evidence_status_observed })),
+    limitations: row.provenance.limitations
+  }));
+  const declarationContext = declaredDocumentation ? {
+    topics: declaredDocumentation.topics,
+    notApplicable: declaredDocumentation.notApplicable,
+    dataSources: declaredDocumentation.dataSources.map(({ categories, usageRights, quality, restrictions }) => ({ categories, usageRights, quality, restrictions })),
+    riskScenarios: declaredRisks
+  } : null;
   run.status = "RUNNING"; run.transmissionManifest = [];
   run.stepLedger ??= createCognitiveStepLedger();
   const onCheckpoint = options.onCheckpoint ?? (async () => {});
@@ -324,7 +340,7 @@ export async function executeCognitiveRun(run, options = {}) {
     const solutionProfiles = profilesForPackets(policy, "SOLUTION_UNDERSTANDING", run, run.packets, { requireAll: false });
     let solutionProfile = solutionProfiles[0];
     const solutionPackets = transmittedPackets(run, solutionProfile.provider);
-    const generated = await client.generate({ profile: solutionProfile, fallbackProfiles: solutionProfiles.slice(1), prompt: solutionPrompt(run.dossier, solutionPackets), schemaName: "solution_model", schema: SOLUTION_MODEL_SCHEMA, packetHash: packetHash(solutionPackets), promptVersion: PROMPT_VERSIONS.solution });
+    const generated = await client.generate({ profile: solutionProfile, fallbackProfiles: solutionProfiles.slice(1), prompt: solutionPrompt(run.dossier, solutionPackets, declarationContext), schemaName: "solution_model", schema: SOLUTION_MODEL_SCHEMA, packetHash: packetHash(solutionPackets), promptVersion: PROMPT_VERSIONS.solution });
     solutionProfile = generated.profile;
     recordTransmission(run, "SOLUTION_UNDERSTANDING", solutionProfile, solutionPackets);
     const candidate = normalizeSolutionCandidates(run.dossier, generated.value, sourceUnits);
@@ -393,7 +409,8 @@ export async function executeCognitiveRun(run, options = {}) {
       const scopedKnowledge = knowledgeForWorkItems(knowledge, domain, batch);
       const output = await client.generate({
         profile: profiles[0], fallbackProfiles: profiles.slice(1),
-        prompt: domainPrompt({ domain, dossier: run.dossier, solutionModel, packets, ...scopedKnowledge, assessmentWorkItems: batch }),
+        prompt: domainPrompt({ domain, dossier: run.dossier, solutionModel, packets, ...scopedKnowledge, assessmentWorkItems: batch,
+          declaredRisks: declaredRisks.filter((row) => row.mappedObjects.some((id) => id.replace(/^AP-/, "").startsWith(domain))) }),
         schemaName: `domain_${domain.toLowerCase()}_claims`, schema: DOMAIN_CLAIMS_SCHEMA,
         packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.domain
       });
@@ -482,7 +499,7 @@ export async function executeCognitiveRun(run, options = {}) {
   const buildProvisional = async () => {
     const lockedEvidence = [...evidenceFromLockedFindings(lockedFindings, sourceUnits, now), ...scanner.evidence];
     const cognitiveCoverage = { required: true, complete: failedStages.length === 0 && coverageMatrix.complete, failedStages: unique(failedStages), domainCount: Object.keys(DOMAINS).length, assessedDomainCount: domainResults.filter((item) => item.status === "COMPLETED").length, claimCount: claimRecords.size, verifiedClaimCount: lockedFindings.length, coverageMatrix };
-    return assessVerifiedSolution({ runId: run.id, dossier: run.dossier, registeredSources: run.registeredSources, sourceIngestion: run.sourceIngestion, registryFindings: scanner.registryFindings, solutionModel, solutionProfile: run.solutionProfile, lockedEvidence, lockedFindings, cognitiveCoverage, cognitive: { solutionModel, claims: [...claimRecords.values()], verificationRecords, adjudicatedClaims, unresolvedClaims, lockedFindings, findingLockRecords, coverageMatrix } }, { knowledge, provisional: true });
+    return assessVerifiedSolution({ runId: run.id, dossier: run.dossier, registeredSources: run.registeredSources, sourceIngestion: run.sourceIngestion, registryFindings: scanner.registryFindings, solutionModel, solutionProfile: run.solutionProfile, declaredDocumentation, declarationComparison, lockedEvidence, lockedFindings, cognitiveCoverage, cognitive: { solutionModel, claims: [...claimRecords.values()], verificationRecords, adjudicatedClaims, unresolvedClaims, lockedFindings, findingLockRecords, coverageMatrix } }, { knowledge, provisional: true });
   };
   let provisional = await buildProvisional(); let synthesis = deterministicNarrative(provisional, lockedFindings); let factCheck = { supported: false, itemResults: [], limitation: "Model synthesis was not completed." }; let factCheckIntegrity = { valid: false }; let synthesisProvider = null;
 
@@ -553,7 +570,7 @@ export async function executeCognitiveRun(run, options = {}) {
     authorityBoundary: "The Engine recommends readiness and required actions. Authorized humans make formal decisions."
   };
   const lockedEvidence = [...evidenceFromLockedFindings(lockedFindings, sourceUnits, now), ...scanner.evidence];
-  const result = await assessVerifiedSolution({ runId: run.id, dossier: run.dossier, registeredSources: run.registeredSources, sourceIngestion: run.sourceIngestion, registryFindings: scanner.registryFindings, solutionModel, solutionProfile: run.solutionProfile, lockedEvidence, lockedFindings, cognitiveCoverage, cognitive }, { knowledge });
+  const result = await assessVerifiedSolution({ runId: run.id, dossier: run.dossier, registeredSources: run.registeredSources, sourceIngestion: run.sourceIngestion, registryFindings: scanner.registryFindings, solutionModel, solutionProfile: run.solutionProfile, declaredDocumentation, declarationComparison, lockedEvidence, lockedFindings, cognitiveCoverage, cognitive }, { knowledge });
   run.result = result; run.status = "COMPLETED"; run.stage = "COMPLETED"; run.completedAt = new Date().toISOString();
   return result;
 }

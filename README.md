@@ -69,7 +69,7 @@ The dashboard can upload a codebase folder or individual supported files. **Disc
 
 ### Documentation Support handoff
 
-Use **Start from a Documentation Support summary** or include the export in the selected source files. The Engine validates the inert HTML or JSON handoff and its digest. A matching digest does not authenticate the author. The handoff is a separate declaration input. The register, outstanding work and reference statuses are shown for review, not used as findings or control results. The Engine never follows the reference paths, and `NOT_RUN` does not count as evidence.
+Use **Start from a Documentation Support summary** or include the export in the selected source files. The Engine validates the inert HTML or JSON handoff and its digest. A matching digest does not authenticate the author. Approved failure modes guide assessment questions and appear in the report with their declaration status. Supporting sources supply evidence independently. The Engine never follows the handoff reference paths, and `NOT_RUN` does not count as evidence. The report includes scoped comparisons against submitted README documentation and supported structured configuration, with differences and their source locations.
 
 **Discover case information** prepares the draft. A valid handoff takes priority for solution name, intended purpose, current lifecycle stage, users and affected groups, and excluded uses. Independent source observations remain available for comparison. These editable declarations are not source citations. Confirm the accountable solution owner separately from the documentation owner. A handoff alone can create a draft. Approval and analysis still require a parsed independent source.
 

@@ -69,9 +69,9 @@ function solutionUnderstanding(dossier, registry, evidence, sourceIngestion) {
   };
 }
 
-async function buildPackage({ dossier, knowledge, registry, evidence, registryFindings, solution, solutionProfile, sourceIngestion, trace, startedAt, runId, schemaVersion, cognitiveCoverage, cognitive, lockedFindings = [] }) {
-  const documentationReadiness = buildDocumentationReadiness(solutionProfile, dossier.targetStage, sourceIngestion);
-  const assessmentIntake = buildAssessmentIntake(dossier, solutionProfile, documentationReadiness, registry.registeredSources, sourceIngestion);
+async function buildPackage({ dossier, knowledge, registry, evidence, registryFindings, solution, solutionProfile, sourceIngestion, trace, startedAt, runId, schemaVersion, cognitiveCoverage, cognitive, declaredDocumentation, declarationComparison, lockedFindings = [] }) {
+  const documentationReadiness = buildDocumentationReadiness(solutionProfile, dossier.targetStage, sourceIngestion, declarationComparison);
+  const assessmentIntake = buildAssessmentIntake(dossier, solutionProfile, documentationReadiness, registry.registeredSources, sourceIngestion, declaredDocumentation);
   const applicability = await timed(trace, "applicability", () => evaluateApplicability(knowledge.requirements, dossier, startedAt));
   const controls = await timed(trace, "control-assessment", () => assessControls(knowledge.controls, applicability, evidence, dossier, knowledge.antipatterns));
   const antiPatterns = await timed(trace, "antipattern-assessment", () => assessAntiPatterns(knowledge.antipatterns, evidence, controls));
@@ -115,7 +115,7 @@ async function buildPackage({ dossier, knowledge, registry, evidence, registryFi
     solutionProfile,
     documentationReadiness,
     sourceIngestion,
-    documentationContradictions: solutionProfile.contradictions,
+    documentationContradictions: documentationReadiness.contradictions,
     documentationGate: gates.find((item) => item.code === "DOCUMENTATION_ALIGNMENT_REQUIRED") ?? null,
     recommendation,
     dimensions: readiness.dimensions,
@@ -183,7 +183,8 @@ export async function assessVerifiedSolution(input, options = {}) {
     dossier, knowledge, registry, evidence, registryFindings: registry.findings,
     solution: { ...input.solutionModel, sourceIngestion }, solutionProfile, sourceIngestion, trace, startedAt, runId: input.runId,
     schemaVersion: "2.6.0", cognitiveCoverage: input.cognitiveCoverage,
-    cognitive: input.cognitive, lockedFindings: input.lockedFindings ?? input.cognitive?.lockedFindings ?? []
+    cognitive: input.cognitive, declaredDocumentation: input.declaredDocumentation, declarationComparison: input.declarationComparison,
+    lockedFindings: input.lockedFindings ?? input.cognitive?.lockedFindings ?? []
   });
   return options.provisional ? pkg : validateReadinessPackage(pkg);
 }

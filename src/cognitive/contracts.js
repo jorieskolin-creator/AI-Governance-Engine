@@ -23,7 +23,7 @@ export function validatePreflightInput(input, options = {}) {
   invariant(input && typeof input === "object", "request body is required");
   const dossier = input.dossier ? validateDossier(input.dossier) : null;
   if (!options.dossierOptional) invariant(dossier, "dossier is required");
-  invariant(Array.isArray(input.sources) && input.sources.length > 0, "sources must contain at least one item");
+  invariant(Array.isArray(input.sources) && (input.sources.length > 0 || options.allowEmptySources), "sources must contain at least one item");
   const sources = input.sources.map((source, index) => {
     invariant(source && typeof source === "object", `sources[${index}] must be an object`);
     invariant(typeof source.path === "string" && source.path.trim(), `sources[${index}].path is required`);

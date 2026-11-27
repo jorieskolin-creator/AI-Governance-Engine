@@ -44,7 +44,7 @@
         </div>
         <details class="intake-workspace-section handoff-details">
           <summary>Start from a Documentation Support summary (optional)</summary>
-          <p class="field-hint" id="handoff-instructions">Read a Documentation Support HTML or JSON export in this browser. It can help fill Intake but does not count as a source for analysis. Upload the original documentation, code and test results separately.</p>
+          <p class="field-hint" id="handoff-instructions">A valid Documentation Support HTML or JSON export fills the first Intake draft. You can also include it in your selected files. Upload documentation, code and test results as separate evidence for the assessment.</p>
           <label class="upload-box">Documentation Support handoff<input id="documentation-handoff-file" type="file" accept=".html,.htm,.json" aria-describedby="handoff-instructions" /></label>
           <p id="documentation-handoff-status" class="field-hint" role="status">No handoff selected.</p>
         </details>
@@ -52,9 +52,15 @@
           <button id="discover-button" class="primary-button" type="button">Discover case information</button>
           <button id="request-retrieval-plan" class="secondary-button hidden" type="button">Request Retrieval Suggestions</button>
           <button id="execute-local-reread" class="secondary-button hidden" type="button">Run One Local Re-read</button>
-          <button id="request-ai-proposals" class="secondary-button hidden" type="button">Request GenAI Proposals from Safe Summaries</button>
           <p id="discovery-status" aria-live="polite">Upload sources to generate the first cited intake draft.</p>
         </div>
+        <fieldset id="intake-enrichment-choice" class="intake-workspace-section hidden">
+          <legend>Enrich with GenAI?</legend>
+          <p class="field-hint">YES sends the reviewed safe summaries for gap suggestions and selected Intake text for wording suggestions. You can edit the draft before approving it.</p>
+          <label><input id="include-intake-wording" type="checkbox" /> Include the intended purpose and short entries under Declared documentation for wording review</label>
+          <button id="request-ai-proposals" class="secondary-button" type="button">YES</button>
+          <button id="skip-ai-proposals" class="secondary-button" type="button">NO</button>
+        </fieldset>
         <div id="discovery-results" class="discovery-results hidden" aria-live="polite"></div>
       </section>
 
@@ -64,8 +70,7 @@
           <h3 id="documentation-handoff-title" tabindex="-1">Documentation Support handoff</h3>
           <p id="documentation-handoff-boundary"></p>
           <div id="documentation-handoff-content"></div>
-          <button id="apply-documentation-handoff" class="secondary-button" type="button" disabled>Fill empty Intake fields from handoff</button>
-          <p class="field-hint" id="documentation-handoff-apply-status" role="status">Discover case information from original sources before applying handoff declarations.</p>
+          <p class="field-hint" id="documentation-handoff-apply-status" role="status"></p>
           <details class="intake-workspace-section handoff-details">
             <summary>What the Engine still needs to check</summary>
             <ul>
@@ -79,6 +84,7 @@
         <form id="dossier-form">
           <div class="intake-boundary-notice"><strong>Self-Declared information has a controlled lifecycle boundary</strong><span>Information you add or change can support assessment through Verification and Validation, but progression beyond that stage is blocked until documentary support is verified.</span></div>
           <div id="intake-review-summary" class="intake-review-summary" aria-live="polite"></div>
+          <section id="intake-wording-review" class="intake-workspace-section hidden" aria-live="polite"></section>
           <div class="form-grid two"><label>Solution name · required<input id="name" aria-required="true" placeholder="Detected from product documentation or project manifest" /></label><label>Accountable owner · required<input id="owner" aria-required="true" placeholder="Confirm the accountable solution owner, not just the documentation owner" /></label></div>
           <label>Intended purpose<textarea id="purpose" rows="3" placeholder="Detected from business, product or architecture documentation"></textarea></label>
           <label>Expected value<textarea id="value" rows="2" placeholder="Measurable outcome and value hypothesis"></textarea></label>
@@ -86,7 +92,12 @@
             <label>Current lifecycle stage<select id="current-stage"></select></label><label>Target lifecycle stage<select id="target-stage"></select></label>
             <label>Jurisdictions<input id="jurisdictions" placeholder="Unknown until detected or declared" /></label><label>Regulatory roles<input id="roles" placeholder="Unknown until screened below" /></label>
           </div>
-          <div class="form-grid two"><label>Users and affected groups<input id="users" placeholder="Unknown until detected or declared" /></label><div class="confirmation-note"><strong>Confirmation preserves provenance</strong><span>Corrections become user declarations. They do not erase missing documentation or contradictory source evidence.</span></div></div>
+          <div class="form-grid two"><label>Users and operators<input id="users" placeholder="Unknown until detected or declared" /></label><div class="confirmation-note"><strong>Confirmation preserves provenance</strong><span>Corrections become user declarations. They do not erase missing documentation or contradictory source evidence.</span></div></div>
+          <details class="intake-workspace-section">
+            <summary>Declared documentation, risks and data rules</summary>
+            <p class="field-hint">Review and edit these declarations before approval. The imported failure-mode, data-source and evidence registers appear in the handoff review above.</p>
+            <div id="declared-documentation-topics"></div>
+          </details>
 
           <details class="intake-workspace-section">
             <summary>Applicability and classification questions</summary>
@@ -119,7 +130,7 @@
               <fieldset class="legacy-classification hidden"><legend>Compatibility classification</legend><label>Prohibited-practice candidate<select id="prohibited" class="tri-state"></select></label><label>High-risk candidate<select id="high-risk" class="tri-state"></select></label></fieldset>
             </div>
           </details>
-          <div class="submit-row"><p>This user action approves the filled information, including explicit Unknown and governed Not Applicable selections, as an immutable Intake revision. Analysis can start only from that approved revision.</p><button id="assess-button" class="primary-button" type="submit" disabled>Approve Filled Information and Continue to Analysis</button></div>
+          <div class="submit-row"><p id="intake-approval-status" role="status">Approve the Intake content before starting analysis.</p><button id="assess-button" class="primary-button" type="submit" disabled>Approve content</button><button id="start-analysis-button" class="secondary-button" type="button" disabled>Start analysis</button></div>
         </form>
       </section>
 
@@ -130,7 +141,7 @@
           <p id="intake-approval-message"></p>
           <div class="approval-dialog-actions">
             <button class="secondary-button" type="submit" value="back">Go back</button>
-            <button id="confirm-analysis-button" class="primary-button" type="submit" value="continue">Accept and Continue to Analysis</button>
+            <button id="confirm-analysis-button" class="primary-button" type="submit" value="continue">Approve content</button>
           </div>
         </form>
       </dialog>

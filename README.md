@@ -48,6 +48,16 @@ Only decision-eligible adjudicated claims become locked findings and determinist
 
 The fixed cognitive stages map to three operational roles: `WORKHORSE` handles retrieval planning, semantic routing and routine domain assessment; deterministic extraction remains local. `REASONER` handles editable Intake proposals, solution understanding, adjudication and synthesis. `QUALITY_CHECKER` handles verification and fact-checking. Each role has a deterministic primary and fallback provider/model assignment. Configured, credentialed routes execute directly; there is no separate qualification or test mode. An eligible fallback is attempted after provider failure, timeout, quota/rate-limit failure, refusal, unexpected model identity, or exhausted structured-output repair. Cancellation, lease loss and Engine budget exhaustion never trigger fallback. Cross-provider verification and adjudication exclusions take precedence over role preference, and route admission verifies an independent verifier and third-provider adjudicator. Every response is normalized and schema-validated locally, and the actual provider/model used is retained in provenance.
 
+The opt-in `OPENAI_ANTHROPIC_GOOGLE` profile uses `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `GEMINI_API_KEY`. It requires no legacy provider credentials. Explicit role provider/model pairs override the preset, so remove existing role overrides in the target environment to select the following assignments. An environment without `COGNITIVE_PROVIDER_PROFILE` uses `LEGACY`.
+
+| Role | Primary | Fallback when eligible |
+| --- | --- | --- |
+| Workhorse | `claude-sonnet-5-5` | `gemini-4-neon` |
+| Reasoner | `gpt-6.2-sol` | `claude-sonnet-5-5` |
+| Quality Checker | `gemini-4-neon` | `gpt-6.1-terra` |
+
+Use synthetic sources for staging checks. Verify structured outputs, returned model identity, independent verification and no route to a legacy provider before switching production. `gemini-4-hydrogen` remains a benchmarking candidate for bounded routing and retrieval planning.
+
 The engine returns readiness recommendations such as `READY_WITH_CONDITIONS`, `REMEDIATE_BEFORE_NEXT_STAGE`, `HUMAN_REVIEW_REQUIRED` and `BLOCKED_IN_CURRENT_FORM`. Legal, Privacy, Security, Governance, AI Forum and AI Board decisions remain human acts. `FORMALLY_APPROVED` is reserved for a future trusted decision connector that verifies identity, authority, signature, scope and validity.
 
 ## Local development
@@ -69,9 +79,9 @@ The dashboard can upload a codebase folder or individual supported files. **Disc
 
 ### Documentation Support handoff
 
-Use **Start from a Documentation Support summary** for the exported `doc-support-handoff/1.0.0` JSON or standalone HTML. The browser reads the HTML's inert JSON block and checks its payload digest; a matching digest does not authenticate the author. The handoff itself stays in the browser and is excluded from the source-evidence intake. The register, outstanding work and reference statuses are shown for review, not used as findings or control results. The Engine never follows the reference paths, and `NOT_RUN` does not count as evidence.
+Use **Start from a Documentation Support summary** or include the export in the selected source files. The Engine validates the inert HTML or JSON handoff and its digest. A matching digest does not authenticate the author. Approved failure modes guide assessment questions and appear in the report with their declaration status. Supporting sources supply evidence independently. The Engine never follows the handoff reference paths, and `NOT_RUN` does not count as evidence. The report includes scoped comparisons against submitted README documentation and supported structured configuration, with differences and their source locations.
 
-After discovering independent sources, explicitly fill still-empty Intake fields for solution name, intended purpose, current lifecycle stage, users and affected groups, and excluded uses. These are editable declarations, not source citations. Confirm the accountable solution owner separately: Documentation Support's record owner is responsible for maintaining the document, not necessarily for the solution. Use the Engine's existing Intake fields for target stage, expected value, jurisdiction, roles, structured screening, and any missing operating boundary, exposure or agent-authority details. Upload the actual documentation, code/configuration or executed evidence separately; Engine Intake approval is still required.
+**Discover case information** prepares the draft. A valid handoff takes priority for solution name, intended purpose, current lifecycle stage, users and affected groups, and excluded uses. Independent source observations remain available for comparison. These editable declarations are not source citations. Confirm the accountable solution owner separately from the documentation owner. A handoff alone can create a draft. Approval and analysis still require a parsed independent source.
 
 ## Approved Intake API
 
@@ -79,6 +89,7 @@ The supported assessment workflow uses the v2 run state machine:
 
 1. `POST /api/v2/runs/preflight` parses and screens sources, then builds the deterministic Intake draft.
 2. After reviewing the safe summary package and optional controlled acquired facts, `POST /api/v2/runs/{runId}/discover-recheck` with explicit purpose confirmation optionally requests cited GenAI Intake proposals. Missing-field wording may be synthesized only from field-mapped controlled semantic observations or selected acquired facts. Already acquired local free-text values are not retargeted merely because they are withheld from providers. Selected facts cross this boundary only as `acquired-fact-selection-1.0.0`; free text and raw material cannot be selected. The browser prefills supported proposals only into still-empty fields and leaves them editable or removable. Skipping this step does not block manual resolution.
+   With explicit wording consent, `POST /api/v2/runs/{runId}/intake-wording` submits bounded selected Intake text after local screening. The Engine returns only wording changes constrained to equivalent registered phrases or whitespace. Applying a change still requires review and content approval. Wording requests and their responses are not checkpointed.
 3. `POST /api/v2/runs/{runId}/confirm` requires a value for solution name and accountable owner, an explicit resolution—including `Unknown`—for every other applicable field, and explicit user approval. It then creates the immutable approved Intake snapshot. At this final boundary, an unchanged prefill is recorded as accepted, a changed prefill as edited, and a removed prefill as declined. There is no earlier proposal-acceptance action. Remaining gaps are preserved for downstream analysis and reduce the available assurance rather than blocking the run.
 4. `POST /api/v2/runs/{runId}/execute` starts A–F assessment from that snapshot.
 5. `GET /api/v2/runs/{runId}` and `GET /api/v2/runs/{runId}/result` expose progress and the result.
@@ -125,6 +136,7 @@ See [docs/knowledge-base.md](docs/knowledge-base.md) for the runtime manifest an
 
 - The service is a development skeleton, not a multi-tenant production service.
 - Without `DATABASE_URL`, the v2 run store remains process-local and restarts lose active runs. With PostgreSQL, approved Intake and terminal safe state are recoverable; pre-approval recovery requires source re-upload because raw evidence is deliberately excluded, and interrupted provider execution is never resumed automatically.
+- Run content expires after one hour by default. While the service is running, a PostgreSQL sweep clears expired run payloads and leaves a minimal tombstone. Cancelled runs also clear persisted payloads. Hosting backups and provider retention are governed by their own deployments and agreements.
 - After final Intake approval, queue admission purges local raw source units and retains only the durable safe-summary package plus an audit marker. PostgreSQL workers atomically claim that work with bounded service concurrency. Queued work that never started can recover automatically; interrupted work never replays without the explicit recovery acknowledgement.
 - Cancellation aborts provider requests on the owning worker and purges evidence. In a multi-worker PostgreSQL deployment, cancellation on another worker is observed through failed heartbeat renewal; the current schema does not use PostgreSQL notifications for immediate cross-worker signalling.
 - Authentication and tenant authorization remain production-hardening work.

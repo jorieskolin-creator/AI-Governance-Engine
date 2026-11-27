@@ -19,12 +19,20 @@ const ROLE_DEFAULTS = Object.freeze({
   QUALITY_CHECKER: Object.freeze({ PRIMARY: Object.freeze({ provider: "OPENAI", model: "gpt-5.6" }), FALLBACK: Object.freeze({ provider: "XAI", model: "grok-4.6" }) })
 });
 
-function configuredRoleSlot(env, operationalRole, slot) {
+const PROVIDER_PROFILES = Object.freeze({
+  LEGACY: ROLE_DEFAULTS,
+  OPENAI_ANTHROPIC_GOOGLE: Object.freeze({
+    WORKHORSE: Object.freeze({ PRIMARY: Object.freeze({ provider: "ANTHROPIC", model: "claude-sonnet-5-5" }), FALLBACK: Object.freeze({ provider: "GOOGLE", model: "gemini-4-neon" }) }),
+    REASONER: Object.freeze({ PRIMARY: Object.freeze({ provider: "OPENAI", model: "gpt-6.2-sol" }), FALLBACK: Object.freeze({ provider: "ANTHROPIC", model: "claude-sonnet-5-5" }) }),
+    QUALITY_CHECKER: Object.freeze({ PRIMARY: Object.freeze({ provider: "GOOGLE", model: "gemini-4-neon" }), FALLBACK: Object.freeze({ provider: "OPENAI", model: "gpt-6.1-terra" }) })
+  })
+});
+
+function configuredRoleSlot(env, defaults, operationalRole, slot) {
   const prefix = `${operationalRole}_${slot === "PRIMARY" ? "" : "FALLBACK_"}`;
   const providerValue = env[`${prefix}PROVIDER`];
   const modelValue = env[`${prefix}MODEL`];
   if (Boolean(providerValue) !== Boolean(modelValue)) throw new Error(`${prefix}PROVIDER and ${prefix}MODEL must be configured together`);
-  const defaults = ROLE_DEFAULTS[operationalRole][slot];
   const provider = String(providerValue || defaults.provider).trim().toUpperCase();
   const model = String(modelValue || defaults.model).trim();
   providerAdapter(provider);
@@ -36,15 +44,20 @@ export function providerCredentials(env = process.env) {
   return {
     OPENAI: env.OPENAI_API_KEY || env.GPT_API_KEY || null,
     XAI: env.XAI_API_KEY || null,
-    MOONSHOT: env.MOONSHOT_API_KEY || null
+    MOONSHOT: env.MOONSHOT_API_KEY || null,
+    ANTHROPIC: env.ANTHROPIC_API_KEY || null,
+    GOOGLE: env.GEMINI_API_KEY || env.GOOGLE_API_KEY || null
   };
 }
 
 export function modelPolicy(env = process.env) {
   const credentials = providerCredentials(env);
-  const roleSlots = Object.fromEntries(Object.keys(ROLE_DEFAULTS).map((operationalRole) => [operationalRole, {
-    PRIMARY: configuredRoleSlot(env, operationalRole, "PRIMARY"),
-    FALLBACK: configuredRoleSlot(env, operationalRole, "FALLBACK")
+  const preset = String(env.COGNITIVE_PROVIDER_PROFILE || "LEGACY").trim().toUpperCase();
+  if (!Object.hasOwn(PROVIDER_PROFILES, preset)) throw new Error("Unsupported COGNITIVE_PROVIDER_PROFILE");
+  const defaults = PROVIDER_PROFILES[preset];
+  const roleSlots = Object.fromEntries(Object.entries(defaults).map(([operationalRole, slots]) => [operationalRole, {
+    PRIMARY: configuredRoleSlot(env, slots.PRIMARY, operationalRole, "PRIMARY"),
+    FALLBACK: configuredRoleSlot(env, slots.FALLBACK, operationalRole, "FALLBACK")
   }]));
   const profiles = STAGE_DEFINITIONS.flatMap((definition) => ["PRIMARY", "FALLBACK"].map((routePriority) => {
     const configured = roleSlots[definition.operationalRole][routePriority];

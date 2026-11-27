@@ -1,7 +1,7 @@
 import { renderAssuranceSummary, standaloneReportHtml } from "/report.js";
 import { binaryMimeTypes, classifyUploadPath, provisionalIngestionManifest } from "/upload-types.js";
 import { sanitizeRestrictedValue } from "/content-policy.js";
-import { embeddedDocumentationHandoff, fillEmptyHandoffControls, HANDOFF_MAX_BYTES, HANDOFF_REVIEW_INSTRUCTION, HANDOFF_REVIEW_ONLY, parseDocumentationHandoff } from "/documentation-handoff.js";
+import { DECLARED_TOPIC_GROUPS, embeddedDocumentationHandoff, HANDOFF_MAX_BYTES, HANDOFF_REVIEW_INSTRUCTION, HANDOFF_REVIEW_ONLY, parseDocumentationHandoff } from "/documentation-handoff.js";
 
 const STAGES = [
   "QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION",
@@ -19,8 +19,13 @@ let latestSolutionProfile = null;
 let latestDiscoveryRecheck = null;
 let latestDiscoveryContext = null;
 let documentationHandoff = null;
+let documentationHandoffSource;
 let handoffReadId = 0;
+let discoveryAttempt = 0;
+const handoffDraftControls = new Map();
+const declaredTopicBaselines = new Map();
 let intakeApprovalStarted = false;
+let approvedIntakeRevision = null;
 let retrievalPlanningProviders = [];
 let proposalProviders = [];
 let modelReadiness = { status: "UNAVAILABLE", issueCodes: ["MODEL_POLICY_UNAVAILABLE"] };
@@ -31,6 +36,7 @@ const acceptedAcquiredCandidateByField = new Map();
 const editedAcquiredCandidateByField = new Map();
 const declinedAcquiredCandidateByField = new Map();
 const intakeControlBaseline = new Map();
+let intakeQuestionBaseline = {};
 let INTAKE_CONTROL_FIELDS = Object.freeze({});
 let writeAccess = "OPEN";
 let writeUnlocked = false;
@@ -292,13 +298,12 @@ function updateQuestionnaireConditions() {
 }
 
 function questionnaireAnswers() {
-  const now = new Date().toISOString();
-  return Object.fromEntries((intakeQuestionnaire.questions ?? []).map((question) => [question.id, questionnaireAnswerRecord(question, now)]));
+  return Object.fromEntries((intakeQuestionnaire.questions ?? []).map((question) => [question.id, questionnaireAnswerRecord(question, null)]));
 }
 
 function fillQuestionnaire(answers = {}) {
   for (const question of intakeQuestionnaire.questions ?? []) {
-    const answer = answers[question.id]; if (!answer) continue;
+    const answer = answers[question.id] ?? { answerState: "UNKNOWN", values: [] };
     const card = document.querySelector(`.question-card[data-question-id="${question.id}"]`); if (!card) continue;
     if (question.type === "SINGLE") card.querySelector("select").value = answer.answerState ?? "UNKNOWN";
     else for (const input of card.querySelectorAll('input[type="checkbox"]')) input.checked = (answer.values ?? []).includes(input.value);
@@ -334,23 +339,21 @@ function fillDossier(dossier) {
   setTri("uses-agents", dossier.agent?.usesAgents); setTri("takes-actions", dossier.agent?.canTakeActions); setTri("irreversible", dossier.agent?.irreversibleActions); setTri("human-override", dossier.agent?.humanOverride);
   setTri("prohibited", dossier.classification?.prohibitedPractice); setTri("high-risk", dossier.classification?.highRiskCandidate);
   fillQuestionnaire(dossier.intakeAnswers ?? {});
+  intakeQuestionBaseline = Object.fromEntries(intakeQuestionnaire.questions.map((question) => [question.id, collectedQuestionAnswer(question)]));
   intakeControlBaseline.clear();
   for (const controlId of Object.keys(INTAKE_CONTROL_FIELDS)) intakeControlBaseline.set(controlId, intakeControlValue(controlId));
 }
 
-function canApplyDocumentationHandoff() {
-  return Boolean(documentationHandoff?.suggestions.length && activeRunId && !intakeApprovalStarted &&
-    !$("assess-button").disabled && latestDiscoveryContext?.sourceIngestion?.parsedCount > 0);
+function updateDocumentationHandoffAction(message) {
+  $("documentation-handoff-apply-status").textContent = message ?? (activeRunId
+    ? "Handoff declarations seed Intake. You can edit them and review any differences with the sources before approval."
+    : "Select Discover case information to prepare the Intake draft.");
 }
 
-function updateDocumentationHandoffAction(message) {
-  const canApply = canApplyDocumentationHandoff();
-  $("apply-documentation-handoff").disabled = !canApply;
-  $("documentation-handoff-apply-status").textContent = message ?? (canApply
-    ? "Only empty fields are filled. These values remain editable, Self-Declared Intake."
-    : !documentationHandoff?.suggestions.length ? "No reusable Intake fields were supplied in this handoff."
-      : intakeApprovalStarted ? "Start a new discovery to apply declarations after Intake approval."
-        : "Discover case information from original sources before applying handoff declarations.");
+function clearIntakeApproval() {
+  approvedIntakeRevision = null;
+  $("start-analysis-button").disabled = true;
+  $("intake-approval-status").textContent = "Approve the Intake content before starting analysis.";
 }
 
 function handoffDetails(title, entries) {
@@ -372,7 +375,7 @@ function renderDocumentationHandoff() {
   const { documentationConfirmed, suggestions, context, entries, evidence, work } = documentationHandoff;
   $("documentation-handoff-boundary").textContent = `${documentationConfirmed ? "Marked documentation-confirmed" : "Draft documentation"} · Payload digest matches (not a signature). All information below is supplied by the handoff, not verified by the Engine.`;
   if (suggestions.length) content.append(handoffDetails("Reusable Intake declarations", suggestions.map(({ label: name, value, controlId }) => `${name}: ${controlId === "current-stage" ? label(value) : value}`)));
-  if (context.length) content.append(handoffDetails("Other documentation context (review only)", context.map(([name, value]) => `${name}: ${value}`)));
+  if (context.length) content.append(handoffDetails("Imported documentation context", context.map(([name, value]) => `${name}: ${value}`)));
   const risks = el("details", "intake-workspace-section handoff-details");
   risks.append(el("summary", "", `Failure Mode Register (${entries.length}, declared)`));
   if (!entries.length) risks.append(el("p", "", "No failure modes declared."));
@@ -393,15 +396,58 @@ function renderDocumentationHandoff() {
     risks.append(handoffDetails(`${entry.id} · ${entry.title || "Untitled failure mode"}`, notes));
   }
   content.append(risks);
+  if (documentationHandoff.dataSources.length) content.append(handoffDetails("Declared data sources", documentationHandoff.dataSources.map((item) => `${item.id} · ${item.name} · ${item.usageRights || "Usage rights unknown"}`)));
   if (evidence.length) content.append(handoffDetails("Evidence index (references only)", evidence.map((item) => `${item.id} · ${item.title || "Untitled reference"} · ${item.reference || "No reference supplied"} · Status reported by handoff: ${item.verification || "Unknown"}`)));
   if (work.length) content.append(handoffDetails("Outstanding work", work.map((item) => `${item.code} · ${item.title} — ${item.permittedNextAction}`)));
 }
 
+function declaredTopicInputs() {
+  return [...$("declared-documentation-topics").querySelectorAll("textarea[data-topic]")];
+}
+
+function documentationEdits() {
+  return Object.fromEntries(declaredTopicInputs().filter((input) => input.value !== declaredTopicBaselines.get(input.dataset.topic))
+    .map((input) => [input.dataset.topic, input.value]));
+}
+
+function renderDeclaredTopics(handoff = null, edits = {}) {
+  declaredTopicBaselines.clear();
+  const root = $("declared-documentation-topics");
+  root.replaceChildren(...DECLARED_TOPIC_GROUPS.map(([title, fields]) => {
+    const group = el("fieldset", "form-grid two");
+    group.append(el("legend", "", title));
+    for (const [id, heading] of fields) {
+      const label = el("label", "", heading);
+      const input = el("textarea");
+      input.dataset.topic = id;
+      input.rows = 2;
+      input.maxLength = 10000;
+      const baseline = handoff?.answers[id] ?? "";
+      input.value = edits[id] ?? baseline;
+      input.placeholder = "No information offered";
+      declaredTopicBaselines.set(id, baseline);
+      label.append(input);
+      const ref = handoff?.evidenceRefs[id];
+      if (ref) label.append(el("span", "field-hint", `Handoff references: ${ref}`));
+      group.append(label);
+    }
+    return group;
+  }));
+}
+
 async function reviewDocumentationHandoff(event) {
   const readId = ++handoffReadId;
+  discoveryAttempt++;
+  clearIntakeApproval();
+  activeRunId = null;
+  latestDiscoveryContext = null;
+  intakeApprovalStarted = false;
+  $("assess-button").disabled = true;
+  updateAcquisitionActions();
   const file = event.target.files[0];
   const status = $("documentation-handoff-status");
   documentationHandoff = null;
+  documentationHandoffSource = undefined;
   renderDocumentationHandoff();
   if (!file) { status.textContent = "No handoff selected."; return; }
   status.textContent = "Checking the handoff…";
@@ -413,21 +459,13 @@ async function reviewDocumentationHandoff(event) {
     const handoff = await parseDocumentationHandoff(source);
     if (readId !== handoffReadId) return;
     documentationHandoff = handoff;
+    documentationHandoffSource = source;
     renderDocumentationHandoff();
-    status.textContent = "Handoff loaded for review. It was not added as an evidence source.";
+    status.textContent = "Handoff ready to populate Intake. Select Discover case information.";
     $("documentation-handoff-title").focus();
   } catch (error) {
     if (readId === handoffReadId) status.textContent = `Cannot review the handoff: ${error.message}`;
   }
-}
-
-function applyDocumentationHandoff() {
-  if (!canApplyDocumentationHandoff()) return;
-  const filled = fillEmptyHandoffControls(documentationHandoff.suggestions, $, (controlId) => {
-    const fieldId = INTAKE_CONTROL_FIELDS[controlId];
-    return latestSolutionProfile?.fields[fieldId]?.status === "CONFLICTING";
-  }, (control) => control.dispatchEvent(new Event("input", { bubbles: true })));
-  updateDocumentationHandoffAction(filled ? `${filled} field(s) filled as Self-Declared. Review the filled fields before approving Intake.` : "No empty, non-conflicting fields matched. Existing values and conflicts were left unchanged.");
 }
 
 function intakeControlValue(controlId) {
@@ -439,6 +477,8 @@ function renderIntakeWorkspace(profile, recheck = null) {
   if (!profile) return;
   latestDiscoveryRecheck = recheck ?? latestDiscoveryRecheck;
   const aiByField = new Map((latestDiscoveryRecheck?.candidates ?? []).map((item) => [item.field, item]));
+  const dossier = dossierFromForm();
+  const conflictingFields = new Set(Object.values(profile.fields).filter((item) => item.status === "CONFLICTING").map((item) => item.field));
   for (const [controlId, field] of Object.entries(INTAKE_CONTROL_FIELDS)) {
     const control = $(controlId); if (!control) continue;
     const host = control.closest("label") ?? control.closest("fieldset"); if (!host) continue;
@@ -446,11 +486,17 @@ function renderIntakeWorkspace(profile, recheck = null) {
     const fact = profile.fields[field];
     const ai = aiByField.get(field);
     const edited = editedIntakeFields.has(field);
+    const fromHandoff = handoffDraftControls.has(controlId) && !edited && !prefilledProposalByField.has(field);
+    const differed = fromHandoff && (fact?.status === "CONFLICTING" ||
+      (fact?.status !== "UNKNOWN" && fact?.value != null && !sameIntakeValue(dossierPathValue(dossier, field), fact.value)));
+    if (differed) conflictingFields.add(field);
     const state = acceptedAcquiredCandidateByField.has(field) ? { tone: "observed", text: "Recovered deterministic candidate selected · editable · enters Intake only on final approval" }
       : editedAcquiredCandidateByField.has(field) ? { tone: "self-declared", text: "Recovered candidate edited by user · treated as Self-Declared" }
         : declinedAcquiredCandidateByField.has(field) ? { tone: "missing", text: "Recovered candidate declined · provide a value or resolve as Unknown / Not Applicable" }
           : prefilledProposalByField.has(field) ? { tone: "review", text: "GenAI proposal prefilled · editable or removable · becomes a user decision only on final approval" }
       : edited ? { tone: "self-declared", text: "Self-Declared · changed by user · V&V lifecycle cap applies" }
+      : differed ? { tone: "conflicting", text: `Documentation Support declaration differs from the submitted source: ${displayIntakeValue(fact?.value)}. Review both before approval.` }
+      : fromHandoff ? { tone: "self-declared", text: "Documentation Support declaration · editable · user approval required" }
       : fact?.status === "CONFLICTING" ? { tone: "conflicting", text: "Conflict · source values require resolution" }
         : ai?.recommendation === "REVIEW_REWRITE" ? { tone: "review", text: "AI wording proposal available · accepting it becomes Self-Declared" }
           : ai?.recommendation === "REVIEW_CANDIDATE" ? { tone: "review", text: "AI source-grounded candidate available · user decision required" }
@@ -463,10 +509,11 @@ function renderIntakeWorkspace(profile, recheck = null) {
   const facts = Object.values(profile.fields);
   const declaredFields = new Set(facts.filter((item) => item.factClass === "SELF_DECLARED").map((item) => item.field));
   for (const field of editedIntakeFields) declaredFields.add(field);
+  for (const controlId of handoffDraftControls.keys()) declaredFields.add(INTAKE_CONTROL_FIELDS[controlId]);
   const counts = {
-    observed: facts.filter((item) => item.factClass === "OBSERVED" && item.status !== "CONFLICTING").length,
-    missing: facts.filter((item) => item.status === "UNKNOWN" && !editedIntakeFields.has(item.field)).length,
-    conflicting: facts.filter((item) => item.status === "CONFLICTING").length,
+    observed: facts.filter((item) => item.factClass === "OBSERVED" && !declaredFields.has(item.field) && !conflictingFields.has(item.field)).length,
+    missing: facts.filter((item) => item.status === "UNKNOWN" && dossierPathValue(dossier, item.field) === null).length,
+    conflicting: conflictingFields.size,
     declared: declaredFields.size
   };
   const summary = $("intake-review-summary"); summary.replaceChildren(
@@ -644,9 +691,8 @@ function missingAnalysisFields(dossier) {
 function requestIntakeApproval(resolutions) {
   const unresolvedCount = Object.values(resolutions).filter((decision) => ["USER_SELECTED_UNKNOWN", "CONFLICT_REQUIRES_RESOLUTION"].includes(decision.resolutionState)).length;
   $("intake-approval-message").textContent = unresolvedCount
-    ? `${unresolvedCount} applicable Intake field(s) remain empty or unresolved. You may go back and add information, or accept the gaps and continue. Analysis will treat them as evidence limitations and may produce a lower-readiness outcome.`
-    : "All applicable Intake fields are filled. Continue when you are ready to start Analysis.";
-  $("confirm-analysis-button").textContent = unresolvedCount ? "Accept and Continue to Analysis" : "Continue to Analysis";
+    ? `${unresolvedCount} applicable Intake field(s) remain empty or unresolved. You may go back and add information or approve the draft with those gaps. Analysis will treat them as evidence limitations.`
+    : "All applicable Intake fields are filled. Approve this revision to make it available for analysis.";
   const dialog = $("intake-approval-dialog");
   dialog.returnValue = "";
   dialog.showModal();
@@ -703,6 +749,10 @@ async function selectedSources() {
   const sourceContainerCount = sourceIngestion.items.filter((item) => item.reasonCode === "UNSUPPORTED_SOURCE_CONTAINER").length;
   const sourceContainerNotice = sourceContainerCount ? ` ${sourceContainerCount} ZIP archive(s) must be extracted locally and selected as a folder.` : "";
   if (!sources.length) throw new Error(`No supported source could be prepared. ${sourceIngestion.excludedCount} file(s) were excluded and ${sourceIngestion.failedCount + sourceIngestion.unsafeCount} require review.${sourceContainerNotice}`);
+  const currentFiles = [...$("source-folder").files, ...$("source-files").files];
+  if (files.some((file, index) => file !== currentFiles[index]) || files.length !== currentFiles.length) {
+    throw new Error("Source selection changed while reading files. Start discovery again.");
+  }
   preparedSources = { sources, sourceIngestion };
   $("discovery-status").textContent = `${sourceIngestion.acceptedCount} supported file(s) prepared · ${sourceIngestion.excludedCount} disclosed exclusion(s) · ${sourceIngestion.failedCount + sourceIngestion.unsafeCount} file(s) require review.${sourceContainerNotice}`;
   return preparedSources;
@@ -793,10 +843,10 @@ function renderAcquisitionStages(root) {
 function updateAcquisitionActions() {
   const context = latestDiscoveryContext;
   const privacyBlocked = context?.dlpFindings?.some((item) => item.blocking) ?? true;
-  const planAvailable = !privacyBlocked && !context?.retrievalPlan && (context?.intakeGapAnalysis?.summary?.boundedRetrievalFieldCount ?? 0) > 0 && retrievalPlanningProviders.length > 0;
+  const planAvailable = !intakeApprovalStarted && !privacyBlocked && !context?.retrievalPlan && (context?.intakeGapAnalysis?.summary?.boundedRetrievalFieldCount ?? 0) > 0 && retrievalPlanningProviders.length > 0;
   $("request-retrieval-plan").classList.toggle("hidden", !planAvailable);
   $("request-retrieval-plan").disabled = false;
-  const rereadAvailable = context?.status === "AWAITING_INTAKE_CONFIRMATION"
+  const rereadAvailable = !intakeApprovalStarted && context?.status === "AWAITING_INTAKE_CONFIRMATION"
     && context?.stage === "DETERMINISTIC_DISCOVERY_COMPLETED"
     && context?.retrievalPlan?.status === "COMPLETED"
     && !context?.localReread
@@ -875,7 +925,8 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
   if (recheck) {
     const acceptedCount = recheck.candidates?.filter((item) => item.recommendation === "ACCEPT_CURRENT").length ?? 0;
     const actionCandidates = recheck.candidates?.filter((item) => item.recommendation !== "ACCEPT_CURRENT") ?? [];
-    const message = recheck.status === "COMPLETED"
+    const message = recheck.status === "NO_GAPS" ? "The draft has no eligible empty fields for GenAI to fill."
+      : recheck.status === "COMPLETED"
       ? `AI Intake proposals completed: ${acceptedCount} current value(s) supported as written; ${actionCandidates.length} field(s) need review or more information. Supported proposals are prefilled only into empty fields and remain editable or removable until final approval.`
       : recheck.status === "BLOCKED_BY_LOCAL_DLP"
         ? "AI semantic recheck was blocked by local source screening. Missing fields remain unknown until documented or declared by the user."
@@ -886,7 +937,7 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
       details.append(el("summary", "", `Review ${actionCandidates.length} AI verification exception(s)`));
       const candidates = el("ul", "discovery-candidates");
       for (const candidate of actionCandidates) {
-        const displayedValue = candidate.value || (candidate.recommendation === "PROVIDE_INFORMATION" ? "Information not found in submitted material" : "No usable proposal");
+        const displayedValue = candidate.value || (candidate.status === "NOT_FOUND" ? "No information offered" : "No usable proposal");
         const item = el("li", "", `${label(candidate.field)} · ${label(candidate.recommendation)}: ${displayedValue}. ${candidate.rationale}`);
         const field = intakeFieldRegistry.fields.find((entry) => entry.id === candidate.field);
         const proposedValue = field ? proposalFieldValue(field, candidate.value) : null;
@@ -913,15 +964,29 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
 }
 
 async function discoverCaseInformation() {
+  const attempt = ++discoveryAttempt;
+  clearIntakeApproval();
+  $("intake-wording-review").classList.add("hidden");
+  $("include-intake-wording").checked = false;
   $("error").classList.add("hidden"); $("discover-button").disabled = true; $("assess-button").disabled = true;
   updateDocumentationHandoffAction();
-  for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
+  for (const id of ["request-retrieval-plan", "execute-local-reread", "intake-enrichment-choice"]) $(id).classList.add("hidden");
   setIntakeFlow("DETERMINISTIC");
   $("discovery-status").textContent = "Stage 2 of 5 · Parsing sources locally and building deterministic cited facts…";
   try {
     const prepared = await selectedSources();
-    if (!prepared.sources.length) throw new Error("Select a folder or one or more supported files first.");
-    const preflight = await postJson("/api/v2/runs/preflight", prepared);
+    if ($("documentation-handoff-file").files.length && !documentationHandoffSource) throw new Error("Choose a valid Documentation Support handoff or clear that file selection.");
+    if (!prepared.sources.length && !documentationHandoffSource) throw new Error("Select a folder, supported files, or a Documentation Support handoff.");
+    const preflight = await postJson("/api/v2/runs/preflight", { ...prepared, documentationHandoff: documentationHandoffSource });
+    if (attempt !== discoveryAttempt) return;
+    const manualValues = [...Object.entries(INTAKE_CONTROL_FIELDS)].filter(([, field]) => editedIntakeFields.has(field))
+      .map(([controlId, field]) => ({ controlId, field, value: intakeControlValue(controlId) }));
+    const manualAnswers = Object.fromEntries(intakeQuestionnaire.questions.flatMap((question) => {
+      const answer = collectedQuestionAnswer(question);
+      const baseline = intakeQuestionBaseline[question.id];
+      return baseline && JSON.stringify(answer) !== JSON.stringify(baseline) ? [[question.id, answer]] : [];
+    }));
+    const manualTopics = documentationEdits();
     activeRunId = preflight.runId;
     latestSolutionProfile = preflight.solutionProfile;
     latestDiscoveryContext = {
@@ -941,11 +1006,27 @@ async function discoverCaseInformation() {
       recheck: preflight.discoveryRecheck,
       selectedAcquiredFactIds: []
     };
-    fillDossier(preflight.solutionProfile.suggestedDossier);
+    documentationHandoff = preflight.documentationHandoff;
+    renderDeclaredTopics(documentationHandoff, manualTopics);
+    const draft = preflight.intakeDraft ?? preflight.solutionProfile.suggestedDossier;
+    fillDossier(draft);
+    if (Object.keys(manualAnswers).length) fillQuestionnaire({ ...draft.intakeAnswers, ...manualAnswers });
+    handoffDraftControls.clear();
+    for (const item of documentationHandoff?.suggestions ?? []) handoffDraftControls.set(item.controlId, item.value);
+    for (const { controlId, field, value } of manualValues) {
+      if (controlId === "data-categories") {
+        const categories = new Set(JSON.parse(value));
+        for (const box of $(controlId).querySelectorAll('input[type="checkbox"]')) box.checked = categories.has(box.value);
+      } else $(controlId).value = value;
+      if (intakeControlValue(controlId) !== intakeControlBaseline.get(controlId)) editedIntakeFields.add(field);
+    }
+    if (documentationHandoff) $("documentation-handoff-status").textContent = "Handoff applied to the Intake draft.";
+    renderDocumentationHandoff();
     renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, null, preflight.citationIndex, preflight.acquisitionDiagnostics);
     const blocked = preflight.dlpFindings.some((item) => item.blocking);
-    $("request-ai-proposals").classList.toggle("hidden", blocked || proposalProviders.length === 0);
+    $("intake-enrichment-choice").classList.remove("hidden");
     $("request-ai-proposals").disabled = blocked || proposalProviders.length === 0;
+    $("skip-ai-proposals").disabled = false;
     setIntakeFlow("USER_RESOLUTION", { limitedSteps: ["AI_VERIFICATION"] });
     const unresolved = Object.values(preflight.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED").length;
     $("discovery-status").textContent = blocked
@@ -953,11 +1034,16 @@ async function discoverCaseInformation() {
       : proposalProviders.length
         ? `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). Resolve it manually or explicitly request optional GenAI proposals from safe summaries.`
         : `Stage 4 of 5 · Deterministic draft ready with ${unresolved} unresolved field(s). GenAI proposals are unavailable because no configured Reasoner route has an available credential; resolve the Intake manually.`;
-    $("assess-button").disabled = false;
+    $("assess-button").disabled = preflight.sourceIngestion.parsedCount === 0;
+    if (!preflight.sourceIngestion.parsedCount) {
+      $("discovery-status").textContent = "The draft is ready to edit. Add at least one supporting source before approval and analysis.";
+      updateAcquisitionActions();
+    }
     intakeApprovalStarted = false;
     updateDocumentationHandoffAction();
     $("assessment-input").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
+    if (attempt !== discoveryAttempt) return;
     $("discovery-status").textContent = "Discovery could not be completed."; $("error").textContent = error.message; $("error").classList.remove("hidden");
   } finally { $("discover-button").disabled = false; }
 }
@@ -1030,31 +1116,88 @@ async function executeLocalReread() {
 
 async function requestAiProposals() {
   if (!activeRunId || !latestDiscoveryContext) return;
+  const runId = activeRunId;
+  const attempt = discoveryAttempt;
+  const requestWording = $("include-intake-wording").checked;
   $("error").classList.add("hidden");
   $("request-ai-proposals").disabled = true;
+  $("skip-ai-proposals").disabled = true;
   setIntakeFlow("AI_VERIFICATION");
   $("discovery-status").textContent = "Stage 3 of 5 · Sending only the reviewable safe summaries for optional GenAI proposals…";
   let recheck;
   try {
     const selectedAcquiredFactIds = [...document.querySelectorAll("[data-acquired-fact-id]:checked")].map((input) => input.value);
+    const dossier = dossierFromForm();
+    const occupiedFieldIds = intakeFieldRegistry.fields.filter((field) => {
+      if (field.questionId) return (dossier.intakeAnswers?.[field.questionId]?.answerState ?? "UNKNOWN") !== "UNKNOWN";
+      return dossierPathValue(dossier, field.id) !== null;
+    }).map((field) => field.id);
     latestDiscoveryContext.selectedAcquiredFactIds = selectedAcquiredFactIds;
-    recheck = await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/discover-recheck`, {
+    recheck = await postJson(`/api/v2/runs/${encodeURIComponent(runId)}/discover-recheck`, {
       confirmed: true,
       purpose: "INTAKE_PROPOSALS_FROM_SAFE_SUMMARIES",
       acquiredFactPackageHash: latestDiscoveryContext.acquiredFacts.packageHash,
-      selectedAcquiredFactIds
+      selectedAcquiredFactIds, occupiedFieldIds
     });
   } catch {
     recheck = { status: "UNAVAILABLE", failureCode: "INTAKE_AI_VERIFICATION_REQUEST_FAILED" };
   }
+  if (runId !== activeRunId || attempt !== discoveryAttempt || approvedIntakeRevision) return;
   latestDiscoveryContext.recheck = recheck;
   renderDiscovery(latestDiscoveryContext.profile, latestDiscoveryContext.dlpFindings, recheck, latestDiscoveryContext.citationIndex, latestDiscoveryContext.acquisitionDiagnostics);
   const completed = recheck.status === "COMPLETED";
   setIntakeFlow("USER_RESOLUTION", { limitedSteps: completed ? [] : ["AI_VERIFICATION"] });
-  $("request-ai-proposals").classList.add("hidden");
+  $("intake-enrichment-choice").classList.add("hidden");
   $("discovery-status").textContent = completed
-    ? "Stage 4 of 5 · Supported GenAI proposals were prefilled into empty Intake fields. Edit or remove them as needed; only final approval accepts the filled information and starts analysis."
-    : `Stage 4 of 5 · GenAI proposals were ${label(recheck.status).toLowerCase()}. Continue resolving the deterministic Intake manually.`;
+    ? "Stage 4 of 5 · Supported proposals were prefilled into empty Intake fields. Review and edit them before selecting Approve content."
+    : recheck.status === "NO_GAPS" ? "The draft has no eligible empty fields for GenAI to fill. Continue reviewing Intake."
+      : `Stage 4 of 5 · GenAI proposals were ${label(recheck.status).toLowerCase()}. Continue resolving the deterministic Intake manually.`;
+  if (requestWording) await requestIntakeWording(runId, attempt);
+}
+
+async function requestIntakeWording(runId, attempt) {
+  const fields = new Map([["purpose", $("purpose")], ...declaredTopicInputs().map((input) => [input.dataset.topic, input])]);
+  const items = [...fields].filter(([, input]) => input.value.trim() && input.value.length <= 1200)
+    .map(([id, input]) => ({ id, text: input.value }));
+  if (!items.length) return;
+  const root = $("intake-wording-review");
+  root.replaceChildren(el("p", "", "Checking wording in the selected Intake text…"));
+  root.classList.remove("hidden");
+  const current = () => runId === activeRunId && attempt === discoveryAttempt && !approvedIntakeRevision;
+  try {
+    const result = await postJson(`/api/v2/runs/${encodeURIComponent(runId)}/intake-wording`, {
+      confirmed: true, purpose: "INTAKE_WORDING", acquisitionManifestHash: latestDiscoveryContext.sourceIngestion.manifestHash, items
+    });
+    if (!current()) return;
+    root.replaceChildren(el("h3", "", "Wording suggestions"));
+    if (!result.suggestions.length) root.append(el("p", "", "No eligible wording changes were returned."));
+    for (const suggestion of result.suggestions) {
+      const input = fields.get(suggestion.id);
+      if (input?.value !== suggestion.original) continue;
+      const item = el("article", "");
+      const button = el("button", "secondary-button", "Use suggested wording");
+      button.type = "button";
+      button.addEventListener("click", () => {
+        if (!current() || input.value !== suggestion.original) {
+          item.replaceChildren(el("p", "", "This suggestion is no longer current."));
+          return;
+        }
+        input.value = suggestion.text;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        item.remove();
+      });
+      item.append(el("h4", "", label(suggestion.id)), el("p", "", suggestion.original), el("p", "", suggestion.text), button);
+      root.append(item);
+    }
+  } catch {
+    if (current()) root.replaceChildren(el("p", "", "Wording suggestions are unavailable. Continue editing Intake manually."));
+  }
+}
+
+function skipAiProposals() {
+  $("intake-enrichment-choice").classList.add("hidden");
+  $("discovery-status").textContent = "GenAI enrichment skipped. Review and edit the Intake draft before selecting Approve content.";
+  $("name").focus();
 }
 
 function renderRecommendation(pkg) {
@@ -1154,7 +1297,10 @@ function renderPackage(pkg) {
 }
 
 async function loadSample() {
+  const attempt = ++discoveryAttempt;
   const response = await fetch("/api/sample"); const sample = await response.json();
+  if (attempt !== discoveryAttempt) return;
+  clearIntakeApproval();
   fillDossier(sample.dossier);
   latestSolutionProfile = null;
   sampleSources = sample.sources.map((source) => ({
@@ -1164,11 +1310,14 @@ async function loadSample() {
   }));
   preparedSources = null; activeRunId = null;
   latestDiscoveryContext = null;
-  for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
+  for (const id of ["request-retrieval-plan", "execute-local-reread", "intake-enrichment-choice"]) $(id).classList.add("hidden");
   $("assess-button").disabled = true; setIntakeFlow("UPLOAD");
   intakeApprovalStarted = false;
   ++handoffReadId;
   documentationHandoff = null;
+  documentationHandoffSource = undefined;
+  handoffDraftControls.clear();
+  renderDeclaredTopics();
   $("documentation-handoff-file").value = "";
   $("documentation-handoff-status").textContent = "No handoff selected.";
   renderDocumentationHandoff();
@@ -1237,55 +1386,87 @@ async function waitForRun(runId) {
   throw new Error("Cognitive analysis exceeded the browser waiting limit. The server may still be processing the run.");
 }
 
-async function runAssessment(event) {
-  event.preventDefault(); $("error").classList.add("hidden"); $("assess-button").disabled = true;
-  updateDocumentationHandoffAction();
+function intakeApprovalRequest() {
+  const dossier = dossierFromForm();
+  return { dossier, resolutions: intakeResolutions(dossier), documentationEdits: documentationEdits() };
+}
+
+async function approveContent(event) {
+  event.preventDefault();
+  if (!activeRunId || approvedIntakeRevision || $("assess-button").disabled) return;
+  const runId = activeRunId;
+  const sourceHash = latestDiscoveryContext.sourceIngestion.manifestHash;
+  $("error").classList.add("hidden");
+  $("assess-button").disabled = true;
   try {
-    if (!activeRunId) throw new Error("Complete deterministic discovery before starting the A–F assessment.");
-    await selectedSources();
-    const dossier = dossierFromForm();
+    const input = intakeApprovalRequest();
     for (const id of ["name", "owner"]) $(id).removeAttribute("aria-invalid");
-    const missing = missingAnalysisFields(dossier);
+    const missing = missingAnalysisFields(input.dossier);
     if (missing.length) {
       for (const field of missing) $(field.uiControlId)?.setAttribute("aria-invalid", "true");
       const first = $(missing[0].uiControlId);
       first?.focus(); first?.scrollIntoView({ behavior: "smooth", block: "center" });
       throw new Error(`Complete the two required Intake fields before analysis: ${missing.map((field) => label(field.id)).join(", ")}.`);
     }
-    const resolutions = intakeResolutions(dossier);
-    if (!await requestIntakeApproval(resolutions)) return;
+    if (!await requestIntakeApproval(input.resolutions)) return;
+    if (runId !== activeRunId || JSON.stringify(input) !== JSON.stringify(intakeApprovalRequest())) throw new Error("Intake or the source selection changed. Review and approve the current draft.");
     intakeApprovalStarted = true;
-    $("progress").classList.remove("hidden");
-    setProgress("Preparing AI analysis", "Local screening is complete. Redacted evidence will be analysed by the Engine’s configured providers.");
-    const currentRunResponse = await fetch(`/api/v2/runs/${encodeURIComponent(activeRunId)}`);
+    const confirmed = await postJson(`/api/v2/runs/${encodeURIComponent(runId)}/confirm`, {
+      ...input, expectedAcquisitionManifestHash: sourceHash, approval: { confirmed: true }
+    });
+    if (runId !== activeRunId) return;
+    if (JSON.stringify(input) !== JSON.stringify(intakeApprovalRequest())) {
+      activeRunId = null;
+      throw new Error("The draft changed during approval. Discover the current sources and approve again.");
+    }
+    approvedIntakeRevision = { runId, snapshotHash: confirmed.approvedIntake.snapshotHash };
+    $("intake-approval-status").textContent = "Content approved. Select Start analysis when ready.";
+    $("start-analysis-button").disabled = false;
+    $("intake-enrichment-choice").classList.add("hidden");
+    updateAcquisitionActions();
+  } catch (error) {
+    intakeApprovalStarted = false;
+    $("error").textContent = error.message;
+    $("error").classList.remove("hidden");
+  } finally {
+    $("assess-button").disabled = Boolean(approvedIntakeRevision) || !activeRunId || !latestDiscoveryContext?.sourceIngestion?.parsedCount;
+  }
+}
+
+async function runAssessment() {
+  if (!approvedIntakeRevision || $("start-analysis-button").disabled) return;
+  const { runId, snapshotHash } = approvedIntakeRevision;
+  $("error").classList.add("hidden");
+  $("start-analysis-button").disabled = true;
+  $("progress").classList.remove("hidden");
+  setProgress("Preparing AI analysis", "Checking the approved Intake revision and evidence.");
+  try {
+    const currentRunResponse = await fetch(`/api/v2/runs/${encodeURIComponent(runId)}`);
     const currentRun = await currentRunResponse.json();
     if (!currentRunResponse.ok) throw new Error(requestFailureMessage(currentRun));
     if (currentRun.status === "RECOVERY_REQUIRES_REUPLOAD" || currentRun.recovery?.requiresReupload) {
       throw new Error(currentRun.error || "Raw evidence is unavailable after recovery. Re-upload source material to create a new Intake draft.");
     }
-    const postApproval = currentRun.status === "AWAITING_TRANSMISSION_APPROVAL" || ["QUEUED", "RUNNING", "COMPLETED"].includes(currentRun.status);
-    if (currentRun.stage !== "INTAKE_CONFIRMED" && !postApproval) {
-      await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/confirm`, {
-        dossier,
-        resolutions,
-        approval: { confirmed: true, actorRef: "INTERACTIVE_USER" }
-      });
-    }
+    if (approvedIntakeRevision?.snapshotHash !== snapshotHash || currentRun.approvedIntake?.snapshotHash !== snapshotHash) throw new Error("The approved Intake revision is no longer current.");
     setIntakeFlow("ASSESSMENT");
     if (["QUEUED", "RUNNING"].includes(currentRun.status)) {
-      await waitForRun(activeRunId);
+      await waitForRun(runId);
     } else if (currentRun.status !== "COMPLETED") {
-      await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/execute`);
-      await waitForRun(activeRunId);
+      await postJson(`/api/v2/runs/${encodeURIComponent(runId)}/execute`, { expectedSnapshotHash: snapshotHash });
+      await waitForRun(runId);
     }
-    const response = await fetch(`/api/v2/runs/${encodeURIComponent(activeRunId)}/result`);
+    const response = await fetch(`/api/v2/runs/${encodeURIComponent(runId)}/result`);
     const body = await response.json(); if (!response.ok) throw new Error(body.detail || body.error || "Cognitive result is unavailable");
     renderPackage(body);
     setIntakeFlow(null);
-    activeRunId = null;
+    if (activeRunId === runId) {
+      activeRunId = null;
+      clearIntakeApproval();
+    }
   } catch (error) { $("error").textContent = error.message; $("error").classList.remove("hidden"); }
   finally {
-    $("progress").classList.add("hidden"); $("assess-button").disabled = activeRunId === null;
+    $("progress").classList.add("hidden");
+    $("start-analysis-button").disabled = !approvedIntakeRevision;
     updateDocumentationHandoffAction();
   }
 }
@@ -1354,10 +1535,17 @@ Promise.all([
   })));
   renderQuestionnaire();
 }).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; $("knowledge-diagnostics-content").textContent = "Knowledge connection diagnostics are unavailable."; });
-$("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("request-retrieval-plan").addEventListener("click", requestRetrievalPlan); $("execute-local-reread").addEventListener("click", executeLocalReread); $("request-ai-proposals").addEventListener("click", requestAiProposals); $("dossier-form").addEventListener("submit", runAssessment);
+$("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("request-retrieval-plan").addEventListener("click", requestRetrievalPlan); $("execute-local-reread").addEventListener("click", executeLocalReread); $("request-ai-proposals").addEventListener("click", requestAiProposals); $("skip-ai-proposals").addEventListener("click", skipAiProposals); $("dossier-form").addEventListener("submit", approveContent);
+$("start-analysis-button").addEventListener("click", runAssessment);
 $("documentation-handoff-file").addEventListener("change", reviewDocumentationHandoff);
-$("apply-documentation-handoff").addEventListener("click", applyDocumentationHandoff);
+renderDeclaredTopics();
 $("dossier-form").addEventListener("input", (event) => {
+  if (approvedIntakeRevision) {
+    clearIntakeApproval();
+    activeRunId = null;
+    $("assess-button").disabled = true;
+    $("intake-approval-status").textContent = "Content changed. Discover the sources again to review and approve the edited draft.";
+  }
   const controlId = event.target.id || event.target.closest("#data-categories")?.id;
   const field = INTAKE_CONTROL_FIELDS[controlId];
   if (field && latestSolutionProfile) {
@@ -1376,8 +1564,10 @@ $("summary-tab").addEventListener("click", () => selectView("summary")); $("work
 $("print-button").addEventListener("click", printReport); $("html-button").addEventListener("click", downloadHtml); $("download-button").addEventListener("click", downloadPackage);
 for (const [control, summary, kind] of [["source-files", "file-summary", "individual"], ["source-folder", "folder-summary", "folder"]]) {
   $(control).addEventListener("change", () => {
+    discoveryAttempt++;
+    clearIntakeApproval();
     sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; intakeApprovalStarted = false;
-    for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
+    for (const id of ["request-retrieval-plan", "execute-local-reread", "intake-enrichment-choice"]) $(id).classList.add("hidden");
     $("assess-button").disabled = true; setIntakeFlow("UPLOAD");
     $(summary).textContent = `${$(control).files.length} ${kind} file(s) selected`;
     updateDocumentationHandoffAction();

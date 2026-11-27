@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { acquisitionAssistancePolicy, COGNITIVE_PROVIDERS, modelPolicy, modelPolicyReadiness, publicModelRoleSlots, requiredGovernanceProviders, validateGovernanceRouteTopology } from "../src/cognitive/model-policy.js";
 import {
-  normalizeProviderResponse, providerAdapter, serializeProviderRequest
+  normalizeProviderResponse, providerAdapter, providerHeaders, serializeProviderRequest
 } from "../src/cognitive/provider-adapters.js";
 import { ModelBudget, StructuredModelClient } from "../src/cognitive/provider-client.js";
 
@@ -20,10 +20,58 @@ const credentials = {
 };
 const candidatePolicy = (env) => modelPolicy(env);
 
-test("the canonical provider catalog contains only OpenAI, xAI and Moonshot", () => {
-  assert.deepEqual([...COGNITIVE_PROVIDERS].sort(), ["MOONSHOT", "OPENAI", "XAI"]);
+test("outbound prompts and trace hashes are screened separately for each attempt", async () => {
+  const policy = candidatePolicy(credentials);
+  const routes = policy.candidates("SOLUTION_UNDERSTANDING");
+  const prompt = "Review fictional-contact@example.invalid against the submitted facts.";
+  const sent = [];
+  const client = new StructuredModelClient({ policy, transport: async (request) => {
+    sent.push(request.prompt);
+    if (sent.length === 1) return { responseModel: request.profile.model, value: {} };
+    if (sent.length === 2) throw Object.assign(new Error("Provider request timed out"), { statusCode: 504 });
+    return { responseModel: request.profile.model, value: { ok: true } };
+  } });
+  const response = await client.generate({ profile: routes[0], fallbackProfiles: routes.slice(1), prompt, schemaName: "screened", schema, packetHash: "source-hash", promptVersion: "screened/1" });
+  assert.equal(response.value.ok, true);
+  assert.equal(sent.length, 3);
+  assert.ok(sent.every((item) => item.includes("[REDACTED_EMAIL]") && !item.includes("example.invalid")));
+  assert.equal(new Set(client.traces.map((item) => item.requestHash)).size, 3);
+});
+
+test("the canonical provider catalog contains the registered text-only adapters", () => {
+  assert.deepEqual([...COGNITIVE_PROVIDERS].sort(), ["ANTHROPIC", "GOOGLE", "MOONSHOT", "OPENAI", "XAI"]);
   assert.ok(COGNITIVE_PROVIDERS.every((provider) => providerAdapter(provider).capabilities.imageInput === false));
   assert.throws(() => providerAdapter("LEGACY_PROVIDER"), /unsupported cognitive provider/i);
+});
+
+test("Anthropic Messages preserves structural requirements and uses native credentials", () => {
+  const profile = { provider: "ANTHROPIC", model: "claude-sonnet-5-5", effort: "high", maxOutputTokens: 8000 };
+  const canonical = { ...schema, properties: { ok: { type: ["string", "null"], maxLength: 80 } } };
+  const request = serializeProviderRequest(profile, "safe packet", "result", canonical);
+  assert.equal(request.url, "https://api.anthropic.com/v1/messages");
+  assert.deepEqual(providerHeaders(profile.provider, "test"), { "Content-Type": "application/json", "x-api-key": "test", "anthropic-version": "2023-06-01" });
+  assert.equal(request.body.output_config.effort, "high");
+  assert.deepEqual(request.body.output_config.format.schema.properties.ok, { anyOf: [{ type: "string" }, { type: "null" }] });
+  assert.deepEqual(normalizeProviderResponse(profile.provider, {
+    model: profile.model, stop_reason: "end_turn", content: [{ type: "thinking", thinking: "Hidden" }, { type: "text", text: '{"ok":"yes"}' }], usage: { input_tokens: 2, output_tokens: 3, cache_read_input_tokens: 4 }
+  }), { responseModel: profile.model, text: '{"ok":"yes"}', usage: { inputTokens: 6, outputTokens: 3, totalTokens: 9 } });
+  assert.throws(() => normalizeProviderResponse(profile.provider, { stop_reason: "max_tokens" }), /incomplete/);
+  assert.throws(() => normalizeProviderResponse(profile.provider, { stop_reason: "refusal" }), { refusal: true });
+});
+
+test("Gemini GenerateContent requests structured results and excludes thought content", () => {
+  const profile = { provider: "GOOGLE", model: "gemini-4-neon", effort: "high", maxOutputTokens: 8000 };
+  const request = serializeProviderRequest(profile, "safe packet", "result", schema);
+  assert.equal(request.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-4-neon:generateContent");
+  assert.deepEqual(providerHeaders(profile.provider, "test"), { "Content-Type": "application/json", "x-goog-api-key": "test" });
+  assert.equal(request.body.generationConfig.responseJsonSchema, schema);
+  assert.equal(request.body.generationConfig.thinkingConfig.thinkingLevel, "HIGH");
+  assert.deepEqual(normalizeProviderResponse(profile.provider, {
+    modelVersion: "models/gemini-4-neon", candidates: [{ finishReason: "STOP", content: { parts: [{ thought: true, text: "Hidden" }, { text: '{"ok":true}' }] } }],
+    usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 3, thoughtsTokenCount: 4, totalTokenCount: 9 }
+  }), { text: '{"ok":true}', responseModel: profile.model, usage: { inputTokens: 2, outputTokens: 7, totalTokens: 9 } });
+  assert.throws(() => normalizeProviderResponse(profile.provider, { candidates: [{ finishReason: "MAX_TOKENS" }] }), /incomplete/);
+  assert.throws(() => normalizeProviderResponse(profile.provider, { promptFeedback: { blockReason: "SAFETY" } }), { refusal: true });
 });
 
 test("role routing is deterministic and model identities are server-configurable", () => {
@@ -68,6 +116,21 @@ test("acquisition and governance execution use the same configured role contract
   const governance = modelPolicy(credentials);
   assert.equal(governance.choose("SOLUTION_UNDERSTANDING").id, assistance.choose("SOLUTION_UNDERSTANDING").id);
   assert.deepEqual(requiredGovernanceProviders(governance).sort(), ["MOONSHOT", "OPENAI", "XAI"]);
+});
+
+test("the proposed profile uses three independent providers without legacy credentials", () => {
+  const env = { COGNITIVE_PROVIDER_PROFILE: "OPENAI_ANTHROPIC_GOOGLE", OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test" };
+  const policy = modelPolicy(env);
+  assert.deepEqual(requiredGovernanceProviders(policy).sort(), ["ANTHROPIC", "GOOGLE", "OPENAI"]);
+  assert.equal(modelPolicyReadiness(policy).status, "READY");
+  assert.deepEqual(validateGovernanceRouteTopology(policy).claimFlow, { workhorse: "ANTHROPIC", verifier: "GOOGLE", adjudicator: "OPENAI" });
+  assert.deepEqual(policy.candidates("DOMAIN_ASSESSMENT").map((route) => route.model), ["claude-sonnet-5-5", "gemini-4-neon"]);
+  assert.deepEqual(policy.candidates("SOLUTION_UNDERSTANDING").map((route) => route.model), ["gpt-6.2-sol", "claude-sonnet-5-5"]);
+  assert.equal(policy.choose("VERIFICATION", { excludeProviders: ["GOOGLE"] }).model, "gpt-6.1-terra");
+  assert.equal(policy.choose("ADJUDICATION", { excludeProviders: ["GOOGLE", "OPENAI"] }).model, "claude-sonnet-5-5");
+  assert.throws(() => policy.choose("VERIFICATION", { excludeProviders: ["GOOGLE", "OPENAI"] }), /independent route/);
+  assert.equal(modelPolicyReadiness(modelPolicy({ ...env, GEMINI_API_KEY: "" })).status, "CONFIGURATION_REQUIRED");
+  assert.throws(() => modelPolicy({ COGNITIVE_PROVIDER_PROFILE: "unrecognized" }), /Unsupported COGNITIVE_PROVIDER_PROFILE/);
 });
 
 test("runtime readiness depends on credentials and an independent three-provider topology", () => {

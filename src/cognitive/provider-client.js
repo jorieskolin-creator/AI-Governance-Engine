@@ -1,6 +1,7 @@
 import { sha256, stableStringify } from "../core/hash.js";
+import { redactText, screenSensitiveValue } from "../core/privacy.js";
 import { classifyCognitiveFailure } from "./failure-policy.js";
-import { assertStrictSchema, normalizeProviderResponse, serializeProviderRequest } from "./provider-adapters.js";
+import { assertStrictSchema, normalizeProviderResponse, providerHeaders, serializeProviderRequest } from "./provider-adapters.js";
 
 function parseJson(value, label) {
   try { return JSON.parse(value); }
@@ -18,11 +19,13 @@ function validateSchema(value, schema, path = "$") {
     for (const [key, child] of Object.entries(schema.properties ?? {})) if (Object.hasOwn(value, key)) validateSchema(value[key], child, `${path}.${key}`);
   } else if (types.includes("array")) {
     if (!Array.isArray(value)) throw new Error(`${path} must be an array`);
+    if (schema.maxItems != null && value.length > schema.maxItems) throw new Error(`${path} exceeds the allowed item count`);
     for (let index = 0; index < value.length; index += 1) validateSchema(value[index], schema.items, `${path}[${index}]`);
   } else if (types.includes("string") && typeof value !== "string") throw new Error(`${path} must be a string`);
   else if (types.includes("boolean") && typeof value !== "boolean") throw new Error(`${path} must be a boolean`);
   else if (types.includes("integer") && (!Number.isInteger(value))) throw new Error(`${path} must be an integer`);
   else if (types.includes("number") && (typeof value !== "number" || !Number.isFinite(value))) throw new Error(`${path} must be a number`);
+  if (typeof value === "string" && schema.maxLength != null && [...value].length > schema.maxLength) throw new Error(`${path} exceeds the allowed text length`);
 }
 
 export const assertOpenAiStrictSchema = assertStrictSchema;
@@ -42,7 +45,7 @@ function providerRequest(profile, credential, prompt, schemaName, schema, signal
   const request = serializeProviderRequest(profile, prompt, schemaName, schema);
   return requestJson(request.url, {
     method: "POST",
-    headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" },
+    headers: providerHeaders(profile.provider, credential),
     body: JSON.stringify(request.body)
   }, 120_000, signal).then((body) => {
     const normalized = normalizeProviderResponse(profile.provider, body);
@@ -123,14 +126,15 @@ export class StructuredModelClient {
   async generate({ profile, fallbackProfiles = [], prompt, schemaName, schema, packetHash, promptVersion, media = [] }) {
     if (media.length) throw new Error("Provider transmission cannot contain media; only local deterministic media summaries are allowed");
     const profiles = [...new Map([profile, ...fallbackProfiles].map((item) => [item.id, item])).values()];
+    const screenedPrompt = redactText(prompt).text;
     let lastError;
     for (let routeAttempt = 0; routeAttempt < profiles.length; routeAttempt += 1) {
       const selectedProfile = profiles[routeAttempt];
-      const requestHash = sha256({ profile: selectedProfile.id, prompt, schemaName, schema, packetHash, promptVersion });
       for (let retry = 0; retry <= 1; retry += 1) {
         this.signal?.throwIfAborted();
         const started = Date.now();
-        const repairPrompt = retry === 0 ? prompt : `${prompt}\n\nSCHEMA_REPAIR: The previous response was malformed or violated the schema. Return one complete JSON value that exactly matches the supplied schema.`;
+        const repairPrompt = retry === 0 ? screenedPrompt : `${screenedPrompt}\n\nSCHEMA_REPAIR: The previous response was malformed or violated the schema. Return one complete JSON value that exactly matches the supplied schema.`;
+        const requestHash = sha256({ profile: selectedProfile.id, prompt: repairPrompt, schemaName, schema, packetHash, promptVersion });
         try {
           this.budget.reserve(selectedProfile.role, selectedProfile.maxOutputTokens ?? 0);
           const response = this.transport
@@ -138,6 +142,8 @@ export class StructuredModelClient {
             : await providerRequest(selectedProfile, this.policy.credentials[selectedProfile.provider], repairPrompt, schemaName, schema, this.signal);
           this.signal?.throwIfAborted();
           if (!responseModelMatches(selectedProfile.model, response.responseModel)) throw new Error(`Provider returned unexpected model ${response.responseModel ?? "UNKNOWN"}; expected ${selectedProfile.model}`);
+          validateSchema(response.value, schema);
+          response.value = screenSensitiveValue(response.value);
           validateSchema(response.value, schema);
           this.budget.record(response.usage ?? {}, selectedProfile.role);
           const trace = this.trace(selectedProfile, promptVersion, schemaName, packetHash, requestHash, started, response, retry, routeAttempt, null);
@@ -164,7 +170,7 @@ export class StructuredModelClient {
       parameters: { effort: profile.effort },
       promptVersion, schemaName, schemaVersion: "3.1.0", packetHash, requestHash,
       usage: response?.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, latencyMs: Date.now() - started,
-      retry, routeAttempt, routePriority: profile.routePriority, refusal: Boolean(error?.refusal), status: error ? "FAILED" : "COMPLETED", error: error ? error.message : null,
+      retry, routeAttempt, routePriority: profile.routePriority, refusal: Boolean(error?.refusal), status: error ? "FAILED" : "COMPLETED", error: error ? redactText(error.message).text : null,
       failureCode: failure?.code ?? null,
       retryDisposition: failure?.code === "STRUCTURED_OUTPUT_INVALID" && retry > 0 ? "REVIEW_REQUIRED" : failure?.retryDisposition ?? null,
       outputHash: response ? sha256(stableStringify(response.value)) : null

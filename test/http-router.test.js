@@ -129,6 +129,11 @@ test("HTTP workflow exposes readiness and fails closed before unconfigured provi
     assert.equal(confirmed.body.stage, "INTAKE_CONFIRMED");
     assert.ok(confirmed.body.approvedIntake.snapshotHash);
     assert.equal(confirmed.body.executionPacketManifest.snapshotHash, confirmed.body.approvedIntake.snapshotHash);
+    const stale = await request(baseUrl, `/api/v2/runs/${encodeURIComponent(preflight.body.runId)}/execute`, {
+      method: "POST", body: JSON.stringify({ expectedSnapshotHash: "0".repeat(64) })
+    });
+    assert.equal(stale.status, 409);
+    assert.match(stale.body.error, /Intake revision has changed/);
     assert.deepEqual(
       confirmed.body.executionPacketManifest.packets.map((packet) => packet.id).sort(),
       confirmed.body.packets.map((packet) => packet.id).sort()

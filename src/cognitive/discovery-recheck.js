@@ -71,11 +71,20 @@ export async function recheckDiscovery(run, input, options = {}) {
   const activeQuestionIds = activeIntakeQuestionIds(run.solutionProfile.assessmentIntakeFacts);
   const gapByField = new Map(run.intakeGapAnalysis.fields.map((field) => [field.fieldId, field]));
   const selectedFactFields = new Set(options.acquiredFactUnit ? JSON.parse(options.acquiredFactUnit.content).facts.map((fact) => fact.fieldId) : []);
-  const needsProposal = (fieldId) => gapByField.get(fieldId)?.state === "MISSING_UNKNOWN" || selectedFactFields.has(fieldId);
+  const occupied = new Set(options.occupiedFieldIds ?? []);
+  const handoffPaths = new Map([["name", "name"], ["purpose", "intendedPurpose"], ["current-stage", "currentStage"], ["users", "users"], ["excluded-uses", "operatingBoundary.excludedUses"]]);
+  for (const { controlId } of run.documentationHandoff?.suggestions ?? []) occupied.add(handoffPaths.get(controlId));
+  const needsProposal = (fieldId) => !occupied.has(fieldId) && (gapByField.get(fieldId)?.state === "MISSING_UNKNOWN" || selectedFactFields.has(fieldId));
   const targetFields = [
     ...Object.values(run.solutionProfile.fields).filter((item) => intakeField(item.field)?.genAiProposalAllowed && needsProposal(item.field)).map((item) => ({ field: item.field, currentValue: null, valueWithheld: item.status !== "UNKNOWN", status: item.status, factClass: item.factClass })),
     ...Object.values(run.solutionProfile.assessmentIntakeFacts ?? {}).filter((item) => activeQuestionIds.has(item.questionId) && intakeField(`intakeAnswers.${item.questionId}`)?.genAiProposalAllowed && needsProposal(`intakeAnswers.${item.questionId}`)).map((item) => ({ field: `intakeAnswers.${item.questionId}`, currentValue: null, valueWithheld: item.answerState !== "UNKNOWN", status: item.supportStatus, factClass: item.origin }))
   ];
+  if (!targetFields.length) {
+    run.discoveryRecheck = { status: "NO_GAPS", candidates: [] };
+    setAcquisitionGenAiStatus(run, "NOT_REQUESTED");
+    run.stage = "INTAKE_AI_VERIFICATION_COMPLETED";
+    return run.discoveryRecheck;
+  }
   const client = options.client ?? new StructuredModelClient({ policy, budget: new ModelBudget({ maxCalls: 4, maxTokens: 120_000, maxMs: 360_000 }) });
   const generated = await client.generate({ profile: profiles[0], fallbackProfiles: profiles.slice(1), prompt: discoveryRecheckPrompt(targetFields, packets), schemaName: "discovery_recheck", schema: DISCOVERY_RECHECK_SCHEMA, packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.discoveryRecheck });
   const profile = generated.profile;
@@ -91,7 +100,7 @@ export async function recheckDiscovery(run, input, options = {}) {
     const returned = returnedByField.get(field) ?? [];
     if (returned.length !== 1) return {
       field,
-      status: returned.length ? "REJECTED_UNSUPPORTED" : "NOT_FOUND",
+      status: "REJECTED_UNSUPPORTED",
       recommendation: "PROVIDE_INFORMATION",
       value: "",
       sourceUnitIds: [],

@@ -11,10 +11,12 @@ import { executeCognitiveRun } from "./cognitive/pipeline.js";
 import { acquisitionAssistancePolicy, MODEL_POLICY_VIEW_VERSION, modelPolicy, modelPolicyReadiness, publicModelPolicy, publicModelRoleSlots, requiredGovernanceProviders } from "./cognitive/model-policy.js";
 import { createRunStore } from "./cognitive/run-persistence.js";
 import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
+import { suggestIntakeWording } from "./cognitive/intake-wording.js";
 import { READINESS_PACKAGE_VERSIONS, readinessPackageJsonSchema } from "./readiness-package-contract.js";
 import { publicJsonValue } from "../public/content-policy.js";
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./intake/field-registry.js";
 import { validateApprovedIntakeSnapshot } from "./intake/contracts.js";
+import { buildDeclarationComparison, validateDeclarationComparison } from "./intake/declaration-comparison.js";
 import { createAcquiredFactSelectionUnit, validateAcquiredFactPackage } from "./intake/acquired-facts.js";
 import { setAcquisitionGenAiStatus } from "./intake/acquisition-diagnostics.js";
 import { planIntakeRetrieval, RETRIEVAL_PLANNING_PURPOSE } from "./cognitive/retrieval-planner.js";
@@ -22,7 +24,7 @@ import { COGNITIVE_PROVIDERS } from "./cognitive/provider-adapters.js";
 import { executeLocalReread, LOCAL_REREAD_PURPOSE } from "./intake/local-reread.js";
 import { createCognitiveStepLedger, prepareInterruptedRunRestart, recoveredExecutionDataUnavailable, RECOVERY_RESTART_PURPOSE, releaseLocalEvidenceForCognitiveExecution } from "./cognitive/orchestration.js";
 import { cancellationError, classifyCognitiveFailure } from "./cognitive/failure-policy.js";
-import { allowUnlockAttempt, authorizeWriteAccess, configuredAdminSecret, createSessionToken, requestIsSecure, secretsMatch, sessionCookieHeader, writeAccessMode } from "./access-control.js";
+import { allowUnlockAttempt, authorizeWriteAccess, configuredAdminSecret, createSessionToken, intakeApprovalActorRef, requestIsSecure, secretsMatch, sessionCookieHeader, writeAccessMode } from "./access-control.js";
 
 const port = Number(process.env.PORT ?? 4174);
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
@@ -81,7 +83,7 @@ function sendJson(response, status, value) {
   response.end(body);
 }
 
-async function readJson(request) {
+async function readJson(request, { allowEmpty = false } = {}) {
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
@@ -89,6 +91,7 @@ async function readJson(request) {
     if (size > maxBodyBytes) throw Object.assign(new Error("Request exceeds 25 MB"), { statusCode: 413 });
     chunks.push(chunk);
   }
+  if (!size && allowEmpty) return {};
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
   catch { throw Object.assign(new Error("Request body must be valid JSON"), { statusCode: 400 }); }
 }
@@ -145,10 +148,20 @@ function automaticApproval(run, policy = modelPolicy(), stage = null) {
   return validateExecutionApproval({ approvedPackets: run.packets.map((packet) => ({ packetId: packet.id, providers })) }, run);
 }
 
-async function enqueueCognitiveRun(run, request) {
+const intakeMutations = new Set();
+
+async function withIntakeMutation(run, operation) {
+  if (intakeMutations.has(run.id)) throw Object.assign(new Error("An Intake or execution request is already being processed"), { statusCode: 409 });
+  intakeMutations.add(run.id);
+  try { return await operation(); }
+  finally { intakeMutations.delete(run.id); }
+}
+
+async function enqueueCognitiveRun(run, request, expectedSnapshotHash) {
   if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive assessment rate limit exceeded"), { statusCode: 429 });
   if (run.status !== "AWAITING_TRANSMISSION_APPROVAL") throw Object.assign(new Error(`Run cannot execute from status ${run.status}`), { statusCode: 409 });
   if (run.stage !== "INTAKE_CONFIRMED" || !run.approvedIntake?.snapshotHash) throw Object.assign(new Error("A user-approved immutable Intake snapshot is required before execution"), { statusCode: 409 });
+  if (expectedSnapshotHash !== undefined && expectedSnapshotHash !== run.approvedIntake.snapshotHash) throw Object.assign(new Error("The approved Intake revision has changed"), { statusCode: 409 });
   try { validateApprovedIntakeSnapshot(run.approvedIntake, { acquisitionManifestHash: run.sourceIngestion.manifestHash }); }
   catch (error) { throw Object.assign(error, { statusCode: 409 }); }
   try { validateExecutionPacketManifest(run); }
@@ -164,19 +177,22 @@ async function enqueueCognitiveRun(run, request) {
     throw error;
   }
   if (!await runStore.acquireLease(run.id)) throw Object.assign(new Error("Run execution is already owned by another worker"), { statusCode: 409 });
-  run.dossier = structuredClone(run.approvedIntake.effectiveDossier);
-  run.solutionProfile = structuredClone(run.approvedIntake.solutionProfile);
-  run.approval = approval;
-  run.stepLedger = createCognitiveStepLedger();
-  run.queueAttempt = (run.queueAttempt ?? 0) + 1;
-  releaseLocalEvidenceForCognitiveExecution(run);
-  for (const packet of run.packets) packet.transmissionState = "APPROVED";
-  run.status = "QUEUED";
-  run.stage = "COGNITIVE_EXECUTION_QUEUED";
-  run.trace.push({ stage: run.stage, status: "QUEUED", at: new Date().toISOString() });
-  try { await runStore.checkpoint(run, { leaseOwner: runStore.instanceId }); }
-  catch (error) { await runStore.releaseLease(run.id); throw error; }
-  await runStore.releaseLease(run.id);
+  try {
+    run.declarationComparison = validateDeclarationComparison(
+      buildDeclarationComparison(run.approvedIntake, run.localSourceUnits ?? [], run.registeredSources), run.approvedIntake
+    );
+    run.dossier = structuredClone(run.approvedIntake.effectiveDossier);
+    run.solutionProfile = structuredClone(run.approvedIntake.solutionProfile);
+    run.approval = approval;
+    run.stepLedger = createCognitiveStepLedger();
+    run.queueAttempt = (run.queueAttempt ?? 0) + 1;
+    releaseLocalEvidenceForCognitiveExecution(run);
+    for (const packet of run.packets) packet.transmissionState = "APPROVED";
+    run.status = "QUEUED";
+    run.stage = "COGNITIVE_EXECUTION_QUEUED";
+    run.trace.push({ stage: run.stage, status: "QUEUED", at: new Date().toISOString() });
+    await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+  } finally { await runStore.releaseLease(run.id); }
 }
 
 async function startClaimedCognitiveRun(run) {
@@ -505,6 +521,26 @@ const server = http.createServer(async (request, response) => {
         }
       } finally { await runStore.releaseLease(run.id); }
     }
+    const wordingMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/intake-wording$/);
+    if (request.method === "POST" && wordingMatch) {
+      const run = await runStore.get(wordingMatch[1]);
+      if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
+      const input = await readJson(request);
+      if (input?.confirmed !== true || input.purpose !== "INTAKE_WORDING" || input.acquisitionManifestHash !== run.sourceIngestion?.manifestHash) {
+        return sendJson(response, 400, { error: "Current Intake and explicit wording consent are required" });
+      }
+      if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run mutation is already owned by another worker" });
+      try {
+        if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || !["COMPLETED", "NO_GAPS", "UNAVAILABLE"].includes(run.discoveryRecheck?.status) || run.dlpFindings.some((item) => item.blocking)) {
+          return sendJson(response, 409, { error: "Wording suggestions are unavailable for this draft" });
+        }
+        if (!rateAllowed(request)) return sendJson(response, 429, { error: "Intake assistance rate limit exceeded" });
+        const output = await suggestIntakeWording(input.items, { policy: acquisitionAssistancePolicy() });
+        return sendJson(response, 200, output);
+      } catch {
+        return sendJson(response, 422, { error: "Wording suggestions are unavailable. Continue editing Intake manually." });
+      } finally { await runStore.releaseLease(run.id); }
+    }
     const recheckMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/discover-recheck$/);
     if (request.method === "POST" && recheckMatch) {
       const run = await runStore.get(recheckMatch[1]);
@@ -512,6 +548,8 @@ const server = http.createServer(async (request, response) => {
       if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.discoveryRecheck) return sendJson(response, 409, { error: "AI Intake verification is not available from the current run state" });
       const consent = await readJson(request);
       if (consent?.confirmed !== true || consent?.purpose !== "INTAKE_PROPOSALS_FROM_SAFE_SUMMARIES") return sendJson(response, 400, { error: "Explicit confirmation is required before requesting GenAI Intake proposals" });
+      const occupiedFieldIds = consent.occupiedFieldIds ?? [];
+      if (!Array.isArray(occupiedFieldIds) || occupiedFieldIds.length > 200 || occupiedFieldIds.some((field) => typeof field !== "string" || field.length > 150)) return sendJson(response, 400, { error: "Invalid occupied Intake field IDs" });
       if (consent.acquiredFactPackageHash !== run.acquiredFacts?.packageHash) return sendJson(response, 409, { error: "The reviewed acquired fact package is no longer current" });
       validateAcquiredFactPackage(run.acquiredFacts);
       const acquiredFactUnit = createAcquiredFactSelectionUnit(run.acquiredFacts, consent.selectedAcquiredFactIds ?? []);
@@ -530,7 +568,7 @@ const server = http.createServer(async (request, response) => {
           if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive discovery rate limit exceeded"), { statusCode: 429 });
           run.trace.push({ stage: "INTAKE_AI_PROPOSAL_CONSENT", status: "CONFIRMED", purpose: consent.purpose, acquiredFactPackageHash: run.acquiredFacts.packageHash, selectedAcquiredFactIds: consent.selectedAcquiredFactIds ?? [], at: new Date().toISOString(), packetIds: run.packets.map((packet) => packet.id) });
           const assistancePolicy = acquisitionAssistancePolicy();
-          const discoveryRecheck = await recheckDiscovery(run, automaticApproval(run, assistancePolicy, "SOLUTION_UNDERSTANDING"), { policy: assistancePolicy, acquiredFactUnit });
+          const discoveryRecheck = await recheckDiscovery(run, automaticApproval(run, assistancePolicy, "SOLUTION_UNDERSTANDING"), { policy: assistancePolicy, acquiredFactUnit, occupiedFieldIds });
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
           logOperational("INFO", "intake_proposals_completed", {
             requestId, runId: run.id, runStatus: run.status, runStage: run.stage,
@@ -552,24 +590,30 @@ const server = http.createServer(async (request, response) => {
     }
     const confirmMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/confirm$/);
     if (request.method === "POST" && confirmMatch) {
+      const input = await readJson(request);
       const run = await runStore.get(confirmMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
-      if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run mutation is already owned by another worker" });
-      try {
-        await confirmPreflightDossier(run, await readJson(request));
-        await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
-        logOperational("INFO", "intake_final_approval_completed", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage });
-        return sendJson(response, 200, publicPreflightView(run));
-      } catch (error) {
-        error.statusCode ??= 422;
-        throw error;
-      } finally { await runStore.releaseLease(run.id); }
+      return await withIntakeMutation(run, async () => {
+        if (input?.expectedAcquisitionManifestHash !== undefined && input.expectedAcquisitionManifestHash !== run.sourceIngestion?.manifestHash) return sendJson(response, 409, { error: "The reviewed source selection has changed" });
+        if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run mutation is already owned by another worker" });
+        try {
+          const approval = { ...input?.approval, actorRef: intakeApprovalActorRef(request) };
+          await confirmPreflightDossier(run, { ...input, approval });
+          await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
+          logOperational("INFO", "intake_final_approval_completed", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage });
+          return sendJson(response, 200, publicPreflightView(run));
+        } catch (error) {
+          error.statusCode ??= 422;
+          throw error;
+        } finally { await runStore.releaseLease(run.id); }
+      });
     }
     const executeMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/execute$/);
     if (request.method === "POST" && executeMatch) {
+      const input = await readJson(request, { allowEmpty: true });
       const run = await runStore.get(executeMatch[1]);
       if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
-      await enqueueCognitiveRun(run, request);
+      await withIntakeMutation(run, () => enqueueCognitiveRun(run, request, input?.expectedSnapshotHash));
       logOperational("INFO", "cognitive_execution_queued", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage });
       dispatchQueuedRunsSafely();
       return sendJson(response, 202, publicRunView(run));
@@ -626,10 +670,22 @@ const queueTimer = setInterval(dispatchQueuedRunsSafely, cognitiveQueuePollMs);
 queueTimer.unref?.();
 dispatchQueuedRunsSafely();
 
+let expirySweep;
+function sweepExpiredRuns() {
+  if (!runStore.sweepExpired || expirySweep) return;
+  expirySweep = runStore.sweepExpired()
+    .catch((error) => logOperational("ERROR", "run_expiry_sweep_failed", { failureCode: safeFailureCode(error) }))
+    .finally(() => { expirySweep = null; });
+}
+const expiryTimer = setInterval(sweepExpiredRuns, 60_000);
+expiryTimer.unref?.();
+sweepExpiredRuns();
+
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     clearInterval(queueTimer);
+    clearInterval(expiryTimer);
     for (const controller of activeExecutions.values()) controller.abort(cancellationError(`Cognitive run interrupted by ${signal}`));
-    server.close(async () => { await runStore.close(); process.exit(0); });
+    server.close(async () => { await expirySweep; await runStore.close(); process.exit(0); });
   });
 }

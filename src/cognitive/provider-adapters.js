@@ -16,6 +16,18 @@ const PROVIDER_ADAPTERS = Object.freeze({
     endpoint: "https://api.moonshot.ai/v1/chat/completions",
     protocol: "CHAT_COMPLETIONS",
     capabilities: Object.freeze({ strictJsonSchema: true, imageInput: false, reasoningEffort: true })
+  }),
+  ANTHROPIC: Object.freeze({
+    provider: "ANTHROPIC",
+    endpoint: "https://api.anthropic.com/v1/messages",
+    protocol: "MESSAGES",
+    capabilities: Object.freeze({ strictJsonSchema: true, imageInput: false, reasoningEffort: true })
+  }),
+  GOOGLE: Object.freeze({
+    provider: "GOOGLE",
+    endpoint: "https://generativelanguage.googleapis.com/v1beta/models",
+    protocol: "GENERATE_CONTENT",
+    capabilities: Object.freeze({ strictJsonSchema: true, imageInput: false, reasoningEffort: true })
   })
 });
 
@@ -67,10 +79,51 @@ function chatCompletionsRequest(profile, prompt, schemaName, schema) {
   };
 }
 
+function anthropicSchema(schema) {
+  // The client validates the original schema, including bounds excluded by the API.
+  const { type, properties, items, maxItems, maxLength, ...annotations } = schema;
+  const shape = { ...annotations, type };
+  if (properties) shape.properties = Object.fromEntries(Object.entries(properties).map(([key, value]) => [key, anthropicSchema(value)]));
+  if (items) shape.items = anthropicSchema(items);
+  if (!Array.isArray(type)) return shape;
+  const { enum: allowed, ...nonNull } = shape;
+  const choices = type.filter((entry) => entry !== "null").map((entry) => ({
+    ...nonNull, type: entry, ...(allowed ? { enum: allowed.filter((value) => value !== null) } : {})
+  }));
+  if (type.includes("null")) choices.push({ type: "null" });
+  return { anyOf: choices };
+}
+
+export function providerHeaders(provider, credential) {
+  const headers = { "Content-Type": "application/json" };
+  if (provider === "ANTHROPIC") return { ...headers, "x-api-key": credential, "anthropic-version": "2023-06-01" };
+  if (provider === "GOOGLE") return { ...headers, "x-goog-api-key": credential };
+  return { ...headers, Authorization: `Bearer ${credential}` };
+}
+
 export function serializeProviderRequest(profile, prompt, schemaName, schema, media = []) {
   const adapter = providerAdapter(profile.provider);
   assertStrictSchema(schema);
   if (media.length) throw new Error("Provider transmission cannot contain media; only local deterministic media summaries are allowed");
+  if (adapter.protocol === "MESSAGES") return {
+    url: adapter.endpoint,
+    body: {
+      model: profile.model, max_tokens: profile.maxOutputTokens,
+      messages: [{ role: "user", content: prompt }],
+      thinking: { type: "adaptive" },
+      output_config: { effort: profile.effort, format: { type: "json_schema", schema: anthropicSchema(schema) } }
+    }
+  };
+  if (adapter.protocol === "GENERATE_CONTENT") return {
+    url: `${adapter.endpoint}/${encodeURIComponent(profile.model)}:generateContent`,
+    body: {
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: "application/json", responseJsonSchema: schema, maxOutputTokens: profile.maxOutputTokens,
+        thinkingConfig: { thinkingLevel: profile.effort.toUpperCase(), includeThoughts: false }
+      }
+    }
+  };
   return {
     url: adapter.endpoint,
     body: adapter.protocol === "RESPONSES"
@@ -112,7 +165,35 @@ function chatCompletionsOutput(provider, body) {
   };
 }
 
+function generateContentOutput(provider, body) {
+  const candidate = body.candidates?.[0];
+  const stopReason = candidate?.finishReason;
+  if (body.promptFeedback?.blockReason || ["SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "RECITATION"].includes(stopReason)) {
+    throw Object.assign(new Error(`${provider} refused the structured assessment request`), { refusal: true });
+  }
+  if (stopReason !== "STOP") throw new Error(`${provider} returned incomplete structured output`);
+  const usage = body.usageMetadata;
+  const inputTokens = usage?.promptTokenCount ?? 0;
+  const outputTokens = (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0);
+  return {
+    text: (candidate.content?.parts ?? []).filter((item) => !item.thought && typeof item.text === "string").map((item) => item.text).join(""),
+    responseModel: typeof body.modelVersion === "string" ? body.modelVersion.replace(/^models\//, "") : null,
+    usage: { inputTokens, outputTokens, totalTokens: usage?.totalTokenCount ?? inputTokens + outputTokens }
+  };
+}
+
 export function normalizeProviderResponse(provider, body) {
   const adapter = providerAdapter(provider);
+  if (adapter.protocol === "GENERATE_CONTENT") return generateContentOutput(provider, body);
+  if (adapter.protocol === "MESSAGES") {
+    if (body.stop_reason === "refusal") throw Object.assign(new Error(`${provider} refused the structured assessment request`), { refusal: true });
+    if (body.stop_reason !== "end_turn") throw new Error(`${provider} returned incomplete structured output`);
+    const inputTokens = (body.usage?.input_tokens ?? 0) + (body.usage?.cache_creation_input_tokens ?? 0) + (body.usage?.cache_read_input_tokens ?? 0);
+    const outputTokens = body.usage?.output_tokens ?? 0;
+    return {
+      text: (body.content ?? []).filter((item) => item.type === "text").map((item) => item.text).join(""), responseModel: body.model,
+      usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens }
+    };
+  }
   return adapter.protocol === "RESPONSES" ? responsesOutput(provider, body) : chatCompletionsOutput(provider, body);
 }

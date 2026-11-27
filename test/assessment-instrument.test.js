@@ -44,8 +44,8 @@ test("analysis work items are the 60 taxonomy objects and 180 questions", async 
   assert.equal(apA1q2.dimension, "IMPLEMENTATION_AND_OPERATION");
 });
 
-test("domain prompt 3.1.0 tells the model to assess instrument questions and stamp A1 / AP-A1 IDs", () => {
-  assert.equal(PROMPT_VERSIONS.domain, "domain-assessment-3.1.0");
+test("domain prompt retains the instrument while including declared failure modes as context", () => {
+  assert.equal(PROMPT_VERSIONS.domain, "domain-assessment-3.2.0");
   const prompt = domainPrompt({
     domain: "A",
     dossier,
@@ -54,6 +54,7 @@ test("domain prompt 3.1.0 tells the model to assess instrument questions and sta
     controls: [{ id: "CTRL-A1", authoringObjectId: "A1", questions: [{ id: "A1-Q1", question: "Is the intended purpose and decision context specific, bounded and testable?" }] }],
     requirements: [],
     antiPatterns: [{ id: "AP-A1", questions: [{ id: "AP-A1-Q1" }] }],
+    declaredRisks: [{ id: "FM-1", title: "Assessment with incomplete inputs" }],
     assessmentWorkItems: [{ objectId: "A1-Q1", kind: "ASSESSMENT", title: "Is the intended purpose and decision context specific, bounded and testable?" }]
   });
   assert.match(prompt, /A–F assessment instrument/);
@@ -61,6 +62,7 @@ test("domain prompt 3.1.0 tells the model to assess instrument questions and sta
   assert.match(prompt, /Do not invent evidence rules, atomic tests, finding-definition IDs/);
   assert.match(prompt, /parent assessment-object ID \(A1, B2, …\)/);
   assert.match(prompt, /A1-Q1/);
+  assert.match(prompt, /Assessment with incomplete inputs/);
   assert.match(prompt, /Is the intended purpose and decision context specific, bounded and testable\?/);
 });
 

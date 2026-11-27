@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { webcrypto } from "node:crypto";
 import { DomUtils, parseDocument } from "htmlparser2";
-import { embeddedDocumentationHandoff, fillEmptyHandoffControls, HANDOFF_REVIEW_ONLY, parseDocumentationHandoff } from "../public/documentation-handoff.js";
-import { createPreflight, confirmPreflightDossier } from "../src/cognitive/preflight.js";
+import { embeddedDocumentationHandoff, parseDocumentationHandoff, preferredDocumentationDraft } from "../public/documentation-handoff.js";
+import { createPreflight, confirmPreflightDossier, publicPreflightView } from "../src/cognitive/preflight.js";
 import { validateDossier } from "../src/contracts.js";
 import { sha256 } from "../src/core/hash.js";
 import { createIntakeResolutionDraft } from "../src/intake/contracts.js";
@@ -61,39 +61,80 @@ test("tampered, unsupported and ambiguous handoffs cannot populate the review", 
   assert.throws(() => extract("<p>Printable draft without machine data</p>"), /Expected one inert/);
 });
 
-test("draft handoff suggestions reuse only exact mappings and never overwrite nonempty or conflicting fields", async () => {
+test("handoff declarations take priority in the draft without replacing the independent source profile", async () => {
   const handoff = await verify(updateFixture(({ release, record }) => {
     release.state = "DRAFT";
     Object.assign(record.answers, { users: "Operators", affectedParties: "Customers, Operators", exclusions: "No external access", outputRole: "DECISION" });
   }));
   assert.equal(handoff.documentationConfirmed, false);
   assert.deepEqual(handoff.suggestions.map(({ controlId }) => controlId), ["name", "purpose", "current-stage", "users", "excluded-uses"]);
-  const controls = { name: { value: "Existing name" }, purpose: { value: "" }, "current-stage": { value: "UNKNOWN" }, users: { value: "" }, "excluded-uses": { value: "" } };
-  const filled = [];
-  assert.equal(fillEmptyHandoffControls(handoff.suggestions, (id) => controls[id], (id) => id === "purpose", (control) => filled.push(control.value)), 3);
-  assert.equal(controls.name.value, "Existing name");
-  assert.equal(controls.purpose.value, "");
-  assert.deepEqual(filled, ["QUALIFICATION_AND_REGISTRATION", "Operators, Customers", "No external access"]);
+  const sourceDossier = validateDossier({ name: "Existing name", accountableOwner: "Evidence owner", intendedPurpose: "Independent purpose" });
+  const draft = preferredDocumentationDraft(sourceDossier, handoff);
+  assert.equal(draft.name, "Record review assistant");
+  assert.equal(draft.intendedPurpose, "Help the review team find the right records.");
+  assert.equal(draft.accountableOwner, "Evidence owner");
+  assert.deepEqual(draft.users, ["Operators"]);
+  assert.equal(handoff.answers.affectedParties, "Customers, Operators");
+  assert.deepEqual(draft.operatingBoundary.excludedUses, ["No external access"]);
+  assert.equal(sourceDossier.intendedPurpose, "Independent purpose");
+  assert.equal(preferredDocumentationDraft(sourceDossier, null), sourceDossier);
 });
 
-test("handoff artifacts stay outside Engine evidence while a reviewed value can enter approved Intake as a declaration", async () => {
+test("preflight validates both handoff input routes without admitting the handoff as independent evidence", async () => {
   for (const handoff of uploadedHandoffs) {
-    await assert.rejects(createPreflight({ sources: [handoff] }), /handoff review and upload independent source material/);
+    const draft = await createPreflight({ sources: [handoff] });
+    assert.equal(draft.documentationHandoff.documentationConfirmed, true);
+    assert.equal(draft.sourceIngestion.parsedCount, 0);
+    assert.deepEqual(draft.packets, []);
+    await assert.rejects(confirmPreflightDossier(draft, {}), /At least one parsed evidence source/);
   }
-  const run = await createPreflight({ sources: [...uploadedHandoffs, evidence] });
+  const run = await createPreflight({ sources: [...uploadedHandoffs, evidence], documentationHandoff: golden });
   assert.equal(run.sourceIngestion.parsedCount, 1);
-  assert.equal(run.sourceIngestion.items.filter(({ reasonCode }) => reasonCode === HANDOFF_REVIEW_ONLY).length, 2);
+  assert.deepEqual(run.sourceIngestion.items.map(({ path }) => path), [evidence.path]);
   const evidenceOnly = await createPreflight({ sources: [evidence] });
   assert.deepEqual(run.localSourceUnits, evidenceOnly.localSourceUnits);
   assert.deepEqual(run.packets, evidenceOnly.packets);
+  assert.equal(publicPreflightView(run).intakeDraft.name, "Record review assistant");
+  assert.notEqual(run.solutionProfile.suggestedDossier.name, "Record review assistant");
   const fromHandoff = await verify(golden);
   const fields = Object.fromEntries(fromHandoff.suggestions.map(({ controlId, value }) => [controlId, value]));
   const dossier = validateDossier({ ...run.solutionProfile.suggestedDossier, name: fields.name, intendedPurpose: fields.purpose, currentStage: fields["current-stage"] });
   assert.equal(dossier.accountableOwner, "Review service lead");
   const resolutions = createIntakeResolutionDraft(dossier, run.solutionProfile);
   await assert.rejects(confirmPreflightDossier(run, { dossier, resolutions }), /approval/i);
-  const confirmed = await confirmPreflightDossier(run, { dossier, resolutions, approval: { confirmed: true, actorRef: "TEST_USER" } });
+  const confirmed = await confirmPreflightDossier(run, {
+    dossier, resolutions, documentationEdits: { useContext: "A revised user declaration" },
+    approval: { confirmed: true, actorRef: "TEST_USER" }
+  });
   const purpose = confirmed.approvedIntake.fields.find(({ fieldId }) => fieldId === "intendedPurpose");
   assert.equal(purpose.origin, "USER_DECLARATION");
   assert.deepEqual(purpose.evidenceRefs, []);
+  const documentation = confirmed.approvedIntake.declaredDocumentation;
+  assert.equal(documentation.evidenceCeiling, "DECLARED");
+  assert.equal(documentation.failureModes.length, 4);
+  assert.equal(documentation.failureModes[0].claimed_mitigations[0].evidence_status_observed, "NOT_RUN");
+  assert.equal(documentation.handoff.documentationConfirmed, true);
+  assert.equal(documentation.topics.useContext.value, "A revised user declaration");
+  assert.equal(documentation.topics.useContext.origin, "USER_DECLARATION");
+  assert.equal(documentation.mapped.intendedPurpose.origin, "DOCUMENTATION_SUPPORT");
+  assert.ok(Object.isFrozen(documentation.failureModes));
+});
+
+test("an invalid or ambiguous handoff produces an explicit error before discovery", async () => {
+  const tampered = golden.replace("Incorrect records shown", "Changed records");
+  await assert.rejects(createPreflight({ sources: [evidence], documentationHandoff: tampered }), { statusCode: 422, message: /digest does not match/ });
+  await assert.rejects(createPreflight({ sources: [{ ...uploadedHandoffs[1], content: script(golden) + script(golden) }, evidence] }), { statusCode: 422, message: /Expected one inert/ });
+  const other = updateFixture(({ record }) => { record.answers.solutionName = "Separate solution"; });
+  await assert.rejects(createPreflight({ sources: [{ ...uploadedHandoffs[0], content: other }, evidence], documentationHandoff: golden }), { statusCode: 422, message: /Multiple different/ });
+});
+
+test("an Intake edit containing a restricted identifier cannot enter an approved snapshot", async () => {
+  const run = await createPreflight({ sources: [evidence], documentationHandoff: golden });
+  const dossier = validateDossier({ name: "Local case", accountableOwner: "Service lead", intendedPurpose: "Contact synthetic-review@example.invalid" });
+  await assert.rejects(confirmPreflightDossier(run, {
+    dossier, resolutions: createIntakeResolutionDraft(dossier, run.solutionProfile),
+    approval: { confirmed: true, actorRef: "TEST_USER" }
+  }), { statusCode: 422, message: /restricted identifier/ });
+  assert.equal(run.approvedIntake, undefined);
+  assert.doesNotMatch(JSON.stringify(run), /synthetic-review@example\.invalid/);
 });

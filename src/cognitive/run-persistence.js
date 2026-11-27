@@ -37,6 +37,7 @@ export function serializeDurableRun(run, now = new Date()) {
   durableRun.localSourceUnits = [];
   durableRun.intakeCandidates = null;
   delete durableRun.persistence;
+  delete durableRun.documentationHandoff;
   for (const packet of durableRun.packets ?? []) {
     for (const unit of packet.sourceUnits ?? []) {
       if (unit.media) unit.media.data = "";
@@ -252,6 +253,22 @@ export class PostgresRunStore {
     );
     this.runs.delete(id);
     return result.rowCount === 1;
+  }
+
+  async sweepExpired() {
+    const now = this.now();
+    for (const [id, run] of this.runs) {
+      if (Date.parse(run.expiresAt) > now.getTime()) continue;
+      purgeRunMaterial(run, "EXPIRED");
+      this.runs.delete(id);
+    }
+    const result = await this.pool.query(
+      `UPDATE governance_runs
+       SET state = NULL, status = 'EXPIRED', stage = 'EXPIRED', deleted_at = NOW(), updated_at = NOW(), lease_owner = NULL, lease_expires_at = NULL
+       WHERE deleted_at IS NULL AND expires_at <= $1`,
+      [now.toISOString()]
+    );
+    return result.rowCount;
   }
 
   async releaseRawEvidence(run, options = {}) {

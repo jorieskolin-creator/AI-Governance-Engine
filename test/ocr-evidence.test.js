@@ -1,20 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createCanvas } from "@napi-rs/canvas";
+import { readFile } from "node:fs/promises";
 import PDFDocument from "pdfkit";
 import { createPreflight, publicPreflightView } from "../src/cognitive/preflight.js";
 import { serializeDurableRun } from "../src/cognitive/run-persistence.js";
 import { validateMediaEvidenceSummary } from "../src/intake/media-evidence.js";
 import { OCR_ENGINE, OCR_ENGINE_VERSION, OCR_EVIDENCE_VERSION, validateOcrProvenance } from "../src/intake/ocr-evidence.js";
 
-function textImage(lines) {
-  const canvas = createCanvas(1200, 320);
-  const context = canvas.getContext("2d");
-  context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "black"; context.font = "52px sans-serif";
-  lines.forEach((line, index) => context.fillText(line, 40, 100 + index * 90));
-  return canvas.toBuffer("image/png");
-}
+const image = await readFile(new URL("./fixtures/synthetic-ocr-evidence.png", import.meta.url));
 
 function scannedPdf(image) {
   return new Promise((resolve) => {
@@ -45,8 +38,6 @@ function provenance({ confidence, qualificationState, pageNumber = null, sourceL
 }
 
 test("scanned PDFs and images use bounded local OCR with provenance and no raw egress", async () => {
-  const marker = "Synthetic OCR Evidence";
-  const image = textImage([marker, "Solution name: OCR Fixture"]);
   const pdf = await scannedPdf(image);
   const run = await createPreflight({ sources: [
     { path: "synthetic-screen.png", mimeType: "image/png", encoding: "base64", content: image.toString("base64") },
@@ -75,7 +66,6 @@ test("scanned PDFs and images use bounded local OCR with provenance and no raw e
 });
 
 test("complete OCR text re-enters DLP while low-confidence text cannot populate Intake", async () => {
-  const image = textImage(["Synthetic low confidence fixture"]);
   const privateMarker = "synthetic.person@example.com";
   const ocrSession = {
     async recognize() {
@@ -99,7 +89,6 @@ test("complete OCR text re-enters DLP while low-confidence text cannot populate 
 });
 
 test("local OCR timeout is reported once without replaying or failing the whole source", async () => {
-  const image = textImage(["Synthetic timeout fixture"]);
   let attempts = 0;
   const ocrSession = {
     async recognize() { attempts += 1; throw new Error("LOCAL_OCR_TIMEOUT"); },

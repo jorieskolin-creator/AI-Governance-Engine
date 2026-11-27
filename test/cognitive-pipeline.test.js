@@ -125,11 +125,12 @@ test("AI discovery recheck does not retarget deterministic local values that saf
   }) });
   const before = structuredClone(run.solutionProfile);
   const approvedPackets = run.packets.map((packet) => ({ packetId: packet.id, providers: ["MOONSHOT"] }));
-  const result = await recheckDiscovery(run, { approvedPackets }, { policy, client });
+  const result = await recheckDiscovery(run, { approvedPackets }, { policy, client, occupiedFieldIds: ["accountableOwner"] });
   assert.equal(result.targetFields.includes("name"), false);
   assert.equal(result.targetFields.includes("intendedPurpose"), false);
   assert.equal(result.candidates.some((item) => item.field === "name" || item.field === "intendedPurpose"), false);
-  assert.ok(result.candidates.some((item) => item.status === "NOT_FOUND" && item.recommendation === "PROVIDE_INFORMATION"));
+  assert.equal(result.targetFields.includes("accountableOwner"), false);
+  assert.ok(result.candidates.some((item) => item.status === "REJECTED_UNSUPPORTED" && item.recommendation === "PROVIDE_INFORMATION"));
   assert.equal(result.targetFields.includes("intakeAnswers.SYSTEMIC_RISK_MODEL"), false);
   assert.equal(run.stage, "INTAKE_AI_VERIFICATION_COMPLETED");
   assert.ok(run.trace.some((item) => item.stage === "INTAKE_AI_VERIFICATION" && item.status === "RUNNING"));

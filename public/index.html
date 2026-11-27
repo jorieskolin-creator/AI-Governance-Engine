@@ -56,7 +56,8 @@
         </div>
         <fieldset id="intake-enrichment-choice" class="intake-workspace-section hidden">
           <legend>Enrich with GenAI?</legend>
-          <p class="field-hint">GenAI can suggest values for empty fields from the reviewed safe summaries. You can edit Intake before approving it.</p>
+          <p class="field-hint">YES sends the reviewed safe summaries for gap suggestions and selected Intake text for wording suggestions. You can edit the draft before approving it.</p>
+          <label><input id="include-intake-wording" type="checkbox" /> Include the intended purpose and short entries under Declared documentation for wording review</label>
           <button id="request-ai-proposals" class="secondary-button" type="button">YES</button>
           <button id="skip-ai-proposals" class="secondary-button" type="button">NO</button>
         </fieldset>
@@ -83,6 +84,7 @@
         <form id="dossier-form">
           <div class="intake-boundary-notice"><strong>Self-Declared information has a controlled lifecycle boundary</strong><span>Information you add or change can support assessment through Verification and Validation, but progression beyond that stage is blocked until documentary support is verified.</span></div>
           <div id="intake-review-summary" class="intake-review-summary" aria-live="polite"></div>
+          <section id="intake-wording-review" class="intake-workspace-section hidden" aria-live="polite"></section>
           <div class="form-grid two"><label>Solution name · required<input id="name" aria-required="true" placeholder="Detected from product documentation or project manifest" /></label><label>Accountable owner · required<input id="owner" aria-required="true" placeholder="Confirm the accountable solution owner, not just the documentation owner" /></label></div>
           <label>Intended purpose<textarea id="purpose" rows="3" placeholder="Detected from business, product or architecture documentation"></textarea></label>
           <label>Expected value<textarea id="value" rows="2" placeholder="Measurable outcome and value hypothesis"></textarea></label>

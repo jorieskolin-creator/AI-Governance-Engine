@@ -11,6 +11,7 @@ import { executeCognitiveRun } from "./cognitive/pipeline.js";
 import { acquisitionAssistancePolicy, MODEL_POLICY_VIEW_VERSION, modelPolicy, modelPolicyReadiness, publicModelPolicy, publicModelRoleSlots, requiredGovernanceProviders } from "./cognitive/model-policy.js";
 import { createRunStore } from "./cognitive/run-persistence.js";
 import { recheckDiscovery } from "./cognitive/discovery-recheck.js";
+import { suggestIntakeWording } from "./cognitive/intake-wording.js";
 import { READINESS_PACKAGE_VERSIONS, readinessPackageJsonSchema } from "./readiness-package-contract.js";
 import { publicJsonValue } from "../public/content-policy.js";
 import { INTAKE_FIELD_REGISTRY, validateQuestionnaireAgainstRegistry } from "./intake/field-registry.js";
@@ -518,6 +519,26 @@ const server = http.createServer(async (request, response) => {
           logOperational("WARN", "intake_local_reread_failed", { requestId, runId: run.id, runStatus: run.status, runStage: run.stage, failureCode: "LOCAL_REREAD_VALIDATION_FAILED" });
           return sendJson(response, 422, { error: "The bounded local re-read did not complete; Intake candidates remain unchanged", failureCode: "LOCAL_REREAD_VALIDATION_FAILED" });
         }
+      } finally { await runStore.releaseLease(run.id); }
+    }
+    const wordingMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/intake-wording$/);
+    if (request.method === "POST" && wordingMatch) {
+      const run = await runStore.get(wordingMatch[1]);
+      if (!run) return sendJson(response, 404, { error: "Run not found or expired" });
+      const input = await readJson(request);
+      if (input?.confirmed !== true || input.purpose !== "INTAKE_WORDING" || input.acquisitionManifestHash !== run.sourceIngestion?.manifestHash) {
+        return sendJson(response, 400, { error: "Current Intake and explicit wording consent are required" });
+      }
+      if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run mutation is already owned by another worker" });
+      try {
+        if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || !["COMPLETED", "NO_GAPS", "UNAVAILABLE"].includes(run.discoveryRecheck?.status) || run.dlpFindings.some((item) => item.blocking)) {
+          return sendJson(response, 409, { error: "Wording suggestions are unavailable for this draft" });
+        }
+        if (!rateAllowed(request)) return sendJson(response, 429, { error: "Intake assistance rate limit exceeded" });
+        const output = await suggestIntakeWording(input.items, { policy: acquisitionAssistancePolicy() });
+        return sendJson(response, 200, output);
+      } catch {
+        return sendJson(response, 422, { error: "Wording suggestions are unavailable. Continue editing Intake manually." });
       } finally { await runStore.releaseLease(run.id); }
     }
     const recheckMatch = url.pathname.match(/^\/api\/v2\/runs\/([^/]+)\/discover-recheck$/);

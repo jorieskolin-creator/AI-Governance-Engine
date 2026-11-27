@@ -966,6 +966,8 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
 async function discoverCaseInformation() {
   const attempt = ++discoveryAttempt;
   clearIntakeApproval();
+  $("intake-wording-review").classList.add("hidden");
+  $("include-intake-wording").checked = false;
   $("error").classList.add("hidden"); $("discover-button").disabled = true; $("assess-button").disabled = true;
   updateDocumentationHandoffAction();
   for (const id of ["request-retrieval-plan", "execute-local-reread", "intake-enrichment-choice"]) $(id).classList.add("hidden");
@@ -1116,6 +1118,7 @@ async function requestAiProposals() {
   if (!activeRunId || !latestDiscoveryContext) return;
   const runId = activeRunId;
   const attempt = discoveryAttempt;
+  const requestWording = $("include-intake-wording").checked;
   $("error").classList.add("hidden");
   $("request-ai-proposals").disabled = true;
   $("skip-ai-proposals").disabled = true;
@@ -1149,6 +1152,46 @@ async function requestAiProposals() {
     ? "Stage 4 of 5 · Supported proposals were prefilled into empty Intake fields. Review and edit them before selecting Approve content."
     : recheck.status === "NO_GAPS" ? "The draft has no eligible empty fields for GenAI to fill. Continue reviewing Intake."
       : `Stage 4 of 5 · GenAI proposals were ${label(recheck.status).toLowerCase()}. Continue resolving the deterministic Intake manually.`;
+  if (requestWording) await requestIntakeWording(runId, attempt);
+}
+
+async function requestIntakeWording(runId, attempt) {
+  const fields = new Map([["purpose", $("purpose")], ...declaredTopicInputs().map((input) => [input.dataset.topic, input])]);
+  const items = [...fields].filter(([, input]) => input.value.trim() && input.value.length <= 1200)
+    .map(([id, input]) => ({ id, text: input.value }));
+  if (!items.length) return;
+  const root = $("intake-wording-review");
+  root.replaceChildren(el("p", "", "Checking wording in the selected Intake text…"));
+  root.classList.remove("hidden");
+  const current = () => runId === activeRunId && attempt === discoveryAttempt && !approvedIntakeRevision;
+  try {
+    const result = await postJson(`/api/v2/runs/${encodeURIComponent(runId)}/intake-wording`, {
+      confirmed: true, purpose: "INTAKE_WORDING", acquisitionManifestHash: latestDiscoveryContext.sourceIngestion.manifestHash, items
+    });
+    if (!current()) return;
+    root.replaceChildren(el("h3", "", "Wording suggestions"));
+    if (!result.suggestions.length) root.append(el("p", "", "No eligible wording changes were returned."));
+    for (const suggestion of result.suggestions) {
+      const input = fields.get(suggestion.id);
+      if (input?.value !== suggestion.original) continue;
+      const item = el("article", "");
+      const button = el("button", "secondary-button", "Use suggested wording");
+      button.type = "button";
+      button.addEventListener("click", () => {
+        if (!current() || input.value !== suggestion.original) {
+          item.replaceChildren(el("p", "", "This suggestion is no longer current."));
+          return;
+        }
+        input.value = suggestion.text;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        item.remove();
+      });
+      item.append(el("h4", "", label(suggestion.id)), el("p", "", suggestion.original), el("p", "", suggestion.text), button);
+      root.append(item);
+    }
+  } catch {
+    if (current()) root.replaceChildren(el("p", "", "Wording suggestions are unavailable. Continue editing Intake manually."));
+  }
 }
 
 function skipAiProposals() {

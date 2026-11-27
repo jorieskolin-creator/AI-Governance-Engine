@@ -39,7 +39,7 @@ test("outbound prompts and trace hashes are screened separately for each attempt
 });
 
 test("the canonical provider catalog contains the registered text-only adapters", () => {
-  assert.deepEqual([...COGNITIVE_PROVIDERS].sort(), ["ANTHROPIC", "MOONSHOT", "OPENAI", "XAI"]);
+  assert.deepEqual([...COGNITIVE_PROVIDERS].sort(), ["ANTHROPIC", "GOOGLE", "MOONSHOT", "OPENAI", "XAI"]);
   assert.ok(COGNITIVE_PROVIDERS.every((provider) => providerAdapter(provider).capabilities.imageInput === false));
   assert.throws(() => providerAdapter("LEGACY_PROVIDER"), /unsupported cognitive provider/i);
 });
@@ -57,6 +57,21 @@ test("Anthropic Messages preserves structural requirements and uses native crede
   }), { responseModel: profile.model, text: '{"ok":"yes"}', usage: { inputTokens: 6, outputTokens: 3, totalTokens: 9 } });
   assert.throws(() => normalizeProviderResponse(profile.provider, { stop_reason: "max_tokens" }), /incomplete/);
   assert.throws(() => normalizeProviderResponse(profile.provider, { stop_reason: "refusal" }), { refusal: true });
+});
+
+test("Gemini GenerateContent requests structured results and excludes thought content", () => {
+  const profile = { provider: "GOOGLE", model: "gemini-4-neon", effort: "high", maxOutputTokens: 8000 };
+  const request = serializeProviderRequest(profile, "safe packet", "result", schema);
+  assert.equal(request.url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-4-neon:generateContent");
+  assert.deepEqual(providerHeaders(profile.provider, "test"), { "Content-Type": "application/json", "x-goog-api-key": "test" });
+  assert.equal(request.body.generationConfig.responseJsonSchema, schema);
+  assert.equal(request.body.generationConfig.thinkingConfig.thinkingLevel, "HIGH");
+  assert.deepEqual(normalizeProviderResponse(profile.provider, {
+    modelVersion: "models/gemini-4-neon", candidates: [{ finishReason: "STOP", content: { parts: [{ thought: true, text: "Hidden" }, { text: '{"ok":true}' }] } }],
+    usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 3, thoughtsTokenCount: 4, totalTokenCount: 9 }
+  }), { text: '{"ok":true}', responseModel: profile.model, usage: { inputTokens: 2, outputTokens: 7, totalTokens: 9 } });
+  assert.throws(() => normalizeProviderResponse(profile.provider, { candidates: [{ finishReason: "MAX_TOKENS" }] }), /incomplete/);
+  assert.throws(() => normalizeProviderResponse(profile.provider, { promptFeedback: { blockReason: "SAFETY" } }), { refusal: true });
 });
 
 test("role routing is deterministic and model identities are server-configurable", () => {

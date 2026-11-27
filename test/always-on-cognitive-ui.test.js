@@ -9,7 +9,7 @@ const railway = JSON.parse(await readFile(new URL("../railway.json", import.meta
 
 test("the browser assessment workflow starts and waits for the cognitive run", () => {
   assert.match(app, /\/api\/v2\/runs\/preflight/);
-  assert.match(app, /\/api\/v2\/runs\/\$\{encodeURIComponent\(activeRunId\)\}\/discover-recheck/);
+  assert.match(app, /\/api\/v2\/runs\/\$\{encodeURIComponent\(runId\)\}\/discover-recheck/);
   assert.match(app, /\/api\/v2\/runs\/\$\{encodeURIComponent\(runId\)\}\/confirm/);
   assert.match(app, /\/api\/v2\/runs\/\$\{encodeURIComponent\(runId\)\}\/execute/);
   assert.match(app, /waitForRun\(runId\)/);
@@ -17,7 +17,9 @@ test("the browser assessment workflow starts and waits for the cognitive run", (
 });
 
 test("GenAI Intake proposals are optional and require an explicit safe-summary request", () => {
-  assert.match(index, /id="request-ai-proposals"[^>]*>Request GenAI Proposals from Safe Summaries/);
+  assert.match(index, /<legend>Enrich with GenAI\?<\/legend>/);
+  assert.match(index, /id="request-ai-proposals"[^>]*>YES/);
+  assert.match(index, /id="skip-ai-proposals"[^>]*>NO/);
   assert.match(app, /request-ai-proposals[^\n]+addEventListener\("click", requestAiProposals\)/);
   assert.match(app, /purpose: "INTAKE_PROPOSALS_FROM_SAFE_SUMMARIES"/);
   assert.match(app, /acquiredFactPackageHash: latestDiscoveryContext\.acquiredFacts\.packageHash/);

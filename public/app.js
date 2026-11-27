@@ -925,7 +925,8 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
   if (recheck) {
     const acceptedCount = recheck.candidates?.filter((item) => item.recommendation === "ACCEPT_CURRENT").length ?? 0;
     const actionCandidates = recheck.candidates?.filter((item) => item.recommendation !== "ACCEPT_CURRENT") ?? [];
-    const message = recheck.status === "COMPLETED"
+    const message = recheck.status === "NO_GAPS" ? "The draft has no eligible empty fields for GenAI to fill."
+      : recheck.status === "COMPLETED"
       ? `AI Intake proposals completed: ${acceptedCount} current value(s) supported as written; ${actionCandidates.length} field(s) need review or more information. Supported proposals are prefilled only into empty fields and remain editable or removable until final approval.`
       : recheck.status === "BLOCKED_BY_LOCAL_DLP"
         ? "AI semantic recheck was blocked by local source screening. Missing fields remain unknown until documented or declared by the user."
@@ -936,7 +937,7 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
       details.append(el("summary", "", `Review ${actionCandidates.length} AI verification exception(s)`));
       const candidates = el("ul", "discovery-candidates");
       for (const candidate of actionCandidates) {
-        const displayedValue = candidate.value || (candidate.recommendation === "PROVIDE_INFORMATION" ? "Information not found in submitted material" : "No usable proposal");
+        const displayedValue = candidate.value || (candidate.status === "NOT_FOUND" ? "No information offered" : "No usable proposal");
         const item = el("li", "", `${label(candidate.field)} · ${label(candidate.recommendation)}: ${displayedValue}. ${candidate.rationale}`);
         const field = intakeFieldRegistry.fields.find((entry) => entry.id === candidate.field);
         const proposedValue = field ? proposalFieldValue(field, candidate.value) : null;
@@ -967,7 +968,7 @@ async function discoverCaseInformation() {
   clearIntakeApproval();
   $("error").classList.add("hidden"); $("discover-button").disabled = true; $("assess-button").disabled = true;
   updateDocumentationHandoffAction();
-  for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
+  for (const id of ["request-retrieval-plan", "execute-local-reread", "intake-enrichment-choice"]) $(id).classList.add("hidden");
   setIntakeFlow("DETERMINISTIC");
   $("discovery-status").textContent = "Stage 2 of 5 · Parsing sources locally and building deterministic cited facts…";
   try {
@@ -1021,8 +1022,9 @@ async function discoverCaseInformation() {
     renderDocumentationHandoff();
     renderDiscovery(preflight.solutionProfile, preflight.dlpFindings, null, preflight.citationIndex, preflight.acquisitionDiagnostics);
     const blocked = preflight.dlpFindings.some((item) => item.blocking);
-    $("request-ai-proposals").classList.toggle("hidden", blocked || proposalProviders.length === 0);
+    $("intake-enrichment-choice").classList.remove("hidden");
     $("request-ai-proposals").disabled = blocked || proposalProviders.length === 0;
+    $("skip-ai-proposals").disabled = false;
     setIntakeFlow("USER_RESOLUTION", { limitedSteps: ["AI_VERIFICATION"] });
     const unresolved = Object.values(preflight.solutionProfile.fields).filter((item) => item.status !== "CONFIRMED").length;
     $("discovery-status").textContent = blocked
@@ -1112,31 +1114,47 @@ async function executeLocalReread() {
 
 async function requestAiProposals() {
   if (!activeRunId || !latestDiscoveryContext) return;
+  const runId = activeRunId;
+  const attempt = discoveryAttempt;
   $("error").classList.add("hidden");
   $("request-ai-proposals").disabled = true;
+  $("skip-ai-proposals").disabled = true;
   setIntakeFlow("AI_VERIFICATION");
   $("discovery-status").textContent = "Stage 3 of 5 · Sending only the reviewable safe summaries for optional GenAI proposals…";
   let recheck;
   try {
     const selectedAcquiredFactIds = [...document.querySelectorAll("[data-acquired-fact-id]:checked")].map((input) => input.value);
+    const dossier = dossierFromForm();
+    const occupiedFieldIds = intakeFieldRegistry.fields.filter((field) => {
+      if (field.questionId) return (dossier.intakeAnswers?.[field.questionId]?.answerState ?? "UNKNOWN") !== "UNKNOWN";
+      return dossierPathValue(dossier, field.id) !== null;
+    }).map((field) => field.id);
     latestDiscoveryContext.selectedAcquiredFactIds = selectedAcquiredFactIds;
-    recheck = await postJson(`/api/v2/runs/${encodeURIComponent(activeRunId)}/discover-recheck`, {
+    recheck = await postJson(`/api/v2/runs/${encodeURIComponent(runId)}/discover-recheck`, {
       confirmed: true,
       purpose: "INTAKE_PROPOSALS_FROM_SAFE_SUMMARIES",
       acquiredFactPackageHash: latestDiscoveryContext.acquiredFacts.packageHash,
-      selectedAcquiredFactIds
+      selectedAcquiredFactIds, occupiedFieldIds
     });
   } catch {
     recheck = { status: "UNAVAILABLE", failureCode: "INTAKE_AI_VERIFICATION_REQUEST_FAILED" };
   }
+  if (runId !== activeRunId || attempt !== discoveryAttempt || approvedIntakeRevision) return;
   latestDiscoveryContext.recheck = recheck;
   renderDiscovery(latestDiscoveryContext.profile, latestDiscoveryContext.dlpFindings, recheck, latestDiscoveryContext.citationIndex, latestDiscoveryContext.acquisitionDiagnostics);
   const completed = recheck.status === "COMPLETED";
   setIntakeFlow("USER_RESOLUTION", { limitedSteps: completed ? [] : ["AI_VERIFICATION"] });
-  $("request-ai-proposals").classList.add("hidden");
+  $("intake-enrichment-choice").classList.add("hidden");
   $("discovery-status").textContent = completed
-    ? "Stage 4 of 5 · Supported GenAI proposals were prefilled into empty Intake fields. Edit or remove them as needed; only final approval accepts the filled information and starts analysis."
-    : `Stage 4 of 5 · GenAI proposals were ${label(recheck.status).toLowerCase()}. Continue resolving the deterministic Intake manually.`;
+    ? "Stage 4 of 5 · Supported proposals were prefilled into empty Intake fields. Review and edit them before selecting Approve content."
+    : recheck.status === "NO_GAPS" ? "The draft has no eligible empty fields for GenAI to fill. Continue reviewing Intake."
+      : `Stage 4 of 5 · GenAI proposals were ${label(recheck.status).toLowerCase()}. Continue resolving the deterministic Intake manually.`;
+}
+
+function skipAiProposals() {
+  $("intake-enrichment-choice").classList.add("hidden");
+  $("discovery-status").textContent = "GenAI enrichment skipped. Review and edit the Intake draft before selecting Approve content.";
+  $("name").focus();
 }
 
 function renderRecommendation(pkg) {
@@ -1249,7 +1267,7 @@ async function loadSample() {
   }));
   preparedSources = null; activeRunId = null;
   latestDiscoveryContext = null;
-  for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
+  for (const id of ["request-retrieval-plan", "execute-local-reread", "intake-enrichment-choice"]) $(id).classList.add("hidden");
   $("assess-button").disabled = true; setIntakeFlow("UPLOAD");
   intakeApprovalStarted = false;
   ++handoffReadId;
@@ -1361,7 +1379,7 @@ async function approveContent(event) {
     approvedIntakeRevision = { runId, snapshotHash: confirmed.approvedIntake.snapshotHash };
     $("intake-approval-status").textContent = "Content approved. Select Start analysis when ready.";
     $("start-analysis-button").disabled = false;
-    $("request-ai-proposals").classList.add("hidden");
+    $("intake-enrichment-choice").classList.add("hidden");
     updateAcquisitionActions();
   } catch (error) {
     intakeApprovalStarted = false;
@@ -1474,7 +1492,7 @@ Promise.all([
   })));
   renderQuestionnaire();
 }).catch(() => { $("knowledge-status").textContent = "Knowledge unavailable"; $("knowledge-diagnostics-content").textContent = "Knowledge connection diagnostics are unavailable."; });
-$("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("request-retrieval-plan").addEventListener("click", requestRetrievalPlan); $("execute-local-reread").addEventListener("click", executeLocalReread); $("request-ai-proposals").addEventListener("click", requestAiProposals); $("dossier-form").addEventListener("submit", approveContent);
+$("sample-button").addEventListener("click", loadSample); $("discover-button").addEventListener("click", discoverCaseInformation); $("request-retrieval-plan").addEventListener("click", requestRetrievalPlan); $("execute-local-reread").addEventListener("click", executeLocalReread); $("request-ai-proposals").addEventListener("click", requestAiProposals); $("skip-ai-proposals").addEventListener("click", skipAiProposals); $("dossier-form").addEventListener("submit", approveContent);
 $("start-analysis-button").addEventListener("click", runAssessment);
 $("documentation-handoff-file").addEventListener("change", reviewDocumentationHandoff);
 renderDeclaredTopics();
@@ -1506,7 +1524,7 @@ for (const [control, summary, kind] of [["source-files", "file-summary", "indivi
     discoveryAttempt++;
     clearIntakeApproval();
     sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; intakeApprovalStarted = false;
-    for (const id of ["request-retrieval-plan", "execute-local-reread", "request-ai-proposals"]) $(id).classList.add("hidden");
+    for (const id of ["request-retrieval-plan", "execute-local-reread", "intake-enrichment-choice"]) $(id).classList.add("hidden");
     $("assess-button").disabled = true; setIntakeFlow("UPLOAD");
     $(summary).textContent = `${$(control).files.length} ${kind} file(s) selected`;
     updateDocumentationHandoffAction();

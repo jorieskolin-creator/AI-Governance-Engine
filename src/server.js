@@ -527,6 +527,8 @@ const server = http.createServer(async (request, response) => {
       if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || run.stage !== "DETERMINISTIC_DISCOVERY_COMPLETED" || run.discoveryRecheck) return sendJson(response, 409, { error: "AI Intake verification is not available from the current run state" });
       const consent = await readJson(request);
       if (consent?.confirmed !== true || consent?.purpose !== "INTAKE_PROPOSALS_FROM_SAFE_SUMMARIES") return sendJson(response, 400, { error: "Explicit confirmation is required before requesting GenAI Intake proposals" });
+      const occupiedFieldIds = consent.occupiedFieldIds ?? [];
+      if (!Array.isArray(occupiedFieldIds) || occupiedFieldIds.length > 200 || occupiedFieldIds.some((field) => typeof field !== "string" || field.length > 150)) return sendJson(response, 400, { error: "Invalid occupied Intake field IDs" });
       if (consent.acquiredFactPackageHash !== run.acquiredFacts?.packageHash) return sendJson(response, 409, { error: "The reviewed acquired fact package is no longer current" });
       validateAcquiredFactPackage(run.acquiredFacts);
       const acquiredFactUnit = createAcquiredFactSelectionUnit(run.acquiredFacts, consent.selectedAcquiredFactIds ?? []);
@@ -545,7 +547,7 @@ const server = http.createServer(async (request, response) => {
           if (!rateAllowed(request)) throw Object.assign(new Error("Cognitive discovery rate limit exceeded"), { statusCode: 429 });
           run.trace.push({ stage: "INTAKE_AI_PROPOSAL_CONSENT", status: "CONFIRMED", purpose: consent.purpose, acquiredFactPackageHash: run.acquiredFacts.packageHash, selectedAcquiredFactIds: consent.selectedAcquiredFactIds ?? [], at: new Date().toISOString(), packetIds: run.packets.map((packet) => packet.id) });
           const assistancePolicy = acquisitionAssistancePolicy();
-          const discoveryRecheck = await recheckDiscovery(run, automaticApproval(run, assistancePolicy, "SOLUTION_UNDERSTANDING"), { policy: assistancePolicy, acquiredFactUnit });
+          const discoveryRecheck = await recheckDiscovery(run, automaticApproval(run, assistancePolicy, "SOLUTION_UNDERSTANDING"), { policy: assistancePolicy, acquiredFactUnit, occupiedFieldIds });
           await runStore.checkpoint(run, { leaseOwner: runStore.instanceId });
           logOperational("INFO", "intake_proposals_completed", {
             requestId, runId: run.id, runStatus: run.status, runStage: run.stage,

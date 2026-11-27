@@ -118,6 +118,21 @@ test("acquisition and governance execution use the same configured role contract
   assert.deepEqual(requiredGovernanceProviders(governance).sort(), ["MOONSHOT", "OPENAI", "XAI"]);
 });
 
+test("the proposed profile uses three independent providers without legacy credentials", () => {
+  const env = { COGNITIVE_PROVIDER_PROFILE: "OPENAI_ANTHROPIC_GOOGLE", OPENAI_API_KEY: "test", ANTHROPIC_API_KEY: "test", GEMINI_API_KEY: "test" };
+  const policy = modelPolicy(env);
+  assert.deepEqual(requiredGovernanceProviders(policy).sort(), ["ANTHROPIC", "GOOGLE", "OPENAI"]);
+  assert.equal(modelPolicyReadiness(policy).status, "READY");
+  assert.deepEqual(validateGovernanceRouteTopology(policy).claimFlow, { workhorse: "ANTHROPIC", verifier: "GOOGLE", adjudicator: "OPENAI" });
+  assert.deepEqual(policy.candidates("DOMAIN_ASSESSMENT").map((route) => route.model), ["claude-sonnet-5-5", "gemini-4-neon"]);
+  assert.deepEqual(policy.candidates("SOLUTION_UNDERSTANDING").map((route) => route.model), ["gpt-6.2-sol", "claude-sonnet-5-5"]);
+  assert.equal(policy.choose("VERIFICATION", { excludeProviders: ["GOOGLE"] }).model, "gpt-6.1-terra");
+  assert.equal(policy.choose("ADJUDICATION", { excludeProviders: ["GOOGLE", "OPENAI"] }).model, "claude-sonnet-5-5");
+  assert.throws(() => policy.choose("VERIFICATION", { excludeProviders: ["GOOGLE", "OPENAI"] }), /independent route/);
+  assert.equal(modelPolicyReadiness(modelPolicy({ ...env, GEMINI_API_KEY: "" })).status, "CONFIGURATION_REQUIRED");
+  assert.throws(() => modelPolicy({ COGNITIVE_PROVIDER_PROFILE: "unrecognized" }), /Unsupported COGNITIVE_PROVIDER_PROFILE/);
+});
+
 test("runtime readiness depends on credentials and an independent three-provider topology", () => {
   const configured = modelPolicy(credentials);
   assert.deepEqual(modelPolicyReadiness(configured), {

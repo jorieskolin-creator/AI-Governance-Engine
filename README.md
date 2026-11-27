@@ -48,6 +48,16 @@ Only decision-eligible adjudicated claims become locked findings and determinist
 
 The fixed cognitive stages map to three operational roles: `WORKHORSE` handles retrieval planning, semantic routing and routine domain assessment; deterministic extraction remains local. `REASONER` handles editable Intake proposals, solution understanding, adjudication and synthesis. `QUALITY_CHECKER` handles verification and fact-checking. Each role has a deterministic primary and fallback provider/model assignment. Configured, credentialed routes execute directly; there is no separate qualification or test mode. An eligible fallback is attempted after provider failure, timeout, quota/rate-limit failure, refusal, unexpected model identity, or exhausted structured-output repair. Cancellation, lease loss and Engine budget exhaustion never trigger fallback. Cross-provider verification and adjudication exclusions take precedence over role preference, and route admission verifies an independent verifier and third-provider adjudicator. Every response is normalized and schema-validated locally, and the actual provider/model used is retained in provenance.
 
+The opt-in `OPENAI_ANTHROPIC_GOOGLE` profile uses `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `GEMINI_API_KEY`. It requires no legacy provider credentials. Explicit role provider/model pairs override the preset, so remove existing role overrides in the target environment to select the following assignments. An environment without `COGNITIVE_PROVIDER_PROFILE` uses `LEGACY`.
+
+| Role | Primary | Fallback when eligible |
+| --- | --- | --- |
+| Workhorse | `claude-sonnet-5-5` | `gemini-4-neon` |
+| Reasoner | `gpt-6.2-sol` | `claude-sonnet-5-5` |
+| Quality Checker | `gemini-4-neon` | `gpt-6.1-terra` |
+
+Use synthetic sources for staging checks. Verify structured outputs, returned model identity, independent verification and no route to a legacy provider before switching production. `gemini-4-hydrogen` remains a benchmarking candidate for bounded routing and retrieval planning.
+
 The engine returns readiness recommendations such as `READY_WITH_CONDITIONS`, `REMEDIATE_BEFORE_NEXT_STAGE`, `HUMAN_REVIEW_REQUIRED` and `BLOCKED_IN_CURRENT_FORM`. Legal, Privacy, Security, Governance, AI Forum and AI Board decisions remain human acts. `FORMALLY_APPROVED` is reserved for a future trusted decision connector that verifies identity, authority, signature, scope and validity.
 
 ## Local development
@@ -79,6 +89,7 @@ The supported assessment workflow uses the v2 run state machine:
 
 1. `POST /api/v2/runs/preflight` parses and screens sources, then builds the deterministic Intake draft.
 2. After reviewing the safe summary package and optional controlled acquired facts, `POST /api/v2/runs/{runId}/discover-recheck` with explicit purpose confirmation optionally requests cited GenAI Intake proposals. Missing-field wording may be synthesized only from field-mapped controlled semantic observations or selected acquired facts. Already acquired local free-text values are not retargeted merely because they are withheld from providers. Selected facts cross this boundary only as `acquired-fact-selection-1.0.0`; free text and raw material cannot be selected. The browser prefills supported proposals only into still-empty fields and leaves them editable or removable. Skipping this step does not block manual resolution.
+   With explicit wording consent, `POST /api/v2/runs/{runId}/intake-wording` submits bounded selected Intake text after local screening. The Engine returns only wording changes constrained to equivalent registered phrases or whitespace. Applying a change still requires review and content approval. Wording requests and their responses are not checkpointed.
 3. `POST /api/v2/runs/{runId}/confirm` requires a value for solution name and accountable owner, an explicit resolution—including `Unknown`—for every other applicable field, and explicit user approval. It then creates the immutable approved Intake snapshot. At this final boundary, an unchanged prefill is recorded as accepted, a changed prefill as edited, and a removed prefill as declined. There is no earlier proposal-acceptance action. Remaining gaps are preserved for downstream analysis and reduce the available assurance rather than blocking the run.
 4. `POST /api/v2/runs/{runId}/execute` starts A–F assessment from that snapshot.
 5. `GET /api/v2/runs/{runId}` and `GET /api/v2/runs/{runId}/result` expose progress and the result.

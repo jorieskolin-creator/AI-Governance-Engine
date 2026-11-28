@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import Ajv2020 from "ajv/dist/2020.js";
-import { assessSolution } from "../src/engine.js";
+import { assessSolution, assessVerifiedSolution } from "../src/engine.js";
+import { createPreflight, confirmPreflightDossier } from "../src/cognitive/preflight.js";
+import { createIntakeResolutionDraft } from "../src/intake/contracts.js";
+import { buildDeclarationComparison } from "../src/intake/declaration-comparison.js";
+import { validateDossier } from "../src/contracts.js";
+import { readFile } from "node:fs/promises";
 import { readinessPackageJsonSchema, validateReadinessPackage } from "../src/readiness-package-contract.js";
 import { publicJsonValue } from "../public/content-policy.js";
 import { SAMPLE_REQUEST } from "../src/sample.js";
@@ -48,6 +53,33 @@ test("the published package schema closes nested ledgers and authority invariant
   for (const field of ["solutionModel", "coverage", "claimLedger", "transmissionManifest", "actionGroundingRecords", "publicationGate"]) {
     assert.ok(cognitiveSchema.properties.cognitive.required.includes(field));
   }
+
+  const golden = await readFile(new URL("./fixtures/doc-support-handoff.golden.json", import.meta.url), "utf8");
+  const preflight = await createPreflight({
+    documentationHandoff: golden,
+    sources: [{ path: "README.md", mimeType: "text/markdown", content: "# Record review assistant\nAccountable owner: Review Owner" }]
+  });
+  const approvedDossier = validateDossier({ ...preflight.solutionProfile.suggestedDossier, name: "Record review assistant", accountableOwner: "Review Owner" });
+  await confirmPreflightDossier(preflight, {
+    dossier: approvedDossier,
+    resolutions: createIntakeResolutionDraft(approvedDossier, preflight.solutionProfile),
+    approval: { confirmed: true, actorRef: "CONTRACT_TEST" }
+  });
+  const comparison = buildDeclarationComparison(preflight.approvedIntake, preflight.localSourceUnits, preflight.registeredSources);
+  const v2Provisional = await assessVerifiedSolution({
+    dossier: preflight.approvedIntake.effectiveDossier,
+    runId: preflight.id,
+    registeredSources: preflight.registeredSources,
+    sourceIngestion: preflight.sourceIngestion,
+    solutionProfile: preflight.solutionProfile,
+    solutionModel: { facts: [] },
+    declaredDocumentation: preflight.approvedIntake.declaredDocumentation,
+    declarationComparison: comparison
+  }, { provisional: true });
+  const validateV1Like = compilePublishedSchema(readinessPackageJsonSchema("1.4.0"));
+  const v1Shape = { ...v2Provisional, schemaVersion: "1.4.0" };
+  delete v1Shape.cognitive;
+  assert.equal(validateV1Like(v1Shape), true, JSON.stringify(validateV1Like.errors, null, 2));
 });
 
 test("the published evidence contracts allow only privacy-safe ledger fields", async () => {

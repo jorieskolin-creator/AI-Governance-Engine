@@ -710,11 +710,19 @@ export function buildDocumentationReadiness(profile, targetStage, sourceIngestio
   const selfDeclaredIntakeFields = unique([...selfDeclaredProfileFields, ...selfDeclaredQuestionIds.map((id) => `intakeAnswers.${id}`)]);
   const maximumLifecycleStage = selfDeclaredIntakeFields.length ? "VERIFICATION_AND_VALIDATION" : null;
   const targetExceedsSelfDeclarationBoundary = maximumLifecycleStage !== null && LIFECYCLE_STAGES.indexOf(targetStage) > LIFECYCLE_STAGES.indexOf(maximumLifecycleStage);
-  const incompleteForDeployment = values.some((value) => !["DOCUMENTED_AND_CONFIRMED", "NOT_APPLICABLE"].includes(value)) || missingImplementationScope || sourceCoverageReviewRequired || questionnaireUnknowns.length > 0 || unsupportedNegativeAnswers.length > 0 || questionnaireConflicts.length > 0;
-  const contradictions = [...profile.contradictions, ...comparedConflicts.filter((row) => row.evidenceTier !== "README_DOCUMENTATION" || !profile.contradictions.some((item) => item.field === row.field))
+  const tierSourceLabel = (evidenceTier) => ({
+    README_DOCUMENTATION: "README",
+    ADDITIONAL_DOCUMENTATION: "submitted documentation",
+    STATIC_CONFIGURATION: "configuration",
+    CODEBASE_IMPLEMENTATION: "codebase implementation",
+    DECLARED_REFERENCE_VERIFICATION: "submitted source snapshot (missing referenced path)"
+  }[evidenceTier] ?? "submitted source");
+  const hasComparisonConflicts = conflictingFields.length > 0 || comparedConflicts.length > 0;
+  const incompleteForDeployment = values.some((value) => !["DOCUMENTED_AND_CONFIRMED", "NOT_APPLICABLE"].includes(value)) || hasComparisonConflicts || missingImplementationScope || sourceCoverageReviewRequired || questionnaireUnknowns.length > 0 || unsupportedNegativeAnswers.length > 0 || questionnaireConflicts.length > 0;
+  const contradictions = [...profile.contradictions, ...comparedConflicts.filter((row) => !["README_DOCUMENTATION", "ADDITIONAL_DOCUMENTATION"].includes(row.evidenceTier) || !profile.contradictions.some((item) => item.field === row.field))
     .map((row) => ({
       id: stableId("intake-comparison-conflict", { comparison: comparison.comparisonHash, field: row.field, evidenceTier: row.evidenceTier }),
-      field: row.field, severity: row.severity, statement: `${fieldLabel(row.field)} differs from the submitted ${row.evidenceTier === "README_DOCUMENTATION" ? "README" : "configuration"}.`,
+      field: row.field, severity: row.severity, statement: `${fieldLabel(row.field)} differs from the ${tierSourceLabel(row.evidenceTier)}.`,
       declaredValue: row.declared, observedCandidates: row.observations.map((item) => item.value),
       sourceUnitIds: unique(row.observations.flatMap((item) => item.citations.map((citation) => citation.sourceUnitId)))
     }))];
@@ -744,12 +752,12 @@ export function buildDocumentationReadiness(profile, targetStage, sourceIngestio
     questionnaireUnknowns,
     unsupportedNegativeAnswers,
     questionnaireConflicts,
-    documentationToCodeAlignment: conflictingFields.length ? "CONFLICTING" : missingImplementationScope ? "NOT_ASSESSED" : incompleteForDeployment ? "INCOMPLETE"
-      : comparison ? comparison.rows.some((row) => row.evidenceTier === "STATIC_CONFIGURATION" && row.status === "ALIGNED") ? "SCOPED_CHECKS_ALIGNED" : "NOT_ASSESSED" : "ALIGNED",
+    documentationToCodeAlignment: hasComparisonConflicts ? "CONFLICTING" : missingImplementationScope ? "NOT_ASSESSED" : incompleteForDeployment ? "INCOMPLETE"
+      : comparison ? comparison.rows.some((row) => ["STATIC_CONFIGURATION", "CODEBASE_IMPLEMENTATION"].includes(row.evidenceTier) && row.status === "ALIGNED") ? "SCOPED_CHECKS_ALIGNED" : "NOT_ASSESSED" : "ALIGNED",
     sandboxRequired,
     deploymentReady: !incompleteForDeployment,
     gateRequired: deploymentTarget && incompleteForDeployment,
-    status: conflictingFields.length ? "CONFLICTING" : !incompleteForDeployment ? "DOCUMENTED_AND_CONFIRMED" : "INCOMPLETE"
+    status: hasComparisonConflicts ? "CONFLICTING" : !incompleteForDeployment ? "DOCUMENTED_AND_CONFIRMED" : "INCOMPLETE"
   };
   return { ...value, hash: sha256(value) };
 }

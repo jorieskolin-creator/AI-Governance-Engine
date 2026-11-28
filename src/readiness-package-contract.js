@@ -103,6 +103,80 @@ const KNOWLEDGE_SCHEMA = Object.freeze({
   }
 });
 
+const CITATION_SCHEMA = Object.freeze({
+  type: "object", additionalProperties: false,
+  required: ["sourceUnitId", "path", "locator", "sha256"],
+  properties: {
+    sourceUnitId: { type: "string", minLength: 1 },
+    path: { type: "string" },
+    locator: { type: ["string", "null"] },
+    sha256: SHA256_SCHEMA
+  }
+});
+
+const SOURCE_COMPARISON_ROW_SCHEMA = Object.freeze({
+  type: "object", additionalProperties: false,
+  required: ["field", "evidenceTier", "declared", "observations", "status", "severity"],
+  properties: {
+    field: { type: "string", minLength: 1 },
+    evidenceTier: {
+      type: "string",
+      enum: [
+        "README_DOCUMENTATION",
+        "ADDITIONAL_DOCUMENTATION",
+        "STATIC_CONFIGURATION",
+        "CODEBASE_IMPLEMENTATION",
+        "DECLARED_REFERENCE_VERIFICATION"
+      ]
+    },
+    declared: {},
+    observations: {
+      type: "array",
+      items: {
+        type: "object", additionalProperties: false,
+        required: ["value", "citations"],
+        properties: { value: {}, citations: { type: "array", items: CITATION_SCHEMA } }
+      }
+    },
+    status: { type: "string", enum: ["ALIGNED", "CONTRADICTED", "UNVERIFIED_IN_CODE", "INSUFFICIENT_EVIDENCE"] },
+    severity: { type: ["string", "null"] }
+  }
+});
+
+const SOURCE_COMPARISON_SCHEMA = Object.freeze({
+  type: "object", additionalProperties: false,
+  required: ["schemaVersion", "approvedIntakeHash", "acquisitionManifestHash", "sourceSnapshotHash", "status", "rows", "limitations", "comparisonHash"],
+  properties: {
+    schemaVersion: { type: "string", enum: ["intake-source-comparison/1.0.0", "intake-source-comparison/1.1.0"] },
+    approvedIntakeHash: SHA256_SCHEMA,
+    acquisitionManifestHash: SHA256_SCHEMA,
+    sourceSnapshotHash: SHA256_SCHEMA,
+    status: { type: "string", enum: ["SCOPED_COMPARISON", "LOCAL_EVIDENCE_UNAVAILABLE"] },
+    rows: { type: "array", items: SOURCE_COMPARISON_ROW_SCHEMA },
+    referenceChecks: { type: "array", items: { type: "object" } },
+    limitations: STRING_ARRAY_SCHEMA,
+    comparisonHash: SHA256_SCHEMA
+  }
+});
+
+const DECLARED_DOCUMENTATION_SCHEMA = Object.freeze({
+  type: "object", additionalProperties: false,
+  required: ["schemaVersion", "evidenceCeiling", "handoff", "topics", "mapped", "evidenceRefs", "notApplicable", "failureModes", "evidenceReferences", "dataSources", "outstandingWork"],
+  properties: {
+    schemaVersion: { const: "declared-documentation/1.0.0" },
+    evidenceCeiling: { const: "DECLARED" },
+    handoff: { type: ["object", "null"] },
+    topics: { type: "object" },
+    mapped: { type: "object" },
+    evidenceRefs: { type: "object" },
+    notApplicable: { type: "object" },
+    failureModes: { type: "array", items: { type: "object" } },
+    evidenceReferences: { type: "array", items: { type: "object" } },
+    dataSources: { type: "array", items: { type: "object" } },
+    outstandingWork: { type: "array", items: { type: "object" } }
+  }
+});
+
 const RISK_DRIVER_SCHEMA = Object.freeze({
   type: "object", additionalProperties: false,
   required: ["id", "type", "title", "severity", "basisStatus", "domain", "findingIds", "controlIds"],
@@ -297,6 +371,25 @@ export function readinessPackageJsonSchema(schemaVersion = "2.6.0") {
     generatedAt: { type: "string", format: "date-time" },
     packageHash: SHA256_SCHEMA,
     knowledge: KNOWLEDGE_SCHEMA,
+    assessmentIntake: {
+      type: "object",
+      required: ["version", "immutable"],
+      properties: {
+        version: { type: "string", minLength: 1 },
+        immutable: { const: true },
+        declaredDocumentation: DECLARED_DOCUMENTATION_SCHEMA
+      }
+    },
+    documentationReadiness: {
+      type: "object",
+      required: ["version", "status", "documentationToCodeAlignment"],
+      properties: {
+        version: { type: "string", minLength: 1 },
+        status: { type: "string", minLength: 1 },
+        documentationToCodeAlignment: { type: "string", minLength: 1 },
+        sourceComparison: SOURCE_COMPARISON_SCHEMA
+      }
+    },
     evidence: { type: "array", items: EVIDENCE_ITEM_SCHEMA },
     sourceIngestion: SOURCE_INGESTION_SCHEMA,
     dimensions: DIMENSIONS_SCHEMA,
@@ -404,6 +497,14 @@ export function validateReadinessPackage(pkg) {
   invariant(READINESS_OUTCOMES.includes(pkg.recommendation.outcome), "package.recommendation.outcome is invalid");
   invariant(pkg.recommendation.formalApproval === false, "package.recommendation.formalApproval must remain false");
   invariant(pkg.transitionBoundary.immutable === true, "package.transitionBoundary must be immutable");
+  if (pkg.assessmentIntake.declaredDocumentation !== undefined) {
+    objectValue(pkg.assessmentIntake.declaredDocumentation, "package.assessmentIntake.declaredDocumentation");
+    invariant(pkg.assessmentIntake.declaredDocumentation.schemaVersion === "declared-documentation/1.0.0" && pkg.assessmentIntake.declaredDocumentation.evidenceCeiling === "DECLARED", "package.assessmentIntake.declaredDocumentation is invalid");
+  }
+  if (pkg.documentationReadiness.sourceComparison !== undefined) {
+    objectValue(pkg.documentationReadiness.sourceComparison, "package.documentationReadiness.sourceComparison");
+    invariant(["intake-source-comparison/1.0.0", "intake-source-comparison/1.1.0"].includes(pkg.documentationReadiness.sourceComparison.schemaVersion), "package.documentationReadiness.sourceComparison.schemaVersion is unsupported");
+  }
   invariant(Array.isArray(pkg.trace.stages), "package.trace.stages must be an array");
   invariant(typeof pkg.trace.inputHash === "string" && typeof pkg.trace.evidenceSnapshotHash === "string", "package trace hashes are required");
   validateCognitiveContract(pkg);

@@ -19,21 +19,27 @@ export function calculateReadiness(controlAssessments, antiPatternAssessments, g
   const assuranceDeficit = gaps.length ? ["LOW", "LOW", "MEDIUM", "HIGH", "CRITICAL"][assuranceDeficitRank] : "NONE";
   const riskDetermination = activeRisks.length ? `POTENTIAL_${["LOW", "LOW", "MEDIUM", "HIGH", "CRITICAL"][riskCandidateRank]}` : "NO_VERIFIED_RISK_FINDING";
   const residualRisk = "NOT_DETERMINED";
-  const riskDrivers = [
-    ...(documentationReadiness?.contradictions ?? []).map((item) => ({
-      id: item.id,
-      type: "DOCUMENTATION_CONTRADICTION",
-      title: item.statement,
-      severity: item.severity ?? "HIGH",
-      basisStatus: "CONFLICTING",
-      domain: null,
-      controlIds: [],
-      findingIds: [item.id],
-      ruleIds: item.ruleId ? [item.ruleId] : []
-    })),
+  const contradictionDrivers = (documentationReadiness?.contradictions ?? []).map((item) => ({
+    id: item.id,
+    type: "DOCUMENTATION_CONTRADICTION",
+    title: item.statement,
+    severity: item.severity ?? "HIGH",
+    basisStatus: "CONFLICTING",
+    domain: null,
+    controlIds: [],
+    findingIds: [item.id],
+    ruleIds: item.ruleId ? [item.ruleId] : []
+  })).sort((a, b) => severityRank[b.severity] - severityRank[a.severity] || a.title.localeCompare(b.title));
+  const sortedDrivers = [
+    ...contradictionDrivers,
     ...activeRisks.map((item) => ({ id: item.id, type: "ANTIPATTERN", title: item.title, severity: item.severity, basisStatus: item.state, domain: item.domain, findingIds: [item.id], controlIds: [] })),
     ...gaps.map((item) => ({ id: item.id, type: "CONTROL_GAP", title: item.title, severity: item.severity, basisStatus: item.currentState === "UNKNOWN" ? "UNKNOWN" : "DECLARED_OR_OBSERVED_BELOW_TARGET", domain: item.domain, findingIds: [item.id], controlIds: [item.controlId] }))
-  ].sort((a, b) => severityRank[b.severity] - severityRank[a.severity] || a.title.localeCompare(b.title)).slice(0, 3);
+  ].sort((a, b) => severityRank[b.severity] - severityRank[a.severity] || a.title.localeCompare(b.title));
+  const riskDrivers = sortedDrivers.slice(0, 3);
+  const topMaterialContradiction = contradictionDrivers.find((item) => ["HIGH", "CRITICAL"].includes(item.severity));
+  if (topMaterialContradiction && riskDrivers.length === 3 && !riskDrivers.some((item) => item.type === "DOCUMENTATION_CONTRADICTION")) {
+    riskDrivers[2] = topMaterialContradiction;
+  }
   const gateStatus = gates.some((item) => item.outcome === "BLOCK") ? "BLOCK" : gates.some((item) => item.outcome === "REVIEW") ? "HUMAN_REVIEW" : gates.length ? "WARN" : "CLEAR";
 
   let outcome;

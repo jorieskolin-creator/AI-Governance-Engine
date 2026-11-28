@@ -92,6 +92,26 @@ test("HTTP workflow exposes readiness and fails closed before unconfigured provi
     const unknownSchema = await request(baseUrl, "/api/v2/contracts/readiness-package/9.9.9");
     assert.equal(unknownSchema.status, 404);
 
+    const faviconSvg = await fetch(new URL("/favicon.svg", baseUrl), { signal: AbortSignal.timeout(5000) });
+    assert.equal(faviconSvg.status, 200);
+    assert.match(faviconSvg.headers.get("content-type") ?? "", /image\/svg\+xml/);
+    const faviconIco = await fetch(new URL("/favicon.ico", baseUrl), { signal: AbortSignal.timeout(5000) });
+    assert.equal(faviconIco.status, 204);
+
+    const invalidPreflight = await request(baseUrl, "/api/v2/runs/preflight", {
+      method: "POST",
+      body: JSON.stringify({ sources: [] })
+    });
+    assert.equal(invalidPreflight.status, 422);
+    assert.equal(invalidPreflight.body.failureCode, "PREFLIGHT_INPUT_INVALID");
+
+    const unparseablePreflight = await request(baseUrl, "/api/v2/runs/preflight", {
+      method: "POST",
+      body: JSON.stringify({ sources: [{ path: "broken.pdf", mimeType: "application/pdf", encoding: "base64", content: Buffer.from("not-a-pdf").toString("base64") }] })
+    });
+    assert.equal(unparseablePreflight.status, 422);
+    assert.equal(unparseablePreflight.body.failureCode, "NO_SUPPORTED_SOURCE_PARSED");
+
     const preflight = await request(baseUrl, "/api/v2/runs/preflight", {
       method: "POST",
       body: JSON.stringify({ sources: [{
@@ -206,6 +226,8 @@ test("HTTP workflow exposes readiness and fails closed before unconfigured provi
   const logs = stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
   assert.ok(logs.some((record) => record.event === "service_started" && record.runStore === "MEMORY"));
   assert.ok(logs.some((record) => record.event === "intake_preflight_completed" && record.parsedCount === 1));
+  assert.ok(logs.some((record) => record.event === "http_request_completed" && record.route === "/api/v2/runs/preflight" && record.runId === null));
+  assert.ok(logs.some((record) => record.event === "request_failed_safely" && record.route === "/api/v2/runs/preflight" && record.statusCode === 422 && record.failureCode === "PREFLIGHT_INPUT_INVALID"));
   assert.ok(logs.some((record) => record.event === "intake_final_approval_completed"));
   assert.ok(logs.some((record) => record.event === "request_failed_safely" && record.statusCode === 503));
   assert.ok(logs.some((record) => record.event === "http_request_completed" && record.route === "/api/v2/runs/:runId/confirm"));

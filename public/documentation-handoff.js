@@ -80,8 +80,13 @@ function canonicalize(value, depth = 0, budget = { remaining: 100_000 }) {
   throw new Error("The handoff contains an invalid JSON value.");
 }
 
-/** Reads only the exported script text; the template and all of its contents stay detached. */
+/** Reads only the exported script text from an inert parsed document or test adapter. */
 export function embeddedDocumentationHandoff(html, template) {
+  const useDomParser = typeof DOMParser === "function" && (!template || (typeof HTMLTemplateElement !== "undefined" && template instanceof HTMLTemplateElement));
+  if (useDomParser) {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    return readHandoffScript(doc.querySelectorAll(`[id="${HANDOFF_SCRIPT_ID}"]`));
+  }
   template.innerHTML = html;
   const scripts = template.content.querySelectorAll(`[id="${HANDOFF_SCRIPT_ID}"]`);
   return readHandoffScript(scripts);

@@ -68,12 +68,14 @@ function logOperational(level, event, fields = {}) {
 }
 
 function normalizedRoute(pathname) {
+  if (pathname === "/api/v2/runs/preflight") return pathname;
   return pathname
     .replace(/^\/api\/v2\/runs\/[^/]+/, "/api/v2/runs/:runId")
     .replace(/^\/api\/v2\/contracts\/readiness-package\/[^/]+$/, "/api/v2/contracts/readiness-package/:version");
 }
 
 function routeRunId(pathname) {
+  if (pathname === "/api/v2/runs/preflight") return null;
   return pathname.match(/^\/api\/v2\/runs\/([^/]+)/)?.[1] ?? null;
 }
 
@@ -650,11 +652,17 @@ const server = http.createServer(async (request, response) => {
       activeExecutions.get(runMatch[1])?.abort(cancellationError("Cognitive run was cancelled by the user"));
       return await runStore.purge(runMatch[1], "CANCELLED") ? sendJson(response, 200, { status: "PURGED" }) : sendJson(response, 404, { error: "Run not found or expired" });
     }
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname === "/favicon.ico") {
+      response.writeHead(204, { "Cache-Control": "public, max-age=300" });
+      return response.end();
+    }
     if (request.method === "GET" && await serveStatic(url.pathname, response)) return;
     sendJson(response, 404, { error: "Not found" });
   } catch (error) {
     const status = error.statusCode ?? 500;
-    const failureCode = error.failureCode ?? (status === 500 || status === 503 ? safeFailureCode(error) : undefined);
+    const classified = status === 500 || status === 503 ? safeFailureCode(error) : undefined;
+    const preflightRoute = url.pathname === "/api/v2/runs/preflight" || url.pathname === "/api/discover";
+    const failureCode = error.failureCode ?? (preflightRoute && classified === "COGNITIVE_RUN_FAILED" ? "PREFLIGHT_FAILED" : classified);
     logOperational("ERROR", "request_failed_safely", { requestId, method: request.method ?? "UNKNOWN", route, statusCode: status, runId, failureCode });
     sendJson(response, status, {
       error: status === 500 ? "Assessment failed safely" : error.message,

@@ -40,6 +40,26 @@ function updateFixture(update) {
 test("Documentation Support HTML and JSON produce the same declaration-only review", async () => {
   const fromJson = await verify(golden);
   assert.deepEqual(await verify(extract(handoffHtml)), fromJson);
+  const styledHtml = `<!doctype html><html><head><style>:root{--ink:#0e1b2c}</style></head><body>${script(golden)}</body></html>`;
+  const previousDomParser = globalThis.DOMParser;
+  let parsedWithDomParser = false;
+  globalThis.DOMParser = class {
+    parseFromString(value, mimeType) {
+      assert.equal(mimeType, "text/html");
+      parsedWithDomParser = true;
+      const doc = parseDocument(value);
+      return {
+        querySelectorAll: () => DomUtils.findAll((tag) => tag.attribs?.id === "doc-support-handoff", doc.children)
+          .map((tag) => ({ tagName: tag.name, getAttribute: (name) => tag.attribs[name], hasAttribute: (name) => Object.hasOwn(tag.attribs, name), textContent: DomUtils.textContent(tag) }))
+      };
+    }
+  };
+  try {
+    assert.deepEqual(await verify(embeddedDocumentationHandoff(styledHtml)), fromJson);
+    assert.equal(parsedWithDomParser, true);
+  } finally {
+    globalThis.DOMParser = previousDomParser;
+  }
   assert.equal(fromJson.documentationConfirmed, true);
   assert.deepEqual(fromJson.suggestions.map(({ controlId, value }) => [controlId, value]), [
     ["name", "Record review assistant"], ["purpose", "Help the review team find the right records."], ["current-stage", "QUALIFICATION_AND_REGISTRATION"]

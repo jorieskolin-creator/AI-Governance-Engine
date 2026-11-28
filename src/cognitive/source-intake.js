@@ -1,4 +1,5 @@
-import { extname } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, extname } from "node:path";
 import { redactText } from "../core/privacy.js";
 export { redactText } from "../core/privacy.js";
 import { classifyArtifact, HUMAN_AUTHORITIES } from "../contracts.js";
@@ -19,6 +20,8 @@ const MAX_EXTRACTED_CHARACTERS = 5_000_000;
 const MAX_ARCHIVE_ENTRIES = 5_000;
 const MAX_ARCHIVE_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
 const MIN_NATIVE_PDF_TEXT_CHARACTERS = 40;
+const require = createRequire(import.meta.url);
+const STANDARD_FONT_DATA_URL = `${dirname(require.resolve("pdfjs-dist/package.json")).replaceAll("\\", "/")}/standard_fonts/`;
 
 function bytesFor(source) {
   if (source.encoding === "base64") {
@@ -100,7 +103,7 @@ function pdfTextSegments(items, pageNumber) {
 
 async function extractPdf(bytes, ocrSession) {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const document = await pdfjs.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useWorkerFetch: false }).promise;
+  const document = await pdfjs.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, useWorkerFetch: false, standardFontDataUrl: STANDARD_FONT_DATA_URL }).promise;
   const segments = [];
   const limitationCodes = new Set();
   const ocr = { engine: OCR_ENGINE, engineVersion: OCR_ENGINE_VERSION, language: OCR_LANGUAGE, attemptedCount: 0, qualifiedCount: 0, reviewRequiredCount: 0, failedCount: 0 };
@@ -393,8 +396,10 @@ export async function parseAndScreenSources(sources, options = {}) {
     }
   }
   if (!options.allowEmpty && !sourceUnits.length && !registeredSources.length) {
-    if (failedSources.some((item) => item.reasonCode === HANDOFF_REVIEW_ONLY)) throw new Error(HANDOFF_REVIEW_INSTRUCTION);
-    throw new Error("No supported source could be parsed. Review the disclosed exclusions and provide at least one supported source.");
+    if (failedSources.some((item) => item.reasonCode === HANDOFF_REVIEW_ONLY)) {
+      throw Object.assign(new Error(HANDOFF_REVIEW_INSTRUCTION), { statusCode: 422, failureCode: HANDOFF_REVIEW_ONLY });
+    }
+    throw Object.assign(new Error("No supported source could be parsed. Review the disclosed exclusions and provide at least one supported source."), { statusCode: 422, failureCode: "NO_SUPPORTED_SOURCE_PARSED" });
   }
   return { registeredSources, sourceUnits, localSourceUnits, dlpFindings, failedSources };
   } finally {

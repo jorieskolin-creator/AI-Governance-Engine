@@ -20,29 +20,33 @@ export const ACCEPTED_FORMATS = acceptedFormatsByMime;
 const stringArray = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
 
 export function validatePreflightInput(input, options = {}) {
-  invariant(input && typeof input === "object", "request body is required");
-  const dossier = input.dossier ? validateDossier(input.dossier) : null;
-  if (!options.dossierOptional) invariant(dossier, "dossier is required");
-  invariant(Array.isArray(input.sources) && (input.sources.length > 0 || options.allowEmptySources), "sources must contain at least one item");
-  const sources = input.sources.map((source, index) => {
-    invariant(source && typeof source === "object", `sources[${index}] must be an object`);
-    invariant(typeof source.path === "string" && source.path.trim(), `sources[${index}].path is required`);
-    invariant(typeof source.mimeType === "string" && ACCEPTED_FORMATS[source.mimeType], `sources[${index}].mimeType is unsupported`);
-    invariant(typeof source.content === "string", `sources[${index}].content must be a string`);
-    const encoding = source.encoding ?? "utf8";
-    invariant(["utf8", "base64"].includes(encoding), `sources[${index}].encoding must be utf8 or base64`);
-    if (["PDF", "DOCX", "XLSX", "IMAGE"].includes(ACCEPTED_FORMATS[source.mimeType])) invariant(encoding === "base64", `sources[${index}] binary content must use base64 encoding`);
-    invariant(!source.path.replaceAll("\\", "/").split("/").includes(".."), `Unsafe source path: ${source.path}`);
-    return {
-      path: source.path.replaceAll("\\", "/").replace(/^\.\//, ""),
-      mimeType: source.mimeType,
-      format: ACCEPTED_FORMATS[source.mimeType],
-      encoding,
-      content: source.content,
-      metadata: source.metadata && typeof source.metadata === "object" ? source.metadata : {}
-    };
-  });
-  return { dossier, sources };
+  try {
+    invariant(input && typeof input === "object", "request body is required");
+    const dossier = input.dossier ? validateDossier(input.dossier) : null;
+    if (!options.dossierOptional) invariant(dossier, "dossier is required");
+    invariant(Array.isArray(input.sources) && (input.sources.length > 0 || options.allowEmptySources), "sources must contain at least one item");
+    const sources = input.sources.map((source, index) => {
+      invariant(source && typeof source === "object", `sources[${index}] must be an object`);
+      invariant(typeof source.path === "string" && source.path.trim(), `sources[${index}].path is required`);
+      invariant(typeof source.mimeType === "string" && ACCEPTED_FORMATS[source.mimeType], `sources[${index}].mimeType is unsupported`);
+      invariant(typeof source.content === "string", `sources[${index}].content must be a string`);
+      const encoding = source.encoding ?? "utf8";
+      invariant(["utf8", "base64"].includes(encoding), `sources[${index}].encoding must be utf8 or base64`);
+      if (["PDF", "DOCX", "XLSX", "IMAGE"].includes(ACCEPTED_FORMATS[source.mimeType])) invariant(encoding === "base64", `sources[${index}] binary content must use base64 encoding`);
+      invariant(!source.path.replaceAll("\\", "/").split("/").includes(".."), `Unsafe source path: ${source.path}`);
+      return {
+        path: source.path.replaceAll("\\", "/").replace(/^\.\//, ""),
+        mimeType: source.mimeType,
+        format: ACCEPTED_FORMATS[source.mimeType],
+        encoding,
+        content: source.content,
+        metadata: source.metadata && typeof source.metadata === "object" ? source.metadata : {}
+      };
+    });
+    return { dossier, sources };
+  } catch (error) {
+    throw Object.assign(error, { statusCode: error.statusCode ?? 422, failureCode: error.failureCode ?? "PREFLIGHT_INPUT_INVALID" });
+  }
 }
 
 export function validateExecutionApproval(input, run) {

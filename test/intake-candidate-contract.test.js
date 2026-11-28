@@ -60,6 +60,69 @@ test("conflicting local candidates remain explicit and cannot become provider el
   assert.equal(candidate.sourceRefs.length, 2);
 });
 
+test("conflicting enum, boolean, list and questionnaire sources produce valid conflict packages instead of failing preflight", async () => {
+  const run = await createPreflight({ sources: [
+    {
+      path: "README.md",
+      mimeType: "text/markdown",
+      encoding: "utf8",
+      content: [
+        "# Service Alpha",
+        "Environment: Sandbox",
+        "Current lifecycle stage: Qualification and registration",
+        "Current user access: Internal only",
+        "Personal data: Yes",
+        "Allowed uses: Internal drafting",
+        "Excluded uses: Autonomous decisions",
+        "AI system qualification: Yes",
+        "Regulatory roles: Provider",
+        "Prohibited practice categories: NONE_OF_THE_ABOVE, SOCIAL_SCORING"
+      ].join("\n")
+    },
+    {
+      path: "docs/architecture.md",
+      mimeType: "text/markdown",
+      encoding: "utf8",
+      content: [
+        "# Service Alpha",
+        "Environment: Production",
+        "Current lifecycle stage: Deployment",
+        "Current user access: Unknown",
+        "Personal data: No",
+        "Allowed uses: Customer triage",
+        "Excluded uses: Biometric categorization",
+        "AI system qualification: No",
+        "Regulatory roles: Deployer"
+      ].join("\n")
+    }
+  ] });
+  const byField = new Map(validateIntakeCandidatePackage(run.intakeCandidates).candidates.map((item) => [item.fieldId, item]));
+
+  assert.deepEqual(byField.get("operatingBoundary.environment").conflicts, ["PRODUCTION", "ISOLATED_SANDBOX"]);
+  assert.equal(byField.get("operatingBoundary.environment").providerEligibility, "INELIGIBLE_CONFLICTING");
+  assert.deepEqual(byField.get("currentStage").conflicts, ["DEPLOYMENT", "QUALIFICATION_AND_REGISTRATION"]);
+  assert.equal(byField.get("currentStage").acquisitionState, "CONFLICTING");
+  assert.deepEqual(byField.get("exposure.currentUserAccess").conflicts, ["INTERNAL_ONLY"]);
+  assert.equal(byField.get("exposure.currentUserAccess").acquisitionState, "CONFLICTING");
+  assert.equal(byField.get("exposure.currentUserAccess").providerEligibility, "INELIGIBLE_CONFLICTING");
+  assert.deepEqual(run.solutionProfile.fields["data.personalData"].candidates.map((item) => item.value), [false, true]);
+  assert.deepEqual(byField.get("operatingBoundary.allowedUses").conflicts, [["Customer triage"], ["Internal drafting"]]);
+  assert.deepEqual(byField.get("operatingBoundary.excludedUses").conflicts, [["Biometric categorization"], ["Autonomous decisions"]]);
+  assert.deepEqual(byField.get("intakeAnswers.AI_SYSTEM_QUALIFICATION").conflicts, ["NO", "YES"]);
+  assert.deepEqual(byField.get("intakeAnswers.REGULATORY_ROLES").conflicts, [["DEPLOYER"], ["PROVIDER"]]);
+  assert.deepEqual(byField.get("intakeAnswers.PROHIBITED_PRACTICE_CATEGORIES").conflicts, [["NONE_OF_THE_ABOVE"], ["SOCIAL_SCORING"]]);
+
+  const aliasRun = await createPreflight({ sources: [
+    { path: "README.md", mimeType: "text/markdown", encoding: "utf8", content: "Environment: Sandbox\nPersonal data: Yes\nAI system qualification: Yes" },
+    { path: "docs/architecture.md", mimeType: "text/markdown", encoding: "utf8", content: "Environment: Isolated sandbox\nPersonal data: true\nAI system qualification: true" }
+  ] });
+  const aliasByField = new Map(validateIntakeCandidatePackage(aliasRun.intakeCandidates).candidates.map((item) => [item.fieldId, item]));
+  assert.equal(aliasByField.get("operatingBoundary.environment").sanitizedCandidate, "ISOLATED_SANDBOX");
+  assert.deepEqual(aliasByField.get("operatingBoundary.environment").conflicts, []);
+  assert.equal(aliasByField.get("intakeAnswers.AI_SYSTEM_QUALIFICATION").sanitizedCandidate, "YES");
+  assert.deepEqual(aliasByField.get("intakeAnswers.AI_SYSTEM_QUALIFICATION").conflicts, []);
+});
+
 test("candidate contract validation rejects disclosure-policy and sanitization tampering", async () => {
   const run = await createPreflight({ sources: [{ path: "case.md", mimeType: "text/markdown", encoding: "utf8", content: "Intended purpose: Support bounded reviews" }] });
   const disclosed = structuredClone(run.intakeCandidates);

@@ -455,7 +455,7 @@ async function reviewDocumentationHandoff(event) {
     if (file.size > HANDOFF_MAX_BYTES) throw new Error("The handoff exceeds the 15 MB review limit.");
     if (!/\.(?:html?|json)$/i.test(file.name)) throw new Error("Choose a Documentation Support HTML or JSON export.");
     const contents = await file.text();
-    const source = /\.html?$/i.test(file.name) ? embeddedDocumentationHandoff(contents, document.createElement("template")) : contents;
+    const source = /\.html?$/i.test(file.name) ? embeddedDocumentationHandoff(contents) : contents;
     const handoff = await parseDocumentationHandoff(source);
     if (readId !== handoffReadId) return;
     documentationHandoff = handoff;

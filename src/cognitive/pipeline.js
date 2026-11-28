@@ -19,7 +19,7 @@ import {
 } from "./integrity.js";
 import { completeCognitiveStep, createCognitiveStepLedger, startCognitiveStep } from "./orchestration.js";
 import { rethrowFatal } from "./failure-policy.js";
-import { validateDeclarationComparison } from "../intake/declaration-comparison.js";
+import { createSafeComparisonSummary, validateDeclarationComparison } from "../intake/declaration-comparison.js";
 
 const HIGH_INTEGRITY = new Set(["HIGH", "CRITICAL"]);
 const unique = (values) => [...new Set(values.filter(Boolean))];
@@ -310,11 +310,20 @@ export async function executeCognitiveRun(run, options = {}) {
   const claimRecords = new Map(); let claims = []; let lockedFindings = []; const derivedSourceUnits = [];
   const declaredDocumentation = run.approvedIntake?.declaredDocumentation ?? null;
   const declarationComparison = run.declarationComparison ? validateDeclarationComparison(run.declarationComparison, run.approvedIntake) : null;
+  const comparisonSummary = createSafeComparisonSummary(declarationComparison);
+  const mitigationRefStatus = (ownerId, index, refKind) => (declarationComparison?.referenceChecks ?? [])
+    .find((item) => item.ownerType === "FAILURE_MODE_MITIGATION" && item.ownerId === ownerId && item.mitigationIndex === index && item.refKind === refKind)?.snapshotStatus ?? "NOT_PROVIDED";
   const declaredRisks = (declaredDocumentation?.failureModes ?? []).map((row) => ({
     id: row.id, title: row.title, trigger: row.trigger_or_cause, effect: row.effect_summary,
     severity: row.severity_user, occurrence: row.occurrence_inherent, detectability: row.detectability_inherent,
     mappedObjects: row.mapped_objects,
-    claimedMitigations: row.claimed_mitigations.map((item) => ({ control: item.control, type: item.type, declaredStatus: item.evidence_status_observed })),
+    claimedMitigations: row.claimed_mitigations.map((item, index) => ({
+      control: item.control,
+      type: item.type,
+      declaredStatus: item.evidence_status_observed,
+      codeRefSnapshotStatus: mitigationRefStatus(row.id, index, "CODE_REF"),
+      evidenceRefSnapshotStatus: mitigationRefStatus(row.id, index, "EVIDENCE_REF")
+    })),
     limitations: row.provenance.limitations
   }));
   const declarationContext = declaredDocumentation ? {
@@ -340,7 +349,7 @@ export async function executeCognitiveRun(run, options = {}) {
     const solutionProfiles = profilesForPackets(policy, "SOLUTION_UNDERSTANDING", run, run.packets, { requireAll: false });
     let solutionProfile = solutionProfiles[0];
     const solutionPackets = transmittedPackets(run, solutionProfile.provider);
-    const generated = await client.generate({ profile: solutionProfile, fallbackProfiles: solutionProfiles.slice(1), prompt: solutionPrompt(run.dossier, solutionPackets, declarationContext), schemaName: "solution_model", schema: SOLUTION_MODEL_SCHEMA, packetHash: packetHash(solutionPackets), promptVersion: PROMPT_VERSIONS.solution });
+    const generated = await client.generate({ profile: solutionProfile, fallbackProfiles: solutionProfiles.slice(1), prompt: solutionPrompt(run.dossier, solutionPackets, declarationContext, comparisonSummary), schemaName: "solution_model", schema: SOLUTION_MODEL_SCHEMA, packetHash: packetHash(solutionPackets), promptVersion: PROMPT_VERSIONS.solution });
     solutionProfile = generated.profile;
     recordTransmission(run, "SOLUTION_UNDERSTANDING", solutionProfile, solutionPackets);
     const candidate = normalizeSolutionCandidates(run.dossier, generated.value, sourceUnits);
@@ -410,7 +419,8 @@ export async function executeCognitiveRun(run, options = {}) {
       const output = await client.generate({
         profile: profiles[0], fallbackProfiles: profiles.slice(1),
         prompt: domainPrompt({ domain, dossier: run.dossier, solutionModel, packets, ...scopedKnowledge, assessmentWorkItems: batch,
-          declaredRisks: declaredRisks.filter((row) => row.mappedObjects.some((id) => id.replace(/^AP-/, "").startsWith(domain))) }),
+          declaredRisks: declaredRisks.filter((row) => row.mappedObjects.some((id) => id.replace(/^AP-/, "").startsWith(domain))),
+          comparisonSummary }),
         schemaName: `domain_${domain.toLowerCase()}_claims`, schema: DOMAIN_CLAIMS_SCHEMA,
         packetHash: packetHash(packets), promptVersion: PROMPT_VERSIONS.domain
       });

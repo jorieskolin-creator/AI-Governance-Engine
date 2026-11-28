@@ -160,6 +160,17 @@ function executiveGapGroups(domains, documentationReadiness, sourceIngestion) {
       findingIds: domain.gaps.map((item) => item.id), controlIds: domain.gaps.map((item) => item.controlId), evidenceIds: domain.gaps.flatMap((item) => item.evidenceIds)
     }, "DETERMINISTIC_CONSOLIDATION");
   });
+  const comparisonRows = documentationReadiness?.sourceComparison?.rows ?? [];
+  const contradictedRows = comparisonRows.filter((row) => row.status === "CONTRADICTED");
+  const unverifiedCodeRows = comparisonRows.filter((row) => row.status === "UNVERIFIED_IN_CODE");
+  if (contradictedRows.length || unverifiedCodeRows.length) {
+    const parts = [];
+    if (contradictedRows.length) parts.push(`${contradictedRows.length} Intake declaration(s) or referenced mitigation path(s) conflict with submitted README, documentation, configuration, or codebase artifacts`);
+    if (unverifiedCodeRows.length) parts.push(`${unverifiedCodeRows.length} declared safeguard(s) lack corresponding implementation signals in submitted code`);
+    groups.unshift(narrativeItem("EXECUTIVE_GAP_GROUP", `Intake vs. codebase comparison: ${parts.join("; ")}.`, {
+      ruleIds: ["RULE-INTAKE-SOURCE-COMPARISON"]
+    }, "DETERMINISTIC_CONSOLIDATION"));
+  }
   if (documentationReadiness?.status !== "DOCUMENTED_AND_CONFIRMED") {
     groups.push(narrativeItem("EXECUTIVE_GAP_GROUP", `Documentation alignment: ${documentationReadiness.satisfiedFieldCount} of ${documentationReadiness.mandatoryFieldCount} applicable fields are satisfied; ${documentationReadiness.materialContradictionCount ?? 0} material contradiction(s) require resolution.`, {
       ruleIds: ["RULE-DOCUMENTATION-READINESS"]

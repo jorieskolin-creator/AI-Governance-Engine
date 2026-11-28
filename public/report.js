@@ -85,13 +85,30 @@ function caseProfileMarkup(summary) {
 
 function sourceComparisonMarkup(comparison) {
   if (!comparison) return "";
-  const rows = array(comparison.rows).toSorted((left, right) => Number(right.status === "CONTRADICTED") - Number(left.status === "CONTRADICTED"));
-  return `<details open class="report-collapsible"><summary>Approved Intake compared with submitted sources</summary>${rows.length ? rows.map((row) => `<article><h4>${escapeHtml(label(row.field))} · ${escapeHtml(label(row.evidenceTier))} ${status(row.status)}</h4><p>Approved: ${escapeHtml(displayValue(row.declared))}</p>${row.observations.map((item) => `<p>Source: ${escapeHtml(displayValue(item.value))} · ${item.citations.map((cite) => escapeHtml(`${cite.path} · ${cite.locator}`)).join(", ")}</p>`).join("")}</article>`).join("") : "<p>No comparison evidence was established in scope.</p>"}${comparison.limitations.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</details>`;
+  const rank = (rowStatus) => rowStatus === "CONTRADICTED" ? 3 : rowStatus === "UNVERIFIED_IN_CODE" ? 2 : rowStatus === "ALIGNED" ? 1 : 0;
+  const rows = array(comparison.rows).toSorted((left, right) => rank(right.status) - rank(left.status));
+  const refChecks = array(comparison.referenceChecks);
+  const missingRefs = refChecks.filter((item) => item.snapshotStatus === "MISSING_FROM_SNAPSHOT");
+  const refSummary = refChecks.length
+    ? `<p><strong>Declared reference verification:</strong> ${refChecks.length - missingRefs.length} located in submitted snapshot · ${missingRefs.length} missing from snapshot.</p>`
+    : "";
+  return `<details open class="report-collapsible"><summary>Approved Intake compared with submitted sources</summary>${refSummary}${rows.length ? rows.map((row) => `<article><h4>${escapeHtml(label(row.field))} · ${escapeHtml(label(row.evidenceTier))} ${status(row.status)}</h4><p>Approved: ${escapeHtml(displayValue(row.declared))}</p>${row.observations.map((item) => `<p>Source: ${escapeHtml(displayValue(item.value))}${item.citations?.length ? ` · ${item.citations.map((cite) => escapeHtml(`${cite.path} · ${cite.locator}`)).join(", ")}` : ""}</p>`).join("")}</article>`).join("") : "<p>No comparison evidence was established in scope.</p>"}${comparison.limitations.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</details>`;
 }
 
-function declaredRisksMarkup(documentation) {
+function declaredRisksMarkup(documentation, comparison) {
   if (!documentation?.failureModes?.length) return "";
-  return `<details class="report-collapsible"><summary>Declared failure modes (${documentation.failureModes.length})</summary><p>These scenarios guide verification. The evidence status shown here was supplied by the user.</p>${documentation.failureModes.map((row) => `<article><h4>${escapeHtml(row.id)} · ${escapeHtml(row.title)} ${status(row.severity_user)}</h4><p>${escapeHtml(row.effect_summary)} · ${escapeHtml(row.mapped_objects.join(", ") || "Unmapped")}</p>${row.claimed_mitigations.map((item) => `<p>${escapeHtml(item.control)} · ${status(item.evidence_status_observed)}</p>`).join("")}</article>`).join("")}</details>`;
+  const refMap = new Map(array(comparison?.referenceChecks)
+    .filter((item) => item.ownerType === "FAILURE_MODE_MITIGATION")
+    .map((item) => [`${item.ownerId}:${item.mitigationIndex}:${item.refKind}`, item]));
+  return `<details class="report-collapsible"><summary>Declared failure modes (${documentation.failureModes.length})</summary><p>These scenarios guide verification. The evidence status shown here was supplied by the user; snapshot checks indicate whether referenced files were present in the submitted sources.</p>${documentation.failureModes.map((row) => `<article><h4>${escapeHtml(row.id)} · ${escapeHtml(row.title)} ${status(row.severity_user)}</h4><p>${escapeHtml(row.effect_summary)} · ${escapeHtml(row.mapped_objects.join(", ") || "Unmapped")}</p>${row.claimed_mitigations.map((item, index) => {
+    const codeCheck = refMap.get(`${row.id}:${index}:CODE_REF`);
+    const evdCheck = refMap.get(`${row.id}:${index}:EVIDENCE_REF`);
+    const refs = [
+      codeCheck ? `Code ref (${escapeHtml(codeCheck.reference)}): ${escapeHtml(label(codeCheck.snapshotStatus))}` : "",
+      evdCheck ? `Evidence ref (${escapeHtml(evdCheck.reference)}): ${escapeHtml(label(evdCheck.snapshotStatus))}` : ""
+    ].filter(Boolean).join(" · ");
+    return `<p>${escapeHtml(item.control)} · ${status(item.evidence_status_observed)}${refs ? ` · ${refs}` : ""}</p>`;
+  }).join("")}</article>`).join("")}</details>`;
 }
 
 function documentationMarkup(summary, intake) {
@@ -109,7 +126,7 @@ function documentationMarkup(summary, intake) {
   const issues = [
     ["Unknown fields", unknown], ["Self-Declared only", declaredOnly], ["Contradictions", conflicts]
   ];
-  return section("03", "Documentation gate", "Documentation Alignment", `<div class="documentation-summary">${metrics.map(([name, value]) => `<div><span>${escapeHtml(name)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div><div class="documentation-issues">${issues.map(([name, values]) => `<article><h3>${escapeHtml(name)}</h3><p>${values.length ? escapeHtml(values.map(label).join(", ")) : "None recorded"}</p></article>`).join("")}</div>${doc.sandboxRequired ? `<p class="boundary-warning"><strong>Effective boundary:</strong> Isolated Sandbox until the critical documentation conditions are resolved.</p>` : ""}${sourceComparisonMarkup(doc.sourceComparison)}${declaredRisksMarkup(intake?.declaredDocumentation)}`);
+  return section("03", "Documentation gate", "Documentation Alignment", `<div class="documentation-summary">${metrics.map(([name, value]) => `<div><span>${escapeHtml(name)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div><div class="documentation-issues">${issues.map(([name, values]) => `<article><h3>${escapeHtml(name)}</h3><p>${values.length ? escapeHtml(values.map(label).join(", ")) : "None recorded"}</p></article>`).join("")}</div>${doc.sandboxRequired ? `<p class="boundary-warning"><strong>Effective boundary:</strong> Isolated Sandbox until the critical documentation conditions are resolved.</p>` : ""}${sourceComparisonMarkup(doc.sourceComparison)}${declaredRisksMarkup(intake?.declaredDocumentation, doc.sourceComparison)}`);
 }
 
 function boundaryMarkup(summary) {

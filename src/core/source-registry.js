@@ -203,3 +203,81 @@ export function dossierRiskEvidence(dossier, now = new Date()) {
   }
   return risks;
 }
+
+const DECLARED_TOPIC_MAPPINGS = Object.freeze({
+  recordOwner: { domains: ["A", "F"], controls: ["CTRL-F1"] },
+  consequences: { domains: ["E", "F"], controls: ["CTRL-E1", "CTRL-F3"] },
+  existingRisk: { domains: ["A", "F"], controls: ["CTRL-A4", "CTRL-F3"] },
+  permissionBasis: { domains: ["B", "F"], controls: ["CTRL-B3", "CTRL-F1"] },
+  privacyConfidentiality: { domains: ["B"], controls: ["CTRL-B1", "CTRL-B3"] },
+  minimization: { domains: ["B"], controls: ["CTRL-B2"] },
+  usageRights: { domains: ["B", "C"], controls: ["CTRL-B5"] },
+  humanAcceptance: { domains: ["E"], controls: ["CTRL-E4"] }
+});
+
+export function declaredDocumentationEvidence(declaredDocumentation, declarationComparison = null, now = new Date()) {
+  if (!declaredDocumentation) return [];
+  const docHash = sha256(declaredDocumentation);
+  const capturedAt = now.toISOString();
+  const items = [];
+  for (const [topicId, mapping] of Object.entries(DECLARED_TOPIC_MAPPINGS)) {
+    const value = declaredDocumentation.topics?.[topicId]?.value;
+    if (!value) continue;
+    const text = `${topicId}: ${value}`.slice(0, 300);
+    items.push({
+      id: stableId("evd", { sourceId: "declared-documentation", topicId, text }),
+      sourceId: "dossier",
+      path: "declared-documentation",
+      kind: "DECLARATION",
+      sha256: docHash,
+      excerpt: text,
+      signal: `declared-topic-${topicId}`,
+      domainIds: mapping.domains,
+      controlIds: mapping.controls,
+      antiPatternIds: [],
+      assuranceState: "DECLARED",
+      polarity: "DECLARATION",
+      eligibleForAssurance: false,
+      evidenceClass: "DECLARED",
+      stale: false,
+      capturedAt,
+      metadata: { origin: declaredDocumentation.topics[topicId].origin }
+    });
+  }
+  const missingMitigationIds = new Set(
+    (declarationComparison?.referenceChecks ?? [])
+      .filter((check) => check.ownerType === "FAILURE_MODE_MITIGATION" && check.snapshotStatus === "MISSING_FROM_SNAPSHOT")
+      .map((check) => `${check.ownerId}:${check.mitigationIndex}`)
+  );
+  for (const row of declaredDocumentation.failureModes ?? []) {
+    if (!["HIGH", "CRITICAL"].includes(row.severity_user)) continue;
+    const antiPatternIds = (row.mapped_objects ?? []).filter((id) => /^AP-[A-F][1-5]$/.test(id));
+    const controlIds = (row.mapped_objects ?? []).filter((id) => /^[A-F][1-5]$/.test(id)).map((id) => `CTRL-${id}`);
+    const domainIds = [...new Set((row.mapped_objects ?? []).map((id) => id.replace(/^AP-/, "")[0]).filter(Boolean))];
+    const hasVerifiedTechnicalMitigation = (row.claimed_mitigations ?? []).some((mitigation, index) => ["PREVENTIVE", "DETECTIVE"].includes(mitigation.type)
+      && !["NOT_RUN", "MISSING_UNKNOWN"].includes(mitigation.evidence_status_observed)
+      && !missingMitigationIds.has(`${row.id}:${index}`));
+    if (hasVerifiedTechnicalMitigation || (!antiPatternIds.length && !controlIds.length)) continue;
+    const summary = `${row.id} (${row.severity_user}): ${row.title || row.effect_summary || "Declared failure mode lacks verified technical mitigation"}`.slice(0, 300);
+    items.push({
+      id: stableId("evd", { sourceId: "declared-documentation", failureModeId: row.id, summary }),
+      sourceId: "dossier",
+      path: "declared-documentation/failure-mode-register",
+      kind: "DECLARATION",
+      sha256: docHash,
+      excerpt: summary,
+      signal: `declared-failure-mode-${row.id.toLowerCase()}`,
+      domainIds: domainIds.length ? domainIds : ["D", "F"],
+      controlIds,
+      antiPatternIds,
+      assuranceState: "DECLARED",
+      polarity: "RISK",
+      eligibleForAssurance: true,
+      evidenceClass: "DECLARED_RISK",
+      stale: false,
+      capturedAt,
+      metadata: { failureModeId: row.id }
+    });
+  }
+  return items;
+}

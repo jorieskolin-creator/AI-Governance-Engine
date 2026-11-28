@@ -1,6 +1,6 @@
 import { validateDossier, validateSources } from "./contracts.js";
 import { sha256, newId } from "./core/hash.js";
-import { buildSourceRegistry, dossierEvidence, dossierRiskEvidence } from "./core/source-registry.js";
+import { buildSourceRegistry, declaredDocumentationEvidence, dossierEvidence, dossierRiskEvidence } from "./core/source-registry.js";
 import { evaluateApplicability } from "./core/applicability.js";
 import { assessAntiPatterns, assessControls, groupDomainResults } from "./core/assessment.js";
 import { evaluateHardGates } from "./core/hard-gates.js";
@@ -176,7 +176,12 @@ export async function assessVerifiedSolution(input, options = {}) {
     registryHash: sha256(input.registeredSources ?? []),
     evidence: [], findings: input.registryFindings ?? []
   };
-  const evidence = [...dossierEvidence(dossier, startedAt), ...dossierRiskEvidence(dossier, startedAt), ...(input.lockedEvidence ?? [])];
+  const evidence = [
+    ...dossierEvidence(dossier, startedAt),
+    ...dossierRiskEvidence(dossier, startedAt),
+    ...declaredDocumentationEvidence(input.declaredDocumentation, input.declarationComparison, startedAt),
+    ...(input.lockedEvidence ?? [])
+  ];
   const solutionProfile = input.solutionProfile ?? discoverSolutionProfile([], dossier, input.fieldConfirmations ?? {});
   const sourceIngestion = input.sourceIngestion?.manifestHash ? input.sourceIngestion : buildSourceIngestionManifest({ submitted: input.sourceIngestion, parsedSources: input.registeredSources ?? [] });
   const pkg = await buildPackage({

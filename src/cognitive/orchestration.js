@@ -95,6 +95,10 @@ export function releaseLocalEvidenceForCognitiveExecution(run, now = new Date())
     unit.transmissionState = "PURGED";
   }
   run.localSourceUnits = [];
+  run.intakeCandidates = null;
+  delete run.documentationHandoff;
+  delete run.initialSolutionProfile;
+  delete run.declaredTopicDraft;
   delete run.executionDataAffinity;
   run.localEvidenceRelease = {
     state: "PURGED_AFTER_INTAKE_APPROVAL",

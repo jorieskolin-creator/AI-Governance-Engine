@@ -533,7 +533,7 @@ const server = http.createServer(async (request, response) => {
       }
       if (!await runStore.acquireLease(run.id)) return sendJson(response, 409, { error: "Run mutation is already owned by another worker" });
       try {
-        if (run.status !== "AWAITING_INTAKE_CONFIRMATION" || !["COMPLETED", "NO_GAPS", "UNAVAILABLE"].includes(run.discoveryRecheck?.status) || run.dlpFindings.some((item) => item.blocking)) {
+        if (!["AWAITING_INTAKE_CONFIRMATION", "AWAITING_TRANSMISSION_APPROVAL"].includes(run.status) || run.dlpFindings.some((item) => item.blocking)) {
           return sendJson(response, 409, { error: "Wording suggestions are unavailable for this draft" });
         }
         if (!rateAllowed(request)) return sendJson(response, 429, { error: "Intake assistance rate limit exceeded" });

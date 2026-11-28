@@ -51,7 +51,25 @@ const RULES = Object.freeze([
   ["OVERSIGHT", "HUMAN_REVIEWED_OUTPUT", ["agent.humanOverride", "operatingBoundary.autonomyScope"], [/\bhuman[- ]reviewed (?:output|content|responses?)\b/i, /\bhuman (?:review|oversight) before (?:output|publication|release)\b/i]],
   ["OPERATING_ENVIRONMENT", "ISOLATED_SANDBOX", ["operatingBoundary.environment"], [/\bisolated sandbox\b/i]],
   ["OPERATING_ENVIRONMENT", "CONTROLLED_PILOT", ["operatingBoundary.environment", "exposure.intendedUserAccess"], [/\bcontrolled (?:external )?pilot\b/i]],
-  ["AGENT_CAPABILITY", "TOOL_OR_AGENT_EXECUTION", ["agent.usesAgents", "agent.canTakeActions", "operatingBoundary.autonomyScope"], [/\b(?:tool|agent) execution\b/i, /\bagentic (?:tools?|actions?|execution)\b/i]]
+  ["AGENT_CAPABILITY", "TOOL_OR_AGENT_EXECUTION", ["agent.usesAgents", "agent.canTakeActions", "operatingBoundary.autonomyScope"], [/\b(?:tool|agent) execution\b/i, /\bagentic (?:tools?|actions?|execution)\b/i]],
+  ["SOLUTION_KIND", "WEB_WORKSPACE_APPLICATION", ["intendedPurpose", "expectedValue"], [/\b(?:single[- ]page|browser|web) (?:application|workspace|dashboard)\b/i]],
+  ["SOLUTION_KIND", "HTTP_API_SERVICE", ["intendedPurpose", "operatingBoundary.integrationScope"], [/\b(?:rest|http|json) api (?:service|server|endpoints?)\b/i]],
+  ["SOLUTION_KIND", "SCORING_OR_EVALUATION_SERVICE", ["intendedPurpose", "expectedValue"], [/\b(?:scoring|evaluation|triage) (?:service|workflow|pipeline)\b/i]],
+  ["INTENDED_AUDIENCE", "BUSINESS_CUSTOMER_USER", ["users", "operatingBoundary.userScope"], [/\b(?:enterprise|business|commercial) customers?\b/i, /\bclient teams?\b/i]],
+  ["INTENDED_AUDIENCE", "EXTERNAL_CONSUMER", ["users", "operatingBoundary.userScope", "exposure.intendedUserAccess"], [/\b(?:public|external) (?:end[- ]users?|consumers?|visitors?)\b/i]],
+  ["INTENDED_AUDIENCE", "SYSTEM_OPERATOR_OR_ADMIN", ["users", "operatingBoundary.userScope", "operatingBoundary.monitoringOwner"], [/\b(?:system|platform|service) (?:operators?|administrators?|admins?)\b/i]],
+  ["ALLOWED_USE", "STRUCTURED_SUMMARY_DRAFTING", ["operatingBoundary.allowedUses", "intendedPurpose", "expectedValue"], [/\b(?:draft(?:s|ed|ing)?|generat(?:e|es|ed|ing)|produc(?:e|es|ed|ing)) (?:structured )?(?:summaries|briefs|reports?)\b/i]],
+  ["ALLOWED_USE", "DOCUMENT_AND_CODE_SCREENING", ["operatingBoundary.allowedUses", "intendedPurpose"], [/\b(?:screen(?:s|ed|ing)?|inspect(?:s|ed|ing)?|pars(?:e|es|ed|ing)) (?:uploaded )?(?:documents?|repositories|source code|artifacts?)\b/i]],
+  ["EXCLUDED_USE", "AUTOMATED_FORMAL_APPROVAL", ["operatingBoundary.excludedUses", "operatingBoundary.autonomyScope"], [/\b(?:never|not|cannot) (?:issu(?:e|es|ed|ing)|grant(?:s|ed|ing)?|produc(?:e|es|ed|ing)) formal approvals?\b/i, /\bno automated (?:legal|formal) approvals?\b/i]],
+  ["EXCLUDED_USE", "UNAPPROVED_PRODUCTION_WRITE", ["operatingBoundary.excludedUses", "agent.irreversibleActions"], [/\b(?:no|prohibit(?:s|ed|ing)?|block(?:s|ed|ing)?) (?:autonomous|unapproved) production (?:writes?|mutations?|deployments?)\b/i]],
+  ["DATA_INPUT", "SOURCE_CODE_AND_CONFIG", ["operatingBoundary.dataScope"], [/\b(?:source code|configuration files?|repository snapshots?)\b/i]],
+  ["DATA_INPUT", "TABULAR_SPREADSHEET_DATA", ["operatingBoundary.dataScope"], [/\b(?:spreadsheets?|xlsx|csv|tabular data)\b/i]],
+  ["DATA_GOVERNANCE", "LOCAL_REDACTION_OR_MINIMIZATION", ["operatingBoundary.dataScope", "operatingBoundary.permissionScope"], [/\b(?:data minimization|pii redaction|redact(?:s|ed|ing)? secrets?)\b/i]],
+  ["DATA_GOVERNANCE", "BOUNDED_RETENTION_TTL", ["operatingBoundary.dataScope"], [/\b(?:time[- ]to[- ]live|expires_at|expired runs?|retention period)\b/i]],
+  ["EXTERNAL_INTEGRATION", "FOUNDATION_MODEL_API", ["operatingBoundary.integrationScope"], [/\b(?:anthropic|claude|gemini|vertex ai|azure openai|bedrock)\b/i]],
+  ["EXTERNAL_INTEGRATION", "RELATIONAL_DATABASE_STORE", ["operatingBoundary.integrationScope"], [/\b(?:postgresql|postgres|mysql|sqlite)\b/i]],
+  ["OVERSIGHT", "EXPLICIT_CONFIRMATION_BOUNDARY", ["agent.humanOverride", "operatingBoundary.autonomyScope"], [/\bexplicit user (?:confirmation|approval)\b/i, /\bhuman[- ]in[- ]the[- ]loop\b/i]],
+  ["OPERATING_ENVIRONMENT", "PRODUCTION_SERVICE", ["operatingBoundary.environment", "exposure.productionAccess"], [/\bproduction (?:environment|deployment|traffic)\b/i]]
 ]);
 
 const CONCEPTS = new Map(RULES.map(([type, id]) => [`${type}:${id}`, { type, id }]));

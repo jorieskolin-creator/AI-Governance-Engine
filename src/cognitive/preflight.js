@@ -11,7 +11,7 @@ import { createAcquiredFactPackage } from "../intake/acquired-facts.js";
 import { createAcquisitionDiagnostics } from "../intake/acquisition-diagnostics.js";
 import { createIntakeCandidatePackage, validateIntakeCandidatePackage } from "../intake/candidate-contract.js";
 import { createIntakeGapAnalysis } from "../intake/gap-analysis.js";
-import { approvedDocumentation, splitDocumentationInput } from "../intake/documentation-input.js";
+import { approvedDocumentation, discoverDeclaredTopics, splitDocumentationInput } from "../intake/documentation-input.js";
 import { preferredDocumentationDraft } from "../../public/documentation-handoff.js";
 
 const DEFAULT_PACKET_CHARS = 18_000;
@@ -91,7 +91,8 @@ export function publicPreflightView(run) {
       snapshotHash: run.approvedIntake.snapshotHash
     } : null,
     documentationHandoff: run.documentationHandoff ?? null,
-    intakeDraft: run.solutionProfile ? preferredDocumentationDraft(run.solutionProfile.suggestedDossier, run.documentationHandoff) : null,
+    declaredTopicDraft: run.declaredTopicDraft ?? null,
+    intakeDraft: (run.initialSolutionProfile ?? run.solutionProfile) ? preferredDocumentationDraft((run.initialSolutionProfile ?? run.solutionProfile).suggestedDossier, run.documentationHandoff) : null,
     executionPacketManifest: run.executionPacketManifest ?? null,
     citationIndex: run.packets.flatMap((packet) => packet.sourceUnits.map((unit) => ({ sourceUnitId: unit.id, path: unit.path, locator: unit.locator, sha256: unit.sha256 })))
   };
@@ -117,7 +118,10 @@ export async function createPreflight(input, options = {}) {
     localSourceUnits: screened.localSourceUnits,
     packets: packetize(screened.sourceUnits, options.maxPacketChars), trace: [], result: null, error: null
   };
-  run.solutionProfile = discoverSolutionProfile(screened.localSourceUnits.filter((item) => item.path !== "intended-use-dossier.json" && (!item.ocr || item.ocr.qualificationState === "QUALIFIED")), validated.dossier);
+  const qualifiedUnits = screened.localSourceUnits.filter((item) => item.path !== "intended-use-dossier.json" && (!item.ocr || item.ocr.qualificationState === "QUALIFIED"));
+  run.solutionProfile = discoverSolutionProfile(qualifiedUnits, validated.dossier);
+  run.initialSolutionProfile = run.solutionProfile;
+  run.declaredTopicDraft = discoverDeclaredTopics(qualifiedUnits);
   run.intakeCandidates = createIntakeCandidatePackage(run.solutionProfile, run.localSourceUnits, run.dlpFindings);
   run.acquiredFacts = createAcquiredFactPackage(run.intakeCandidates);
   run.acquisitionDiagnostics = createAcquisitionDiagnostics({
@@ -159,7 +163,13 @@ export function publicDiscoveryView(run) {
 }
 
 export async function confirmPreflightDossier(run, input, options = {}) {
-  if (!run || run.status !== "AWAITING_INTAKE_CONFIRMATION") throw Object.assign(new Error("Run is not awaiting intake confirmation"), { statusCode: 409 });
+  const reapproving = run?.status === "AWAITING_TRANSMISSION_APPROVAL"
+    && Boolean(run.approvedIntake?.snapshotHash)
+    && input?.priorRevisionRef === run.approvedIntake.snapshotHash
+    && Boolean(run.intakeCandidates);
+  if (!run || (run.status !== "AWAITING_INTAKE_CONFIRMATION" && !reapproving)) {
+    throw Object.assign(new Error("Run is not awaiting intake confirmation"), { statusCode: 409 });
+  }
   if (run.stage === "INTAKE_AI_VERIFICATION_IN_PROGRESS") throw Object.assign(new Error("Intake cannot be confirmed while AI verification is in progress"), { statusCode: 409 });
   if (!(run.sourceIngestion?.parsedCount > 0)) throw Object.assign(new Error("At least one parsed evidence source is required before analysis"), { statusCode: 409 });
   let submittedDossier;
@@ -169,7 +179,7 @@ export async function confirmPreflightDossier(run, input, options = {}) {
   if (sha256(userContent) !== sha256(screenSensitiveValue(userContent))) {
     throw Object.assign(new Error("Intake contains a restricted identifier or credential. Remove it and review the content before approving."), { statusCode: 422 });
   }
-  const sourceProfile = run.solutionProfile;
+  const sourceProfile = run.initialSolutionProfile ?? run.solutionProfile;
   const candidatePackage = validateIntakeCandidatePackage(run.intakeCandidates);
   const acceptedAcquiredCandidate = (fieldId) => {
     const resolution = input?.resolutions?.[fieldId];
@@ -194,7 +204,7 @@ export async function confirmPreflightDossier(run, input, options = {}) {
       supportStrength: "EXPLICIT",
       sourceUnitIds: acquiredCandidate.sourceRefs.map((ref) => ref.sourceUnitId),
       limitations: [...acquiredCandidate.limitations]
-    } : run.solutionProfile?.fields?.[field];
+    } : sourceProfile?.fields?.[field];
     const previous = acquiredCandidate?.sanitizedCandidate ?? (["currentStage", "targetStage"].includes(field) && priorFact?.status === "UNKNOWN" ? "UNKNOWN" : priorFact?.value);
     const userEdited = JSON.stringify(comparable(previous)) !== JSON.stringify(comparable(value));
     const resolutionState = input?.resolutions?.[field]?.resolutionState;
@@ -203,7 +213,7 @@ export async function confirmPreflightDossier(run, input, options = {}) {
   }));
   const intakeAnswers = Object.fromEntries(INTAKE_QUESTIONNAIRE.questions.map((question) => {
     const submitted = submittedDossier.intakeAnswers?.[question.id] ?? { answerState: "UNKNOWN", values: [] };
-    const previous = run.solutionProfile?.assessmentIntakeFacts?.[question.id];
+    const previous = sourceProfile?.assessmentIntakeFacts?.[question.id];
     const resolution = input?.resolutions?.[`intakeAnswers.${question.id}`];
     const previousValues = previous?.value === previous?.answerState ? [] : previous?.value ?? [];
     const unchanged = previous && previous.answerState === submitted.answerState && JSON.stringify(previousValues) === JSON.stringify(submitted.values ?? []);
@@ -254,8 +264,8 @@ export async function confirmPreflightDossier(run, input, options = {}) {
       sourceProfile,
       resolutions: input?.resolutions,
       approval: input?.approval,
-      documentation: approvedDocumentation(run.documentationHandoff, input?.documentationEdits, dossier),
-      priorRevisionRef: input?.priorRevisionRef
+      documentation: approvedDocumentation(run.documentationHandoff, input?.documentationEdits, dossier, run.declaredTopicDraft),
+      priorRevisionRef: input?.priorRevisionRef ?? run.approvedIntake?.snapshotHash ?? null
     });
   } catch (error) { throw Object.assign(error, { statusCode: 422 }); }
   const dossierSource = await parseAndScreenSources([{
@@ -263,10 +273,8 @@ export async function confirmPreflightDossier(run, input, options = {}) {
     content: JSON.stringify(effectiveDossier), metadata: { kind: "DECLARATION" }
   }]);
   run.solutionProfile = solutionProfile;
-  run.intakeCandidates = null;
   run.dossier = structuredClone(effectiveDossier);
   run.approvedIntake = approvedIntake;
-  delete run.documentationHandoff;
   run.registeredSources = [...run.registeredSources.filter((item) => item.path !== "intended-use-dossier.json"), ...dossierSource.registeredSources];
   run.dlpFindings = [...run.dlpFindings.filter((item) => !oldDossierUnitIds.has(item.sourceUnitId)), ...dossierSource.dlpFindings];
   run.localSourceUnits = [...sourceUnits, ...dossierSource.localSourceUnits];

@@ -160,3 +160,12 @@ test("asynchronous provider failures expose a stable limitation instead of provi
   assert.match(server, /"Cognitive analysis could not complete safely\."/);
   assert.doesNotMatch(server, /run\.error = process\.env\.NODE_ENV/);
 });
+
+test("Enrich with GenAI applies No information offered, polishes fluency with revert, and preserves activeRunId across post-approval edits", () => {
+  assert.match(index, /id="include-intake-wording" type="checkbox" checked/);
+  assert.match(app, /markEmptyTopicsNoInformationOffered\(\)/);
+  assert.match(app, /Revert to original wording/);
+  assert.match(app, /NON_OVERLAPPING_TOPIC_GROUPS/);
+  assert.match(app, /priorRevisionRef: lastApprovedSnapshotHash/);
+  assert.match(app, /function invalidateApprovedDraftOnEdit\(\)/);
+});

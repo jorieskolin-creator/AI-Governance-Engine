@@ -57,8 +57,8 @@
         </div>
         <fieldset id="intake-enrichment-choice" class="intake-workspace-section hidden">
           <legend>Enrich with GenAI?</legend>
-          <p class="field-hint">YES sends the reviewed safe summaries for gap suggestions and selected Intake text for wording suggestions. You can edit the draft before approving it.</p>
-          <label><input id="include-intake-wording" type="checkbox" /> Include the intended purpose and short entries under Declared documentation for wording review</label>
+          <p class="field-hint">YES fills empty Intake topics from reviewed safe summaries (setting "No information offered" where sources provide no valid information) and refines populated narrative wording for fluency and readability. Everything remains manually editable before Approve content.</p>
+          <label><input id="include-intake-wording" type="checkbox" checked /> Refine wording fluency and readability across populated Intake topics</label>
           <button id="request-ai-proposals" class="secondary-button" type="button">YES</button>
           <button id="skip-ai-proposals" class="secondary-button" type="button">NO</button>
         </fieldset>
@@ -96,7 +96,7 @@
           <div class="form-grid two"><label>Users and operators<input id="users" placeholder="Unknown until detected or declared" /></label><div class="confirmation-note"><strong>Confirmation preserves provenance</strong><span>Corrections become user declarations. They do not erase missing documentation or contradictory source evidence.</span></div></div>
           <details class="intake-workspace-section">
             <summary>Declared documentation, risks and data rules</summary>
-            <p class="field-hint">Review and edit these declarations before approval. The imported failure-mode, data-source and evidence registers appear in the handoff review above.</p>
+            <p class="field-hint">Review and edit these non-overlapping governance, impact and permission topics before approval. Process context, affected groups, recipients, oversight, privacy scope and permission basis populate the structured Intake controls directly without duplication.</p>
             <div id="declared-documentation-topics"></div>
           </details>
 

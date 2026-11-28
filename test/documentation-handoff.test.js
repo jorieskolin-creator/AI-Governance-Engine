@@ -3,7 +3,15 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { webcrypto } from "node:crypto";
 import { DomUtils, parseDocument } from "htmlparser2";
-import { embeddedDocumentationHandoff, parseDocumentationHandoff, preferredDocumentationDraft } from "../public/documentation-handoff.js";
+import {
+  embeddedDocumentationHandoff,
+  handoffControlDrafts,
+  NON_OVERLAPPING_TOPIC_GROUPS,
+  normalizedHandoffAnswer,
+  parseDocumentationHandoff,
+  preferredDocumentationDraft,
+  PROMOTED_DOCUMENTATION_TOPICS
+} from "../public/documentation-handoff.js";
 import { createPreflight, confirmPreflightDossier, publicPreflightView } from "../src/cognitive/preflight.js";
 import { validateDossier } from "../src/contracts.js";
 import { sha256 } from "../src/core/hash.js";
@@ -157,4 +165,92 @@ test("an Intake edit containing a restricted identifier cannot enter an approved
   }), { statusCode: 422, message: /restricted identifier/ });
   assert.equal(run.approvedIntake, undefined);
   assert.doesNotMatch(JSON.stringify(run), /synthetic-review@example\.invalid/);
+});
+
+test("handoff mapping de-duplicates structured Intake fields, normalizes NOT_DETERMINED, and falls back to uploaded docs when absent", async () => {
+  const renderedIds = new Set(NON_OVERLAPPING_TOPIC_GROUPS.flatMap(([, fields]) => fields.map(([id]) => id)));
+  for (const promoted of PROMOTED_DOCUMENTATION_TOPICS) assert.equal(renderedIds.has(promoted), false, promoted);
+  assert.equal(normalizedHandoffAnswer("severity", "NOT_DETERMINED"), "");
+  assert.equal(normalizedHandoffAnswer("permissionStatus", "CONDITIONALLY_PERMITTED"), "Conditionally permitted");
+
+  const richHandoff = await verify(updateFixture(({ record }) => {
+    Object.assign(record.answers, {
+      users: "Case analysts",
+      affectedParties: "Applicants",
+      useContext: "Support bounded case review",
+      outputRole: "DECISION",
+      outputConsumers: "Internal case portal",
+      humanAcceptance: "Case lead reviews and signs off before action",
+      reversibility: "REVERSIBLE",
+      privacyConfidentiality: "Pseudonymised case metadata only",
+      permissionBasis: "Internal governance charter",
+      usageRights: "Approved internal licence",
+      severity: "NOT_DETERMINED",
+      permissionStatus: "NOT_DETERMINED"
+    });
+  }));
+  const controls = handoffControlDrafts(richHandoff);
+  assert.equal(controls.get("allowed-uses"), "Support bounded case review");
+  assert.equal(controls.get("boundary-users"), "Users: Case analysts · Affected parties: Applicants");
+  assert.equal(controls.get("boundary-data"), "Pseudonymised case metadata only");
+  assert.equal(controls.get("boundary-integrations"), "Internal case portal");
+  assert.equal(controls.get("boundary-permissions"), "Internal governance charter · Approved internal licence");
+  assert.match(controls.get("boundary-autonomy"), /Decision — determines an outcome/);
+  assert.equal(controls.get("consequential"), "YES");
+  assert.equal(controls.get("takes-actions"), undefined);
+  assert.equal(controls.get("irreversible"), "NO");
+  assert.equal(controls.get("human-override"), "YES");
+  assert.equal(handoffControlDrafts({ answers: { outputRole: "ACTION" } }).get("takes-actions"), "YES");
+  assert.equal(handoffControlDrafts({ answers: { outputRole: "RECOMMENDATION" } }).get("takes-actions"), "NO");
+
+  const draft = preferredDocumentationDraft(validateDossier({ name: "Fallback name", accountableOwner: "Doc owner" }), richHandoff);
+  assert.deepEqual(draft.operatingBoundary.allowedUses, ["Support bounded case review"]);
+  assert.equal(draft.operatingBoundary.userScope, "Users: Case analysts · Affected parties: Applicants");
+  assert.equal(draft.exposure.consequentialDecisions, true);
+  assert.equal(draft.agent.irreversibleActions, false);
+  assert.equal(draft.agent.humanOverride, true);
+
+  const runWithHandoff = await createPreflight({ sources: [evidence], documentationHandoff: JSON.stringify({ ...JSON.parse(updateFixture(({ record }) => {
+    record.answers.severity = "NOT_DETERMINED";
+    record.answers.permissionStatus = "CONDITIONALLY_PERMITTED";
+  })) }) });
+  const approvedDossier = validateDossier({ ...publicPreflightView(runWithHandoff).intakeDraft, accountableOwner: "Review service lead" });
+  const confirmed = await confirmPreflightDossier(runWithHandoff, {
+    dossier: approvedDossier,
+    resolutions: createIntakeResolutionDraft(approvedDossier, runWithHandoff.solutionProfile),
+    documentationEdits: { openConstraints: "No information offered" },
+    approval: { confirmed: true, actorRef: "TEST_USER" }
+  });
+  assert.equal(confirmed.approvedIntake.declaredDocumentation.topics.severity.value, null);
+  assert.equal(confirmed.approvedIntake.declaredDocumentation.topics.severity.origin, "UNKNOWN");
+  assert.equal(confirmed.approvedIntake.declaredDocumentation.topics.permissionStatus.value, "Conditionally permitted");
+  assert.equal(confirmed.approvedIntake.declaredDocumentation.topics.permissionStatus.origin, "DOCUMENTATION_SUPPORT");
+  assert.equal(confirmed.approvedIntake.declaredDocumentation.topics.openConstraints.value, null);
+  assert.equal(confirmed.approvedIntake.declaredDocumentation.topics.openConstraints.noInformationOffered, true);
+
+  const fallbackRun = await createPreflight({
+    sources: [{
+      path: "docs/governance-record.md",
+      mimeType: "text/markdown",
+      content: [
+        "# Case Triage Workspace",
+        "Solution name: Case Triage Workspace",
+        "Accountable owner: Triage Lead",
+        "Record owner: Documentation Steward",
+        "Plausible adverse consequences: Delayed triage queue routing",
+        "Minimisation and retention: Purge transient case uploads after 60 minutes"
+      ].join("\n")
+    }]
+  });
+  const view = publicPreflightView(fallbackRun);
+  assert.equal(view.declaredTopicDraft.recordOwner.value, "Documentation Steward");
+  assert.equal(view.declaredTopicDraft.consequences.value, "Delayed triage queue routing");
+  assert.equal(view.declaredTopicDraft.minimization.value, "Purge transient case uploads after 60 minutes");
+  const fallbackDossier = validateDossier(fallbackRun.solutionProfile.suggestedDossier);
+  const fallbackConfirmed = await confirmPreflightDossier(fallbackRun, {
+    dossier: fallbackDossier,
+    resolutions: createIntakeResolutionDraft(fallbackDossier, fallbackRun.solutionProfile),
+    approval: { confirmed: true, actorRef: "TEST_USER" }
+  });
+  assert.equal(fallbackConfirmed.approvedIntake.declaredDocumentation.topics.minimization.origin, "DETERMINISTIC_DOCUMENTATION");
 });

@@ -4,7 +4,8 @@ import { acquisitionAssistancePolicy } from "./model-policy.js";
 import { discoveryRecheckPrompt, packetHash, PROMPT_VERSIONS } from "./prompts.js";
 import { activeIntakeQuestionIds } from "../knowledge/intake-questionnaire.js";
 import { sha256, stableId } from "../core/hash.js";
-import { intakeField } from "../intake/field-registry.js";
+import { INTAKE_FIELD_REGISTRY, intakeField } from "../intake/field-registry.js";
+import { handoffControlDrafts } from "../../public/documentation-handoff.js";
 import { COGNITIVE_PROVIDERS } from "./provider-adapters.js";
 import { setAcquisitionGenAiStatus } from "../intake/acquisition-diagnostics.js";
 import { semanticIntakeUnitSupportsField } from "../intake/semantic-intake-evidence.js";
@@ -72,8 +73,11 @@ export async function recheckDiscovery(run, input, options = {}) {
   const gapByField = new Map(run.intakeGapAnalysis.fields.map((field) => [field.fieldId, field]));
   const selectedFactFields = new Set(options.acquiredFactUnit ? JSON.parse(options.acquiredFactUnit.content).facts.map((fact) => fact.fieldId) : []);
   const occupied = new Set(options.occupiedFieldIds ?? []);
-  const handoffPaths = new Map([["name", "name"], ["purpose", "intendedPurpose"], ["current-stage", "currentStage"], ["users", "users"], ["excluded-uses", "operatingBoundary.excludedUses"]]);
-  for (const { controlId } of run.documentationHandoff?.suggestions ?? []) occupied.add(handoffPaths.get(controlId));
+  const fieldIdByControl = new Map(INTAKE_FIELD_REGISTRY.fields.filter((field) => field.uiControlId).map((field) => [field.uiControlId, field.id]));
+  for (const controlId of handoffControlDrafts(run.documentationHandoff).keys()) {
+    const mappedFieldId = fieldIdByControl.get(controlId);
+    if (mappedFieldId) occupied.add(mappedFieldId);
+  }
   const needsProposal = (fieldId) => !occupied.has(fieldId) && (gapByField.get(fieldId)?.state === "MISSING_UNKNOWN" || selectedFactFields.has(fieldId));
   const targetFields = [
     ...Object.values(run.solutionProfile.fields).filter((item) => intakeField(item.field)?.genAiProposalAllowed && needsProposal(item.field)).map((item) => ({ field: item.field, currentValue: null, valueWithheld: item.status !== "UNKNOWN", status: item.status, factClass: item.factClass })),

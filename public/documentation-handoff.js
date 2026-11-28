@@ -4,6 +4,8 @@ export const HANDOFF_REVIEW_INSTRUCTION = "Open Documentation Support exports in
 export const HANDOFF_MAX_BYTES = 15 * 1024 * 1024;
 export const HANDOFF_VERSION = "doc-support-handoff/1.0.0";
 export const DECLARED_DOCUMENTATION_VERSION = "declared-documentation/1.0.0";
+export const NO_INFORMATION_OFFERED = "No information offered";
+export const isNoInformationOffered = (value) => typeof value === "string" && value.trim().toLowerCase() === "no information offered";
 export const DECLARED_TOPIC_GROUPS = [
   ["Context and oversight", [
     ["recordOwner", "Documentation record owner"],
@@ -38,6 +40,53 @@ export const DECLARED_TOPIC_GROUPS = [
     ["openConstraints", "Unresolved permission questions"]
   ]]
 ];
+export const PROMOTED_DOCUMENTATION_TOPICS = new Set([
+  "affectedParties",
+  "useContext",
+  "outputRole",
+  "outputConsumers",
+  "humanAcceptance",
+  "reversibility",
+  "privacyConfidentiality",
+  "permissionBasis",
+  "usageRights"
+]);
+export const NON_OVERLAPPING_TOPIC_GROUPS = DECLARED_TOPIC_GROUPS
+  .map(([title, fields]) => [title, fields.filter(([id]) => !PROMOTED_DOCUMENTATION_TOPICS.has(id))])
+  .filter(([, fields]) => fields.length > 0);
+const HANDOFF_ENUM_LABELS = Object.freeze({
+  outputRole: Object.freeze({
+    DRAFT: "Draft — content for further authoring",
+    SUMMARY: "Summary — condensed representation",
+    RECOMMENDATION: "Recommendation — input to a human decision",
+    DECISION: "Decision — determines an outcome",
+    ACTION: "Action — initiates or executes a change"
+  }),
+  severity: Object.freeze({ LOW: "Low", MODERATE: "Moderate", HIGH: "High", SEVERE: "Severe" }),
+  detectability: Object.freeze({
+    READILY_DETECTABLE: "Readily detectable",
+    PARTIALLY_DETECTABLE: "Partially detectable",
+    DIFFICULT: "Difficult to detect",
+    NOT_DETECTABLE: "Not detectable in current design"
+  }),
+  reversibility: Object.freeze({
+    REVERSIBLE: "Reversible",
+    PARTIALLY_REVERSIBLE: "Partially reversible",
+    DIFFICULT: "Difficult to reverse",
+    IRREVERSIBLE: "Irreversible"
+  }),
+  permissionStatus: Object.freeze({
+    PERMITTED: "Permitted by an identified authority",
+    CONDITIONALLY_PERMITTED: "Conditionally permitted",
+    NOT_PERMITTED: "Not permitted"
+  })
+});
+
+export function normalizedHandoffAnswer(id, value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw || raw.toUpperCase() === "NOT_DETERMINED" || raw.toLowerCase() === "not determined" || isNoInformationOffered(raw)) return "";
+  return HANDOFF_ENUM_LABELS[id]?.[raw] ?? raw;
+}
 const REGISTER_VERSION = "failure-mode-register/1.0.0";
 const levels = ["LOW", "MEDIUM", "HIGH", "UNKNOWN"];
 const referenceStatuses = ["DECLARED_IN_DOC", "OBSERVED_IN_CONFIG", "TEST_EVIDENCE_LINKED", "NOT_RUN", "MISSING_UNKNOWN"];
@@ -156,12 +205,17 @@ export async function parseDocumentationHandoff(source, subtle = globalThis.cryp
     ["excluded-uses", "Excluded uses", display(answers.exclusions)]
   ].filter(([, , value]) => value).map(([controlId, label, value]) => ({ controlId, label, value }));
   const context = [
-    ["Documentation record owner (not necessarily the accountable solution owner)", answers.recordOwner],
-    ["Process and use context", answers.useContext], ["Output role", answers.outputRole],
-    ["Output and downstream use", answers.outputConsumers], ["Human review and acceptance", answers.humanAcceptance],
-    ["Plausible adverse consequences", answers.consequences], ["Existing risk or classification", answers.existingRisk],
-    ["Classification basis and date", answers.classificationBasis], ["Permission basis and authority", answers.permissionBasis],
-    ["Privacy and confidentiality rules", answers.privacyConfidentiality], ["Unresolved permission questions", answers.openConstraints]
+    ["Documentation record owner (not necessarily the accountable solution owner)", normalizedHandoffAnswer("recordOwner", answers.recordOwner)],
+    ["Process and use context", normalizedHandoffAnswer("useContext", answers.useContext)],
+    ["Output role", normalizedHandoffAnswer("outputRole", answers.outputRole)],
+    ["Output and downstream use", normalizedHandoffAnswer("outputConsumers", answers.outputConsumers)],
+    ["Human review and acceptance", normalizedHandoffAnswer("humanAcceptance", answers.humanAcceptance)],
+    ["Plausible adverse consequences", normalizedHandoffAnswer("consequences", answers.consequences)],
+    ["Existing risk or classification", normalizedHandoffAnswer("existingRisk", answers.existingRisk)],
+    ["Classification basis and date", normalizedHandoffAnswer("classificationBasis", answers.classificationBasis)],
+    ["Permission basis and authority", normalizedHandoffAnswer("permissionBasis", answers.permissionBasis)],
+    ["Privacy and confidentiality rules", normalizedHandoffAnswer("privacyConfidentiality", answers.privacyConfidentiality)],
+    ["Unresolved permission questions", normalizedHandoffAnswer("openConstraints", answers.openConstraints)]
   ].filter(([, value]) => display(value));
   return {
     schemaVersion: HANDOFF_VERSION, payloadHash: integrity.payload_sha256,
@@ -171,10 +225,43 @@ export async function parseDocumentationHandoff(source, subtle = globalThis.cryp
   };
 }
 
+export function handoffControlDrafts(handoff) {
+  const out = new Map((handoff?.suggestions ?? []).map(({ controlId, value }) => [controlId, value]));
+  const answers = handoff?.answers;
+  if (!answers) return out;
+  const useContext = normalizedHandoffAnswer("useContext", answers.useContext);
+  if (useContext) out.set("allowed-uses", useContext);
+  const affectedParties = normalizedHandoffAnswer("affectedParties", answers.affectedParties);
+  const users = normalizedHandoffAnswer("users", answers.users);
+  if (affectedParties) out.set("boundary-users", users ? `Users: ${users} · Affected parties: ${affectedParties}` : affectedParties);
+  const privacy = normalizedHandoffAnswer("privacyConfidentiality", answers.privacyConfidentiality);
+  if (privacy) out.set("boundary-data", privacy);
+  const consumers = normalizedHandoffAnswer("outputConsumers", answers.outputConsumers);
+  if (consumers) out.set("boundary-integrations", consumers);
+  const permission = [normalizedHandoffAnswer("permissionBasis", answers.permissionBasis), normalizedHandoffAnswer("usageRights", answers.usageRights)].filter(Boolean).join(" · ");
+  if (permission) out.set("boundary-permissions", permission);
+  const outputRoleRaw = display(answers.outputRole).toUpperCase();
+  const outputRole = normalizedHandoffAnswer("outputRole", answers.outputRole);
+  const humanAcceptance = normalizedHandoffAnswer("humanAcceptance", answers.humanAcceptance);
+  const autonomy = [outputRole, humanAcceptance].filter(Boolean).join(" — ");
+  if (autonomy) out.set("boundary-autonomy", autonomy);
+  if (["DECISION", "ACTION"].includes(outputRoleRaw)) out.set("consequential", "YES");
+  else if (["DRAFT", "SUMMARY"].includes(outputRoleRaw)) out.set("consequential", "NO");
+  if (outputRoleRaw === "ACTION") out.set("takes-actions", "YES");
+  else if (["DRAFT", "SUMMARY", "RECOMMENDATION"].includes(outputRoleRaw)) out.set("takes-actions", "NO");
+  const reversibilityRaw = display(answers.reversibility).toUpperCase();
+  if (reversibilityRaw === "IRREVERSIBLE") out.set("irreversible", "YES");
+  else if (reversibilityRaw === "REVERSIBLE") out.set("irreversible", "NO");
+  if (humanAcceptance) out.set("human-override", "YES");
+  return out;
+}
+
 export function preferredDocumentationDraft(dossier, handoff) {
-  const values = new Map((handoff?.suggestions ?? []).map(({ controlId, value }) => [controlId, value]));
+  const values = handoffControlDrafts(handoff);
   if (!values.size) return dossier;
   const currentStage = values.get("current-stage");
+  const triBool = (controlId, fallback) => values.has(controlId) ? values.get(controlId) === "YES" : (fallback ?? null);
+  const lines = (textValue) => textValue.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
   return {
     ...dossier,
     name: values.get("name") ?? dossier.name,
@@ -182,8 +269,25 @@ export function preferredDocumentationDraft(dossier, handoff) {
     currentStage: currentStage ?? dossier.currentStage,
     lifecycleDeclaration: currentStage ? { ...dossier.lifecycleDeclaration, currentStage } : dossier.lifecycleDeclaration,
     users: values.has("users") ? values.get("users").split(/[,\r\n]+/).map(display).filter(Boolean) : dossier.users,
-    operatingBoundary: values.has("excluded-uses") ? {
-      ...dossier.operatingBoundary, excludedUses: values.get("excluded-uses").split(/\r?\n/).map((value) => value.trim()).filter(Boolean)
-    } : dossier.operatingBoundary
+    exposure: dossier.exposure || values.has("consequential") ? {
+      ...dossier.exposure,
+      consequentialDecisions: triBool("consequential", dossier.exposure?.consequentialDecisions)
+    } : dossier.exposure,
+    agent: dossier.agent || values.has("takes-actions") || values.has("irreversible") || values.has("human-override") ? {
+      ...dossier.agent,
+      canTakeActions: triBool("takes-actions", dossier.agent?.canTakeActions),
+      irreversibleActions: triBool("irreversible", dossier.agent?.irreversibleActions),
+      humanOverride: triBool("human-override", dossier.agent?.humanOverride)
+    } : dossier.agent,
+    operatingBoundary: {
+      ...dossier.operatingBoundary,
+      allowedUses: values.has("allowed-uses") ? lines(values.get("allowed-uses")) : dossier.operatingBoundary.allowedUses,
+      excludedUses: values.has("excluded-uses") ? lines(values.get("excluded-uses")) : dossier.operatingBoundary.excludedUses,
+      userScope: values.get("boundary-users") ?? dossier.operatingBoundary.userScope,
+      dataScope: values.get("boundary-data") ?? dossier.operatingBoundary.dataScope,
+      integrationScope: values.get("boundary-integrations") ?? dossier.operatingBoundary.integrationScope,
+      permissionScope: values.get("boundary-permissions") ?? dossier.operatingBoundary.permissionScope,
+      autonomyScope: values.get("boundary-autonomy") ?? dossier.operatingBoundary.autonomyScope
+    }
   };
 }

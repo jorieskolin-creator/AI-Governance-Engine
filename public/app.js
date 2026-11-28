@@ -1,7 +1,19 @@
 import { renderAssuranceSummary, standaloneReportHtml } from "/report.js";
 import { binaryMimeTypes, classifyUploadPath, provisionalIngestionManifest } from "/upload-types.js";
 import { sanitizeRestrictedValue } from "/content-policy.js";
-import { DECLARED_TOPIC_GROUPS, embeddedDocumentationHandoff, HANDOFF_MAX_BYTES, HANDOFF_REVIEW_INSTRUCTION, HANDOFF_REVIEW_ONLY, parseDocumentationHandoff } from "/documentation-handoff.js";
+import {
+  embeddedDocumentationHandoff,
+  HANDOFF_MAX_BYTES,
+  HANDOFF_REVIEW_INSTRUCTION,
+  HANDOFF_REVIEW_ONLY,
+  handoffControlDrafts,
+  isNoInformationOffered,
+  NO_INFORMATION_OFFERED,
+  NON_OVERLAPPING_TOPIC_GROUPS,
+  normalizedHandoffAnswer,
+  parseDocumentationHandoff,
+  preferredDocumentationDraft
+} from "/documentation-handoff.js";
 
 const STAGES = [
   "QUALIFICATION_AND_REGISTRATION", "DESIGN_AND_DEVELOPMENT", "VERIFICATION_AND_VALIDATION",
@@ -26,10 +38,13 @@ const handoffDraftControls = new Map();
 const declaredTopicBaselines = new Map();
 let intakeApprovalStarted = false;
 let approvedIntakeRevision = null;
+let lastApprovedSnapshotHash = null;
+let latestDeclaredTopicDraft = {};
 let retrievalPlanningProviders = [];
 let proposalProviders = [];
 let modelReadiness = { status: "UNAVAILABLE", issueCodes: ["MODEL_POLICY_UNAVAILABLE"] };
 const editedIntakeFields = new Set();
+const noInformationOfferedFields = new Set();
 const prefilledProposalByField = new Map();
 const processedProposalIds = new Set();
 const acceptedAcquiredCandidateByField = new Map();
@@ -316,6 +331,7 @@ function fillQuestionnaire(answers = {}) {
 
 function fillDossier(dossier) {
   editedIntakeFields.clear();
+  noInformationOfferedFields.clear();
   prefilledProposalByField.clear();
   processedProposalIds.clear();
   acceptedAcquiredCandidateByField.clear();
@@ -350,8 +366,9 @@ function updateDocumentationHandoffAction(message) {
     : "Select Discover case information to prepare the Intake draft.");
 }
 
-function clearIntakeApproval() {
+function clearIntakeApproval({ resetHistory = false } = {}) {
   approvedIntakeRevision = null;
+  if (resetHistory) lastApprovedSnapshotHash = null;
   $("start-analysis-button").disabled = true;
   $("intake-approval-status").textContent = "Approve the Intake content before starting analysis.";
 }
@@ -410,10 +427,10 @@ function documentationEdits() {
     .map((input) => [input.dataset.topic, input.value]));
 }
 
-function renderDeclaredTopics(handoff = null, edits = {}) {
+function renderDeclaredTopics(handoff = null, edits = {}, discoveredTopics = {}) {
   declaredTopicBaselines.clear();
   const root = $("declared-documentation-topics");
-  root.replaceChildren(...DECLARED_TOPIC_GROUPS.map(([title, fields]) => {
+  root.replaceChildren(...NON_OVERLAPPING_TOPIC_GROUPS.map(([title, fields]) => {
     const group = el("fieldset", "form-grid two");
     group.append(el("legend", "", title));
     for (const [id, heading] of fields) {
@@ -422,13 +439,19 @@ function renderDeclaredTopics(handoff = null, edits = {}) {
       input.dataset.topic = id;
       input.rows = 2;
       input.maxLength = 10000;
-      const baseline = handoff?.answers[id] ?? "";
-      input.value = edits[id] ?? baseline;
-      input.placeholder = "No information offered";
+      const handoffValue = normalizedHandoffAnswer(id, handoff?.answers?.[id]);
+      const discoveredValue = discoveredTopics?.[id]?.value ?? "";
+      const baseline = handoffValue || discoveredValue;
+      input.value = Object.hasOwn(edits, id) ? edits[id] : baseline;
+      input.placeholder = NO_INFORMATION_OFFERED;
+      input.addEventListener("focus", () => {
+        if (isNoInformationOffered(input.value)) input.select();
+      });
       declaredTopicBaselines.set(id, baseline);
       label.append(input);
-      const ref = handoff?.evidenceRefs[id];
+      const ref = handoff?.evidenceRefs?.[id];
       if (ref) label.append(el("span", "field-hint", `Handoff references: ${ref}`));
+      else if (!handoffValue && discoveredValue) label.append(el("span", "field-hint", "Detected from submitted documentation · editable"));
       group.append(label);
     }
     return group;
@@ -438,9 +461,10 @@ function renderDeclaredTopics(handoff = null, edits = {}) {
 async function reviewDocumentationHandoff(event) {
   const readId = ++handoffReadId;
   discoveryAttempt++;
-  clearIntakeApproval();
+  clearIntakeApproval({ resetHistory: true });
   activeRunId = null;
   latestDiscoveryContext = null;
+  latestDeclaredTopicDraft = {};
   intakeApprovalStarted = false;
   $("assess-button").disabled = true;
   updateAcquisitionActions();
@@ -448,8 +472,13 @@ async function reviewDocumentationHandoff(event) {
   const status = $("documentation-handoff-status");
   documentationHandoff = null;
   documentationHandoffSource = undefined;
+  handoffDraftControls.clear();
   renderDocumentationHandoff();
-  if (!file) { status.textContent = "No handoff selected."; return; }
+  if (!file) {
+    renderDeclaredTopics();
+    status.textContent = "No handoff selected.";
+    return;
+  }
   status.textContent = "Checking the handoff…";
   try {
     if (file.size > HANDOFF_MAX_BYTES) throw new Error("The handoff exceeds the 15 MB review limit.");
@@ -460,17 +489,25 @@ async function reviewDocumentationHandoff(event) {
     if (readId !== handoffReadId) return;
     documentationHandoff = handoff;
     documentationHandoffSource = source;
+    fillDossier(preferredDocumentationDraft(dossierFromForm(), handoff));
+    for (const [controlId, value] of handoffControlDrafts(handoff)) handoffDraftControls.set(controlId, value);
+    renderDeclaredTopics(handoff);
     renderDocumentationHandoff();
-    status.textContent = "Handoff ready to populate Intake. Select Discover case information.";
+    status.textContent = "Handoff applied to the Intake draft. Select Discover case information to merge independent sources.";
     $("documentation-handoff-title").focus();
   } catch (error) {
     if (readId === handoffReadId) status.textContent = `Cannot review the handoff: ${error.message}`;
   }
 }
 
+function cleanControlText(controlId) {
+  const raw = String($(controlId)?.value ?? "");
+  return isNoInformationOffered(raw) ? "" : raw;
+}
+
 function intakeControlValue(controlId) {
   if (controlId === "data-categories") return JSON.stringify(checkedValues(controlId).sort());
-  return String($(controlId)?.value ?? "");
+  return cleanControlText(controlId);
 }
 
 function renderIntakeWorkspace(profile, recheck = null) {
@@ -494,6 +531,7 @@ function renderIntakeWorkspace(profile, recheck = null) {
       : editedAcquiredCandidateByField.has(field) ? { tone: "self-declared", text: "Recovered candidate edited by user · treated as Self-Declared" }
         : declinedAcquiredCandidateByField.has(field) ? { tone: "missing", text: "Recovered candidate declined · provide a value or resolve as Unknown / Not Applicable" }
           : prefilledProposalByField.has(field) ? { tone: "review", text: "GenAI proposal prefilled · editable or removable · becomes a user decision only on final approval" }
+      : noInformationOfferedFields.has(field) ? { tone: "missing", text: "No information offered · submitted material did not establish this topic · editable" }
       : edited ? { tone: "self-declared", text: "Self-Declared · changed by user · V&V lifecycle cap applies" }
       : differed ? { tone: "conflicting", text: `Documentation Support declaration differs from the submitted source: ${displayIntakeValue(fact?.value)}. Review both before approval.` }
       : fromHandoff ? { tone: "self-declared", text: "Documentation Support declaration · editable · user approval required" }
@@ -533,18 +571,18 @@ function dossierFromForm() {
   const highRiskAnswerIds = ["ANNEX_III_USE_AREAS", "PRODUCT_SAFETY_COMPONENT", "ANNEX_I_PRODUCT", "THIRD_PARTY_CONFORMITY"];
   const highRiskAnswers = highRiskAnswerIds.map((id) => intakeAnswers[id]).filter(Boolean);
   return {
-    name: $("name").value, intendedPurpose: $("purpose").value, expectedValue: $("value").value,
+    name: cleanControlText("name"), intendedPurpose: cleanControlText("purpose"), expectedValue: cleanControlText("value"),
     currentStage: $("current-stage").value, targetStage: $("target-stage").value,
-    jurisdictions: commaList($("jurisdictions").value), roles: rolesAnswer?.answerState === "YES" ? rolesAnswer.values.filter((item) => !["OTHER", "NONE_OF_THE_ABOVE", "UNKNOWN"].includes(item)) : commaList($("roles").value), users: commaList($("users").value), accountableOwner: $("owner").value,
+    jurisdictions: commaList(cleanControlText("jurisdictions")), roles: rolesAnswer?.answerState === "YES" ? rolesAnswer.values.filter((item) => !["OTHER", "NONE_OF_THE_ABOVE", "UNKNOWN"].includes(item)) : commaList(cleanControlText("roles")), users: commaList(cleanControlText("users")), accountableOwner: cleanControlText("owner"),
     data: { categories: checkedValues("data-categories") },
     exposure: { currentUserAccess: $("current-user-access").value, intendedUserAccess: $("intended-user-access").value, productionAccess: triState("production-access"), consequentialDecisions: triState("consequential") },
     agent: { usesAgents: triState("uses-agents"), canTakeActions: triState("takes-actions"), irreversibleActions: triState("irreversible"), humanOverride: triState("human-override") },
     classification: { prohibitedPractice: prohibitedAnswer?.answerState === "YES" ? true : prohibitedAnswer?.answerState === "NO" ? false : null, highRiskCandidate: highRiskAnswers.some((item) => item.answerState === "YES") ? true : highRiskAnswers.length && highRiskAnswers.every((item) => ["NO", "NOT_APPLICABLE"].includes(item.answerState)) ? false : null },
     intakeAnswers,
     operatingBoundary: {
-      allowedUses: lineList($("allowed-uses").value), excludedUses: lineList($("excluded-uses").value), environment: $("boundary-environment").value,
-      userScope: $("boundary-users").value, dataScope: $("boundary-data").value, integrationScope: $("boundary-integrations").value,
-      permissionScope: $("boundary-permissions").value, autonomyScope: $("boundary-autonomy").value, monitoringOwner: $("boundary-monitoring").value,
+      allowedUses: lineList(cleanControlText("allowed-uses")), excludedUses: lineList(cleanControlText("excluded-uses")), environment: $("boundary-environment").value,
+      userScope: cleanControlText("boundary-users"), dataScope: cleanControlText("boundary-data"), integrationScope: cleanControlText("boundary-integrations"),
+      permissionScope: cleanControlText("boundary-permissions"), autonomyScope: cleanControlText("boundary-autonomy"), monitoringOwner: cleanControlText("boundary-monitoring"),
       expiresAt: $("boundary-expiry").value || null
     }
   };
@@ -668,8 +706,11 @@ function intakeResolutions(dossier) {
     else if (proposal && proposalMatchesValue(proposal.value, value)) resolutionState = "USER_ACCEPTED_PROPOSAL";
     else if (sameIntakeValue(priorFieldValue(field), value)) resolutionState = "USER_CONFIRMED";
     else resolutionState = "USER_EDITED";
+    const noInfoOffered = resolutionState === "USER_SELECTED_UNKNOWN"
+      && (noInformationOfferedFields.has(field.id) || (field.uiControlId ? isNoInformationOffered($(field.uiControlId)?.value) : false));
     decisions[field.id] = {
       resolutionState,
+      ...(noInfoOffered ? { noInformationOffered: true } : {}),
       explanation: answer?.explanation ?? "",
       proposalRef: resolutionState === "USER_ACCEPTED_PROPOSAL" ? proposal.id : null,
       editedProposalRef: proposal && resolutionState === "USER_EDITED" ? proposal.id : null,
@@ -965,9 +1006,9 @@ function renderDiscovery(profile, dlpFindings = [], recheck = null, citationInde
 
 async function discoverCaseInformation() {
   const attempt = ++discoveryAttempt;
-  clearIntakeApproval();
+  clearIntakeApproval({ resetHistory: true });
   $("intake-wording-review").classList.add("hidden");
-  $("include-intake-wording").checked = false;
+  $("include-intake-wording").checked = true;
   $("error").classList.add("hidden"); $("discover-button").disabled = true; $("assess-button").disabled = true;
   updateDocumentationHandoffAction();
   for (const id of ["request-retrieval-plan", "execute-local-reread", "intake-enrichment-choice"]) $(id).classList.add("hidden");
@@ -1007,12 +1048,13 @@ async function discoverCaseInformation() {
       selectedAcquiredFactIds: []
     };
     documentationHandoff = preflight.documentationHandoff;
-    renderDeclaredTopics(documentationHandoff, manualTopics);
+    latestDeclaredTopicDraft = preflight.declaredTopicDraft ?? {};
+    renderDeclaredTopics(documentationHandoff, manualTopics, latestDeclaredTopicDraft);
     const draft = preflight.intakeDraft ?? preflight.solutionProfile.suggestedDossier;
     fillDossier(draft);
     if (Object.keys(manualAnswers).length) fillQuestionnaire({ ...draft.intakeAnswers, ...manualAnswers });
     handoffDraftControls.clear();
-    for (const item of documentationHandoff?.suggestions ?? []) handoffDraftControls.set(item.controlId, item.value);
+    for (const [controlId, value] of handoffControlDrafts(documentationHandoff)) handoffDraftControls.set(controlId, value);
     for (const { controlId, field, value } of manualValues) {
       if (controlId === "data-categories") {
         const categories = new Set(JSON.parse(value));
@@ -1114,6 +1156,31 @@ async function executeLocalReread() {
   } finally { $("execute-local-reread").disabled = false; }
 }
 
+const OPTIONAL_TEXT_CONTROLS = [
+  "purpose", "value", "jurisdictions", "roles", "users",
+  "allowed-uses", "excluded-uses", "boundary-users", "boundary-data",
+  "boundary-integrations", "boundary-permissions", "boundary-autonomy", "boundary-monitoring"
+];
+
+function markEmptyTopicsNoInformationOffered() {
+  let markedCount = 0;
+  for (const controlId of OPTIONAL_TEXT_CONTROLS) {
+    const control = $(controlId);
+    const fieldId = INTAKE_CONTROL_FIELDS[controlId];
+    if (!control || !fieldId || control.value.trim()) continue;
+    control.value = NO_INFORMATION_OFFERED;
+    noInformationOfferedFields.add(fieldId);
+    markedCount += 1;
+  }
+  for (const input of declaredTopicInputs()) {
+    if (!input.value.trim()) {
+      input.value = NO_INFORMATION_OFFERED;
+      markedCount += 1;
+    }
+  }
+  return markedCount;
+}
+
 async function requestAiProposals() {
   if (!activeRunId || !latestDiscoveryContext) return;
   const runId = activeRunId;
@@ -1146,22 +1213,37 @@ async function requestAiProposals() {
   latestDiscoveryContext.recheck = recheck;
   renderDiscovery(latestDiscoveryContext.profile, latestDiscoveryContext.dlpFindings, recheck, latestDiscoveryContext.citationIndex, latestDiscoveryContext.acquisitionDiagnostics);
   const completed = recheck.status === "COMPLETED";
+  if (completed || recheck.status === "NO_GAPS") {
+    markEmptyTopicsNoInformationOffered();
+    renderIntakeWorkspace(latestDiscoveryContext.profile, recheck);
+  }
   setIntakeFlow("USER_RESOLUTION", { limitedSteps: completed ? [] : ["AI_VERIFICATION"] });
   $("intake-enrichment-choice").classList.add("hidden");
   $("discovery-status").textContent = completed
-    ? "Stage 4 of 5 · Supported proposals were prefilled into empty Intake fields. Review and edit them before selecting Approve content."
-    : recheck.status === "NO_GAPS" ? "The draft has no eligible empty fields for GenAI to fill. Continue reviewing Intake."
+    ? "Stage 4 of 5 · Supported proposals were prefilled into empty Intake fields and remaining empty topics were marked No information offered. Review and edit before selecting Approve content."
+    : recheck.status === "NO_GAPS" ? "No additional source-supported gaps were found; remaining empty topics were marked No information offered. Continue reviewing Intake."
       : `Stage 4 of 5 · GenAI proposals were ${label(recheck.status).toLowerCase()}. Continue resolving the deterministic Intake manually.`;
   if (requestWording) await requestIntakeWording(runId, attempt);
 }
 
+const WORDING_NARRATIVE_CONTROLS = [
+  "purpose", "value", "allowed-uses", "excluded-uses",
+  "boundary-users", "boundary-data", "boundary-integrations",
+  "boundary-permissions", "boundary-autonomy"
+];
+
 async function requestIntakeWording(runId, attempt) {
-  const fields = new Map([["purpose", $("purpose")], ...declaredTopicInputs().map((input) => [input.dataset.topic, input])]);
-  const items = [...fields].filter(([, input]) => input.value.trim() && input.value.length <= 1200)
-    .map(([id, input]) => ({ id, text: input.value }));
+  const fields = new Map([
+    ...WORDING_NARRATIVE_CONTROLS.map((id) => [id, $(id)]).filter(([, input]) => Boolean(input)),
+    ...declaredTopicInputs().map((input) => [input.dataset.topic, input])
+  ]);
+  const items = [...fields].filter(([, input]) => {
+    const text = input.value.trim();
+    return text && !isNoInformationOffered(text) && text.length <= 1500;
+  }).map(([id, input]) => ({ id, text: input.value }));
   if (!items.length) return;
   const root = $("intake-wording-review");
-  root.replaceChildren(el("p", "", "Checking wording in the selected Intake text…"));
+  root.replaceChildren(el("p", "", "Refining wording fluency and readability across populated Intake topics…"));
   root.classList.remove("hidden");
   const current = () => runId === activeRunId && attempt === discoveryAttempt && !approvedIntakeRevision;
   try {
@@ -1169,24 +1251,32 @@ async function requestIntakeWording(runId, attempt) {
       confirmed: true, purpose: "INTAKE_WORDING", acquisitionManifestHash: latestDiscoveryContext.sourceIngestion.manifestHash, items
     });
     if (!current()) return;
-    root.replaceChildren(el("h3", "", "Wording suggestions"));
-    if (!result.suggestions.length) root.append(el("p", "", "No eligible wording changes were returned."));
+    root.replaceChildren(el("h3", "", "Wording fluency adjustments"));
+    if (!result.suggestions.length) {
+      root.append(el("p", "", "Populated Intake text is already clear and fluent; no wording change was needed."));
+      return;
+    }
+    root.append(el("p", "field-hint", "Fluent wording has been applied to the topics below. You can edit any field manually or revert individual fields to their original wording."));
     for (const suggestion of result.suggestions) {
       const input = fields.get(suggestion.id);
-      if (input?.value !== suggestion.original) continue;
+      if (!input || input.value !== suggestion.original) continue;
+      input.value = suggestion.text;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
       const item = el("article", "");
-      const button = el("button", "secondary-button", "Use suggested wording");
-      button.type = "button";
-      button.addEventListener("click", () => {
-        if (!current() || input.value !== suggestion.original) {
-          item.replaceChildren(el("p", "", "This suggestion is no longer current."));
-          return;
-        }
-        input.value = suggestion.text;
+      const revert = el("button", "secondary-button", "Revert to original wording");
+      revert.type = "button";
+      revert.addEventListener("click", () => {
+        if (!current()) return;
+        input.value = suggestion.original;
         input.dispatchEvent(new Event("input", { bubbles: true }));
         item.remove();
       });
-      item.append(el("h4", "", label(suggestion.id)), el("p", "", suggestion.original), el("p", "", suggestion.text), button);
+      item.append(
+        el("h4", "", label(suggestion.id)),
+        el("p", "field-hint", `Original: ${suggestion.original}`),
+        el("p", "", `Enriched: ${suggestion.text}`),
+        revert
+      );
       root.append(item);
     }
   } catch {
@@ -1300,7 +1390,8 @@ async function loadSample() {
   const attempt = ++discoveryAttempt;
   const response = await fetch("/api/sample"); const sample = await response.json();
   if (attempt !== discoveryAttempt) return;
-  clearIntakeApproval();
+  clearIntakeApproval({ resetHistory: true });
+  latestDeclaredTopicDraft = {};
   fillDossier(sample.dossier);
   latestSolutionProfile = null;
   sampleSources = sample.sources.map((source) => ({
@@ -1412,15 +1503,20 @@ async function approveContent(event) {
     if (runId !== activeRunId || JSON.stringify(input) !== JSON.stringify(intakeApprovalRequest())) throw new Error("Intake or the source selection changed. Review and approve the current draft.");
     intakeApprovalStarted = true;
     const confirmed = await postJson(`/api/v2/runs/${encodeURIComponent(runId)}/confirm`, {
-      ...input, expectedAcquisitionManifestHash: sourceHash, approval: { confirmed: true }
+      ...input,
+      ...(lastApprovedSnapshotHash ? { priorRevisionRef: lastApprovedSnapshotHash } : {}),
+      expectedAcquisitionManifestHash: sourceHash,
+      approval: { confirmed: true }
     });
     if (runId !== activeRunId) return;
     if (JSON.stringify(input) !== JSON.stringify(intakeApprovalRequest())) {
-      activeRunId = null;
-      throw new Error("The draft changed during approval. Discover the current sources and approve again.");
+      intakeApprovalStarted = false;
+      lastApprovedSnapshotHash = confirmed.approvedIntake.snapshotHash;
+      throw new Error("The draft changed during approval. Review and select Approve content again.");
     }
     approvedIntakeRevision = { runId, snapshotHash: confirmed.approvedIntake.snapshotHash };
-    $("intake-approval-status").textContent = "Content approved. Select Start analysis when ready.";
+    lastApprovedSnapshotHash = confirmed.approvedIntake.snapshotHash;
+    $("intake-approval-status").textContent = `Content approved (revision ${confirmed.approvedIntake.revision}). Select Start analysis when ready.`;
     $("start-analysis-button").disabled = false;
     $("intake-enrichment-choice").classList.add("hidden");
     updateAcquisitionActions();
@@ -1461,7 +1557,7 @@ async function runAssessment() {
     setIntakeFlow(null);
     if (activeRunId === runId) {
       activeRunId = null;
-      clearIntakeApproval();
+      clearIntakeApproval({ resetHistory: true });
     }
   } catch (error) { $("error").textContent = error.message; $("error").classList.remove("hidden"); }
   finally {
@@ -1539,23 +1635,34 @@ $("sample-button").addEventListener("click", loadSample); $("discover-button").a
 $("start-analysis-button").addEventListener("click", runAssessment);
 $("documentation-handoff-file").addEventListener("change", reviewDocumentationHandoff);
 renderDeclaredTopics();
-$("dossier-form").addEventListener("input", (event) => {
-  if (approvedIntakeRevision) {
-    clearIntakeApproval();
-    activeRunId = null;
-    $("assess-button").disabled = true;
-    $("intake-approval-status").textContent = "Content changed. Discover the sources again to review and approve the edited draft.";
+function invalidateApprovedDraftOnEdit() {
+  if (!approvedIntakeRevision) return;
+  clearIntakeApproval();
+  intakeApprovalStarted = false;
+  $("assess-button").disabled = !activeRunId || !latestDiscoveryContext?.sourceIngestion?.parsedCount;
+  $("intake-approval-status").textContent = "Content edited. Select Approve content to approve the updated revision before starting analysis.";
+}
+
+$("dossier-form").addEventListener("focusin", (event) => {
+  if ((event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) && isNoInformationOffered(event.target.value)) {
+    event.target.select();
   }
+});
+$("dossier-form").addEventListener("change", invalidateApprovedDraftOnEdit);
+$("dossier-form").addEventListener("input", (event) => {
+  invalidateApprovedDraftOnEdit();
   const controlId = event.target.id || event.target.closest("#data-categories")?.id;
   const field = INTAKE_CONTROL_FIELDS[controlId];
   if (field && latestSolutionProfile) {
+    if (isNoInformationOffered(event.target.value)) noInformationOfferedFields.add(field);
+    else noInformationOfferedFields.delete(field);
     const acceptedAcquired = acceptedAcquiredCandidateByField.get(field);
     const currentValue = dossierPathValue(dossierFromForm(), field);
     if (acceptedAcquired && !sameIntakeValue(acceptedAcquired.sanitizedCandidate, currentValue)) {
       acceptedAcquiredCandidateByField.delete(field);
       editedAcquiredCandidateByField.set(field, acceptedAcquired);
     }
-    if (acceptedAcquiredCandidateByField.has(field) || intakeControlValue(controlId) === intakeControlBaseline.get(controlId)) editedIntakeFields.delete(field);
+    if (acceptedAcquiredCandidateByField.has(field) || noInformationOfferedFields.has(field) || intakeControlValue(controlId) === intakeControlBaseline.get(controlId)) editedIntakeFields.delete(field);
     else editedIntakeFields.add(field);
     renderIntakeWorkspace(latestSolutionProfile, latestDiscoveryRecheck);
   }
@@ -1565,8 +1672,8 @@ $("print-button").addEventListener("click", printReport); $("html-button").addEv
 for (const [control, summary, kind] of [["source-files", "file-summary", "individual"], ["source-folder", "folder-summary", "folder"]]) {
   $(control).addEventListener("change", () => {
     discoveryAttempt++;
-    clearIntakeApproval();
-    sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; intakeApprovalStarted = false;
+    clearIntakeApproval({ resetHistory: true });
+    sampleSources = []; preparedSources = null; activeRunId = null; latestDiscoveryContext = null; latestDeclaredTopicDraft = {}; intakeApprovalStarted = false;
     for (const id of ["request-retrieval-plan", "execute-local-reread", "intake-enrichment-choice"]) $(id).classList.add("hidden");
     $("assess-button").disabled = true; setIntakeFlow("UPLOAD");
     $(summary).textContent = `${$(control).files.length} ${kind} file(s) selected`;

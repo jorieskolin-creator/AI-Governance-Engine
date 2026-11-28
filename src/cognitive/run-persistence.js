@@ -38,6 +38,8 @@ export function serializeDurableRun(run, now = new Date()) {
   durableRun.intakeCandidates = null;
   delete durableRun.persistence;
   delete durableRun.documentationHandoff;
+  delete durableRun.initialSolutionProfile;
+  delete durableRun.declaredTopicDraft;
   for (const packet of durableRun.packets ?? []) {
     for (const unit of packet.sourceUnits ?? []) {
       if (unit.media) unit.media.data = "";

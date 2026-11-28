@@ -232,12 +232,14 @@ function fieldRecord(field, decision, dossier, sourceProfile, discoveryRecheck, 
   }
 
   validateValue(field, value, valueState);
+  const noInformationOffered = valueState === "UNKNOWN" && decision.noInformationOffered === true;
   return {
     fieldId: field.id,
     value: valueState === "NOT_APPLICABLE" || valueState === "UNKNOWN" ? null : sanitizeRestrictedValue(structuredClone(value)),
     valueState,
     resolutionState: decision.resolutionState,
     origin,
+    ...(noInformationOffered ? { noInformationOffered: true } : {}),
     evidenceRefs,
     limitations: limitations.map((item) => sanitizeRestrictedText(String(item))).filter(Boolean),
     explanation: explanation || null,
@@ -284,11 +286,12 @@ export function createApprovedIntakeSnapshot({ run, dossier, effectiveDossier, s
   const approvedAt = new Date().toISOString();
   const warnings = [];
   if (run.sourceIngestion?.coverageStatus === "INCOMPLETE_REVIEW_REQUIRED") warnings.push("Source-ingestion coverage is incomplete and remains a downstream governance limitation.");
+  const nextRevision = priorRevisionRef ? (run.approvedIntake?.revision ?? 1) + 1 : 1;
   const payload = {
     schemaVersion: APPROVED_INTAKE_SNAPSHOT_VERSION,
     fieldRegistryVersion: INTAKE_FIELD_REGISTRY_VERSION,
     fieldRegistryHash: INTAKE_FIELD_REGISTRY.hash,
-    revision: priorRevisionRef ? 2 : 1,
+    revision: nextRevision,
     priorRevisionRef: priorRevisionRef ? sanitizeRestrictedText(String(priorRevisionRef)) : null,
     acquisitionManifest: { reference: `run:${run.id}:source-ingestion`, hash: run.sourceIngestion.manifestHash },
     fields,
@@ -358,11 +361,14 @@ export function validateApprovedIntakeSnapshot(snapshot, options = {}) {
     if (record.valueState === "UNKNOWN") {
       invariant(field.unknownAllowed && record.resolutionState === "USER_SELECTED_UNKNOWN" && record.origin === "USER_DECLARATION", `${field.id} has an invalid Unknown resolution`);
       invariant(expectedValue === null && state !== "NOT_APPLICABLE", `${field.id} Unknown does not match the approved dossier`);
+      invariant(record.noInformationOffered === undefined || record.noInformationOffered === true, `${field.id}.noInformationOffered is invalid`);
     } else if (record.valueState === "NOT_APPLICABLE") {
+      invariant(record.noInformationOffered === undefined, `${field.id}.noInformationOffered is only allowed for Unknown`);
       invariant(field.notApplicableAllowed && record.resolutionState === "USER_SELECTED_NOT_APPLICABLE" && record.origin === "USER_DECLARATION", `${field.id} has an invalid Not Applicable resolution`);
       invariant(state === "NOT_APPLICABLE" || !field.questionId && expectedValue === null, `${field.id} Not Applicable does not match the approved dossier`);
       invariant(!field.explanationRequiredFor.includes("NOT_APPLICABLE") || typeof record.explanation === "string" && record.explanation, `${field.id} lacks its required Not Applicable explanation`);
     } else {
+      invariant(record.noInformationOffered === undefined, `${field.id}.noInformationOffered is only allowed for Unknown`);
       invariant(equalValues(record.value, expectedValue), `${field.id} does not match the approved dossier`);
     }
     if (record.valueState === "OBSERVED") invariant(["USER_CONFIRMED", "USER_ACCEPTED_ACQUIRED_CANDIDATE"].includes(record.resolutionState) && record.origin === "DETERMINISTIC_ACQUISITION", `${field.id} has invalid observed provenance`);

@@ -128,3 +128,31 @@ test("governance architecture prose yields controlled semantic observations with
   assert.doesNotMatch(semanticUnits[0].content, /bounded internal assistant|governance teams|approved internal content|isolated sandbox/i);
   assert.doesNotMatch(semanticUnits[0].content, /alignment|contradiction|mismatch|finding|readiness|risk/i);
 });
+
+test("general web, API, data-governance and confirmation patterns emit controlled Intake observations", async () => {
+  const run = await createPreflight({ sources: [{
+    path: "README.md",
+    mimeType: "text/markdown",
+    content: "This browser workspace application and HTTP API service screens uploaded documents and source code for enterprise customers and system operators. It enforces PII redaction, retention period limits, explicit user confirmation, and never grants formal approvals. Backed by PostgreSQL and Anthropic Claude in a production environment."
+  }] });
+  const semanticUnit = run.packets.flatMap((packet) => packet.sourceUnits).find((unit) => unit.evidenceKind === "SEMANTIC_INTAKE_SUMMARY");
+  const summary = validateSemanticIntakeEvidence(JSON.parse(semanticUnit.content));
+  const ids = summary.observations.map((item) => item.conceptId);
+  for (const expected of [
+    "WEB_WORKSPACE_APPLICATION",
+    "HTTP_API_SERVICE",
+    "DOCUMENT_AND_CODE_SCREENING",
+    "BUSINESS_CUSTOMER_USER",
+    "SYSTEM_OPERATOR_OR_ADMIN",
+    "LOCAL_REDACTION_OR_MINIMIZATION",
+    "BOUNDED_RETENTION_TTL",
+    "EXPLICIT_CONFIRMATION_BOUNDARY",
+    "AUTOMATED_FORMAL_APPROVAL",
+    "RELATIONAL_DATABASE_STORE",
+    "FOUNDATION_MODEL_API",
+    "PRODUCTION_SERVICE"
+  ]) {
+    assert.ok(ids.includes(expected), expected);
+  }
+  assert.doesNotMatch(semanticUnit.content, /alignment|contradiction|mismatch|finding|readiness|risk/i);
+});

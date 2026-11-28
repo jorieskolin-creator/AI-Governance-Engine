@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { validateDossier } from "../src/contracts.js";
+import { buildDocumentationReadiness } from "../src/core/solution-profile.js";
+import { serializeDurableRun } from "../src/cognitive/run-persistence.js";
 import { confirmPreflightDossier, createPreflight } from "../src/cognitive/preflight.js";
 import { sha256, stableId } from "../src/core/hash.js";
 import { createIntakeResolutionDraft, validateApprovedIntakeSnapshot } from "../src/intake/contracts.js";
@@ -265,4 +267,47 @@ test("a browser-shaped Approve payload with unknown stages confirms Intake witho
     value: null, valueState: "UNKNOWN", resolutionState: "USER_SELECTED_UNKNOWN"
   });
   assert.equal(validateApprovedIntakeSnapshot(run.approvedIntake), run.approvedIntake);
+});
+
+test("No information offered stays UNKNOWN without manufacturing Self-Declared caps and supports in-place re-approval", async () => {
+  const run = await createPreflight({
+    sources: source("Solution name: Fluent Assurance Case\nAccountable owner: Platform Owner\nTarget lifecycle stage: Deployment")
+  });
+  const dossier = validateDossier(run.solutionProfile.suggestedDossier);
+  const resolutions = createIntakeResolutionDraft(dossier, run.solutionProfile);
+  resolutions.expectedValue = { resolutionState: "USER_SELECTED_UNKNOWN", noInformationOffered: true, explanation: "" };
+  await confirmPreflightDossier(run, { dossier, resolutions, approval: { confirmed: true, actorRef: "REVIEW_USER" } });
+
+  const firstRevision = run.approvedIntake;
+  assert.equal(firstRevision.revision, 1);
+  const expectedValueRecord = firstRevision.fields.find((field) => field.fieldId === "expectedValue");
+  assert.equal(expectedValueRecord.valueState, "UNKNOWN");
+  assert.equal(expectedValueRecord.noInformationOffered, true);
+  const readiness = buildDocumentationReadiness(run.solutionProfile, dossier.targetStage, run.sourceIngestion);
+  assert.equal(readiness.selfDeclaredIntakeFields.includes("expectedValue"), false);
+  assert.equal(readiness.maximumLifecycleStage, null);
+
+  const editedDossier = validateDossier({ ...dossier, expectedValue: "Reduce manual governance review preparation time" });
+  const secondResolutions = createIntakeResolutionDraft(editedDossier, run.initialSolutionProfile);
+  await assert.rejects(() => confirmPreflightDossier(run, {
+    dossier: editedDossier,
+    resolutions: secondResolutions,
+    approval: { confirmed: true, actorRef: "REVIEW_USER" }
+  }), /not awaiting intake confirmation/i);
+
+  await confirmPreflightDossier(run, {
+    dossier: editedDossier,
+    resolutions: secondResolutions,
+    priorRevisionRef: firstRevision.snapshotHash,
+    approval: { confirmed: true, actorRef: "REVIEW_USER" }
+  });
+  assert.equal(run.approvedIntake.revision, 2);
+  assert.equal(run.approvedIntake.priorRevisionRef, firstRevision.snapshotHash);
+  assert.equal(run.approvedIntake.fields.find((field) => field.fieldId === "name").valueState, "OBSERVED");
+  assert.equal(run.approvedIntake.fields.find((field) => field.fieldId === "expectedValue").valueState, "DECLARED");
+  assert.equal(validateApprovedIntakeSnapshot(run.approvedIntake), run.approvedIntake);
+
+  const durable = serializeDurableRun(run);
+  assert.equal(durable.run.initialSolutionProfile, undefined);
+  assert.equal(durable.run.declaredTopicDraft, undefined);
 });

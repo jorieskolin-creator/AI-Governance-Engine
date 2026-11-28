@@ -248,46 +248,87 @@ function labelledEntry(sources, field, searchOverrides) {
     : { text: entries[0].text, conflict: false, candidates, sourceUnitIds: unique(entries.map((entry) => entry.sourceUnitId)) };
 }
 
-function detectedEnum(sources, field, options, searchOverrides) {
-  const entry = labelledEntry(sources, field, searchOverrides);
-  if (!entry) return null;
-  if (entry.conflict) return { value: null, sourceUnitIds: entry.sourceUnitIds, candidates: entry.candidates, conflict: true };
-  const normalized = words(entry.text).toLowerCase();
+function matchEnumOption(text, options) {
+  const normalized = words(text).toLowerCase();
   const matches = options.map(([canonical, aliases = []]) => [canonical, [canonical, ...aliases].map((item) => words(item).toLowerCase())])
     .filter(([, aliases]) => aliases.some((alias) => normalized === alias))
     .sort((a, b) => Math.max(...b[1].map((item) => item.length)) - Math.max(...a[1].map((item) => item.length)));
-  return matches.length ? { value: matches[0][0], sourceUnitIds: entry.sourceUnitIds } : null;
+  return matches.length ? matches[0][0] : null;
+}
+
+function detectedEnum(sources, field, options, searchOverrides) {
+  const entries = searchEntries(sources, field, searchOverrides);
+  if (!entries.length) return null;
+  const parsed = entries.map((entry) => ({ value: matchEnumOption(entry.text, options), sourceUnitId: entry.sourceUnitId }))
+    .filter((entry) => entry.value !== null);
+  if (!parsed.length) return null;
+  const candidates = [];
+  const seen = new Set();
+  for (const entry of parsed) {
+    const key = String(entry.value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push(entry.value);
+  }
+  const sourceUnitIds = unique(parsed.map((entry) => entry.sourceUnitId));
+  if (candidates.length > 1) return { value: null, sourceUnitIds, candidates: candidates.filter((item) => item !== "UNKNOWN"), conflict: true };
+  return { value: candidates[0], sourceUnitIds };
 }
 
 function detectedBoolean(sources, field, searchOverrides) {
   return detectedEnum(sources, field, [[true, ["yes", "true"]], [false, ["no", "false"]]], searchOverrides);
 }
 
-function detectedQuestionAnswer(sources, question, searchOverrides) {
-  const entry = labelledEntry(sources, `intakeAnswers.${question.id}`, searchOverrides);
-  if (!entry) return null;
-  if (entry.conflict) return { answerState: "HUMAN_REVIEW_REQUIRED", values: [], sourceUnitIds: entry.sourceUnitIds, supportStatus: "CONFLICTING", candidates: entry.candidates };
-  const normalized = words(entry.text).toLowerCase();
+function parseQuestionEntry(text, question) {
+  const normalized = words(text).toLowerCase();
   const options = [...question.options].sort((a, b) => words(b).length - words(a).length);
   const values = options.filter((option) => {
     const optionText = words(option).toLowerCase();
     return normalized === optionText || new RegExp(`(?:^|[^a-z0-9])${escaped(optionText)}(?:$|[^a-z0-9])`, "i").test(normalized);
   });
   if (question.type === "SINGLE") {
-    if (values.length > 1) return { answerState: "HUMAN_REVIEW_REQUIRED", values: [], sourceUnitIds: entry.sourceUnitIds, supportStatus: "CONFLICTING", candidates: values };
-    const answerState = values[0] ?? (/^(?:yes|true)$/i.test(normalized) ? "YES" : /^(?:no|false)$/i.test(normalized) ? "NO" : null);
-    return answerState ? { answerState, values: [], sourceUnitIds: entry.sourceUnitIds } : null;
+    if (values.length > 1) return { conflict: true, candidates: values };
+    const fallback = /^(?:yes|true)$/i.test(normalized) ? "YES" : /^(?:no|false)$/i.test(normalized) ? "NO" : null;
+    const answerState = values[0] ?? (fallback && question.options.includes(fallback) ? fallback : null);
+    return answerState ? { conflict: false, answerState, values: [] } : null;
   }
   if (!values.length) return null;
   if (values.length > 1 && values.some((item) => ["UNKNOWN", "NONE_OF_THE_ABOVE"].includes(item))) {
-    return { answerState: "HUMAN_REVIEW_REQUIRED", values: [], sourceUnitIds: entry.sourceUnitIds, supportStatus: "CONFLICTING", candidates: values };
+    return { conflict: true, candidates: values.map((item) => [item]) };
   }
   const selected = values.includes("NONE_OF_THE_ABOVE") ? ["NONE_OF_THE_ABOVE"] : values.filter((item) => item !== "UNKNOWN");
   return {
+    conflict: false,
     answerState: selected.includes("NONE_OF_THE_ABOVE") ? "NO" : selected.length ? "YES" : "UNKNOWN",
-    values: selected.length ? selected : ["UNKNOWN"],
-    sourceUnitIds: entry.sourceUnitIds
+    values: selected.length ? selected : ["UNKNOWN"]
   };
+}
+
+function detectedQuestionAnswer(sources, question, searchOverrides) {
+  const entries = searchEntries(sources, `intakeAnswers.${question.id}`, searchOverrides);
+  if (!entries.length) return null;
+  const parsed = entries.map((entry) => ({ result: parseQuestionEntry(entry.text, question), sourceUnitId: entry.sourceUnitId }))
+    .filter((entry) => entry.result !== null);
+  if (!parsed.length) return null;
+  const sourceUnitIds = unique(parsed.map((entry) => entry.sourceUnitId));
+  const hasAmbiguousEntry = parsed.some((entry) => entry.result.conflict);
+  const candidates = [];
+  const seen = new Set();
+  const addCandidate = (candidate) => {
+    const key = Array.isArray(candidate) ? [...candidate].sort().join("|") : String(candidate);
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(candidate);
+  };
+  for (const { result } of parsed) {
+    if (result.conflict) for (const item of result.candidates) addCandidate(item);
+    else addCandidate(question.type === "SINGLE" ? result.answerState : result.values);
+  }
+  if (hasAmbiguousEntry || candidates.length > 1) {
+    return { answerState: "HUMAN_REVIEW_REQUIRED", values: [], sourceUnitIds, supportStatus: "CONFLICTING", candidates };
+  }
+  const [{ result }] = parsed;
+  return { answerState: result.answerState, values: result.values, sourceUnitIds };
 }
 
 function detectedName(sources, searchOverrides) {
@@ -486,10 +527,15 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
     expiresAt: labelledValue(sources, "operatingBoundary.expiresAt", searchOverrides),
     intakeAnswers
   };
+  const wrapListDetection = (entry) => !entry ? entry : {
+    ...entry,
+    value: entry.value ? [entry.value] : entry.value,
+    ...(entry.candidates ? { candidates: entry.candidates.map((item) => Array.isArray(item) ? item : [item]) } : {})
+  };
   const detectedByField = {
     ...detected,
-    "operatingBoundary.allowedUses": detected.allowedUses?.value ? { ...detected.allowedUses, value: [detected.allowedUses.value] } : detected.allowedUses,
-    "operatingBoundary.excludedUses": detected.excludedUses?.value ? { ...detected.excludedUses, value: [detected.excludedUses.value] } : detected.excludedUses,
+    "operatingBoundary.allowedUses": wrapListDetection(detected.allowedUses),
+    "operatingBoundary.excludedUses": wrapListDetection(detected.excludedUses),
     "operatingBoundary.environment": detected.environment,
     "operatingBoundary.userScope": detected.userScope,
     "operatingBoundary.dataScope": detected.dataScope,
@@ -584,7 +630,7 @@ export function discoverSolutionProfile(rawSources, declaredDossier = null, conf
       humanDecisionAuthority: question.humanDecisionAuthority
     };
     if (sourceConflict) item.candidates = [{ answerState, values, origin: "SELF_DECLARED" }, { answerState: sourceAnswer.answerState, values: sourceAnswer.values, origin: "OBSERVED", sourceUnitIds: sourceAnswer.sourceUnitIds }];
-    else if (discoveredAnswer?.candidates?.length) item.candidates = discoveredAnswer.candidates.map((candidate) => ({ value: structuredClone(candidate), origin: "OBSERVED", sourceUnitIds: discoveredAnswer.sourceUnitIds }));
+    else if (discoveredAnswer?.candidates?.length) item.candidates = discoveredAnswer.candidates.map((candidate) => ({ ...(Array.isArray(candidate) ? { values: structuredClone(candidate) } : {}), value: structuredClone(candidate), origin: "OBSERVED", sourceUnitIds: discoveredAnswer.sourceUnitIds }));
     return [question.id, { ...item, hash: sha256(item) }];
   }));
   const profile = {

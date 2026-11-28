@@ -97,22 +97,41 @@ function confidenceFor(sourceRefs, fact, localUnits) {
   return "HIGH";
 }
 
+function candidateValueIsValid(field, value) {
+  if (value === null || value === undefined || containsSensitiveText(value)) return false;
+  if (["STRING", "DATE"].includes(field.dataType)) return typeof value === "string" && value !== "";
+  if (field.dataType === "STRING_ARRAY") return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === "string" && item !== "");
+  if (field.dataType === "ENUM_ARRAY") return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === "string" && field.allowedValues.includes(item));
+  if (field.dataType === "BOOLEAN") return typeof value === "boolean";
+  return typeof value === "string" && field.allowedValues.includes(value);
+}
+
 function conflictCandidates(fact, field) {
   if (fact?.status !== "CONFLICTING" && fact?.supportStatus !== "CONFLICTING") return [];
-  return (fact.candidates ?? []).map((candidate) => {
+  const seen = new Set();
+  const output = [];
+  for (const candidate of fact.candidates ?? []) {
     const value = field.questionId
-      ? candidate.values?.length ? candidate.values : candidate.answerState ?? candidate.value ?? null
+      ? field.dataType === "ENUM_ARRAY"
+        ? (Array.isArray(candidate.values) && candidate.values.length ? candidate.values : Array.isArray(candidate.value) ? candidate.value : null)
+        : candidate.answerState ?? (typeof candidate.value === "string" ? candidate.value : null)
       : candidate.value ?? null;
-    return value === null || containsSensitiveText(value) ? null : structuredClone(value);
-  }).filter((value) => value !== null);
+    if (!candidateValueIsValid(field, value)) continue;
+    const cloned = structuredClone(value);
+    const key = stableStringify(cloned);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(cloned);
+  }
+  return output;
 }
 
 function providerEligibility({ field, fact, candidate, conflicts, policy, transmissionBlocked, unsafe, hasValue }) {
   if (transmissionBlocked) return "INELIGIBLE_BLOCKING_SCREENING";
   if (unsafe) return "INELIGIBLE_UNSAFE_CANDIDATE";
   if (policy === "PROVIDER_DISCLOSURE_PROHIBITED") return "INELIGIBLE_FIELD_POLICY";
-  if (!observedFact(fact, field) && hasValue) return "INELIGIBLE_NOT_OBSERVED";
   if (conflicts.length || fact?.status === "CONFLICTING" || fact?.supportStatus === "CONFLICTING") return "INELIGIBLE_CONFLICTING";
+  if (!observedFact(fact, field) && hasValue) return "INELIGIBLE_NOT_OBSERVED";
   if (candidate === null) return "INELIGIBLE_UNKNOWN";
   if (policy === "LOCAL_ONLY_SANITIZED_FREE_TEXT") return "INELIGIBLE_FREE_TEXT";
   return controlledValueIsValid(field, candidate) ? "ELIGIBLE_CONTROLLED_VALUE" : "INELIGIBLE_UNKNOWN";
@@ -184,7 +203,7 @@ export function createIntakeCandidatePackage(profile, localUnits = [], dlpFindin
       ...(fact?.limitations ?? []),
       "Confidence describes deterministic extraction quality, not factual correctness or approval.",
       ...(policy === "LOCAL_ONLY_SANITIZED_FREE_TEXT" ? ["Sanitized free text remains local and is never provider eligible."] : []),
-      ...(conflicts.length ? ["Conflicting candidates require explicit user resolution."] : []),
+      ...((conflicts.length || fact?.status === "CONFLICTING" || fact?.supportStatus === "CONFLICTING") ? ["Conflicting candidates require explicit user resolution."] : []),
       ...(unsafe ? ["The candidate was withheld because local screening detected unsanitized sensitive text."] : [])
     ])];
     const record = {
